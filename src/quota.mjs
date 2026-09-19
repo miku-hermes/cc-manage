@@ -1,0 +1,153 @@
+// Command Code 额度查询（契约见 SPEC §4，全部 GET）
+import { redact } from './log.mjs';
+
+export const CC_USER_AGENT = 'commandcode-cli/1.53.1';
+
+/**
+ * resetAt 归一化成秒：>=1e12 视为毫秒 → /1000；ISO 字符串 → 秒；其余按秒。
+ * 无法解析时返回 null。
+ */
+export function normalizeResetAt(value) {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value >= 1e12 ? Math.floor(value / 1000) : Math.floor(value);
+  }
+  if (typeof value === 'string') {
+    const asNum = Number(value);
+    if (Number.isFinite(asNum)) return normalizeResetAt(asNum);
+    const ms = Date.parse(value);
+    if (Number.isFinite(ms)) return Math.floor(ms / 1000);
+  }
+  return null;
+}
+
+function num(v, fallback = 0) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/** 从 windowLimits 里的一个窗口算 used/cap/百分比 */
+export function parseWindow(w) {
+  if (!w || typeof w !== 'object') return null;
+  const hasUsed = w.used !== undefined && w.used !== null;
+  const hasCap = w.cap !== undefined && w.cap !== null;
+  if (!hasUsed && !hasCap) return null;
+  const used = num(w.used, 0);
+  const cap = num(w.cap, 0);
+  const ratio = cap > 0 ? used / cap : null;
+  return {
+    used,
+    cap,
+    percent: ratio === null ? null : Math.max(0, Math.min(100, ratio * 100)),
+    usedRatio: ratio === null ? null : ratio,
+    resetAt: normalizeResetAt(w.resetAt),
+  };
+}
+
+/** 把 4 个接口的原始响应拼成一份额度快照 */
+export function parseSnapshot({ whoami, credits, subscriptions, usage }) {
+  const orgId = whoami?.org?.id ?? null;
+  const displayName = whoami?.org?.login || whoami?.user?.userName || whoami?.user?.name || null;
+  const keyName = whoami?.user?.keyName || whoami?.user?.displayName || null;
+
+  const c = credits?.credits ?? {};
+  const monthlyCredits = num(c.monthlyCredits, 0);
+  const purchasedCredits = num(c.purchasedCredits, 0);
+  const freeCredits = num(c.freeCredits, 0);
+  const remaining = monthlyCredits + purchasedCredits + freeCredits;
+
+  const fiveHour = parseWindow(credits?.windowLimits?.fiveHour);
+  const weekly = parseWindow(credits?.windowLimits?.weekly);
+
+  const sub = subscriptions?.data ?? null;
+  const totalCost = num(usage?.totalCost, 0);
+  const totalCount = num(usage?.totalCount, 0);
+  const totalTokens = num(usage?.totalTokens, 0);
+
+  // 月窗口：CC 未提供月度 windowLimits。以「本周期花费 totalCost / (花费 + 剩余额度)」
+  // 作为月度占用率 —— 契约里没有月度 cap 字段，此处为推算。TODO(问作者): 若 CC 后续
+  // 提供 /alpha/billing/... 的月度 cap，应改用官方字段。
+  const monthlyCap = totalCost + remaining;
+  const monthly = monthlyCap > 0
+    ? { used: totalCost, cap: monthlyCap, percent: Math.max(0, Math.min(100, (totalCost / monthlyCap) * 100)), usedRatio: totalCost / monthlyCap, resetAt: normalizeResetAt(sub?.currentPeriodEnd) }
+    : null;
+
+  return {
+    ok: true,
+    authInvalid: false,
+    orgId,
+    displayName,
+    keyName,
+    credits: { monthlyCredits, purchasedCredits, freeCredits, remaining },
+    remaining,
+    fiveHour,
+    weekly,
+    monthly,
+    plan: sub ? { planId: sub.planId ?? null, status: sub.status ?? null } : null,
+    periodStart: sub?.currentPeriodStart ?? null,
+    periodEnd: sub?.currentPeriodEnd ?? null,
+    usage: { totalCost, totalCount, totalTokens },
+    fetchedAt: Date.now(),
+  };
+}
+
+function redactMessage(text, key) {
+  return redact(String(text ?? '').slice(0, 300), [key]);
+}
+
+/**
+ * 查询一个账号的额度。4 个请求共用一个超时预算（AbortController）。
+ * @param {string} key CC key
+ * @param {{ baseUrl?: string, timeoutMs?: number, fetchImpl?: Function, now?: () => number, log?: object }} opts
+ */
+export async function fetchQuota(key, opts = {}) {
+  const baseUrl = String(opts.baseUrl ?? 'https://api.commandcode.ai').replace(/\/+$/, '');
+  const timeoutMs = opts.timeoutMs ?? 15000;
+  const doFetch = opts.fetchImpl ?? globalThis.fetch;
+  const now = opts.now ?? (() => Date.now());
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  if (timer.unref) timer.unref();
+
+  const get = async (pathname) => {
+    const res = await doFetch(`${baseUrl}${pathname}`, {
+      method: 'GET',
+      headers: {
+        accept: 'application/json',
+        authorization: `Bearer ${key}`,
+        'user-agent': CC_USER_AGENT,
+      },
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      const err = new Error(`HTTP ${res.status}: ${redactMessage(body, key)}`);
+      err.status = res.status;
+      throw err;
+    }
+    return res.json();
+  };
+
+  try {
+    const whoami = await get('/alpha/whoami');
+    const orgId = whoami?.org?.id;
+    if (!orgId) throw new Error('whoami 响应缺少 org.id');
+    const q = `?orgId=${encodeURIComponent(orgId)}`;
+    const credits = await get(`/alpha/billing/credits${q}`);
+    const subscriptions = await get(`/alpha/billing/subscriptions${q}`);
+    const since = subscriptions?.data?.currentPeriodStart;
+    const usage = await get(`/alpha/usage/summary${q}${since ? `&since=${encodeURIComponent(since)}` : ''}`);
+    return parseSnapshot({ whoami, credits, subscriptions, usage });
+  } catch (e) {
+    const aborted = e?.name === 'AbortError' || e?.code === 'ABORT_ERR';
+    const status = e?.status;
+    return {
+      ok: false,
+      authInvalid: status === 401 || status === 403,
+      error: aborted ? `额度查询超时（>${timeoutMs}ms）` : redactMessage(e?.message ?? String(e), key),
+      fetchedAt: now(),
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}

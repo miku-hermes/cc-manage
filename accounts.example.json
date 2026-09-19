@@ -1,0 +1,6 @@
+{
+  "accounts": [
+    { "name": "主号", "key": "user_xxxxxxxxxxxxxxxx", "enabled": true },
+    { "name": "备用号", "key": "user_yyyyyyyyyyyyyyyy", "enabled": true }
+  ]
+}

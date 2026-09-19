@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cc-manage · 额度面板</title>
+<style>
+  :root {
+    --bg: #0f1117; --card: #171a23; --card2: #1e2230; --fg: #e6e9ef; --dim: #8b93a7;
+    --ok: #34d399; --warn: #fbbf24; --bad: #f87171; --line: #272c3a; --accent: #60a5fa;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 14px/1.5 ui-sans-serif, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+  header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 18px 24px; border-bottom: 1px solid var(--line); background: var(--card); }
+  h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: .5px; }
+  .badge { font-size: 12px; color: var(--dim); border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; }
+  .badge.ok { color: var(--ok); border-color: #1d4d3c; }
+  .badge.bad { color: var(--bad); border-color: #55262a; }
+  main { padding: 20px 24px; max-width: 1400px; margin: 0 auto; }
+  .toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+  button { background: var(--card2); color: var(--fg); border: 1px solid var(--line);
+    border-radius: 8px; padding: 7px 14px; cursor: pointer; font-size: 13px; }
+  button:hover { border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: progress; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  .card.paused { border-color: #5a4a1c; }
+  .card.invalid { border-color: #55262a; }
+  .card h2 { font-size: 15px; margin: 0 0 2px; display: flex; align-items: center; gap: 8px; }
+  .sub { color: var(--dim); font-size: 12px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .money { font-size: 26px; font-weight: 600; margin: 10px 0 2px; }
+  .money small { font-size: 12px; color: var(--dim); font-weight: 400; margin-left: 6px; }
+  .row { display: flex; justify-content: space-between; font-size: 12px; color: var(--dim); margin-top: 12px; }
+  .bar { height: 7px; border-radius: 999px; background: #232837; overflow: hidden; margin-top: 5px; }
+  .bar > i { display: block; height: 100%; border-radius: 999px; transition: width .4s; }
+  .s-ok > i { background: linear-gradient(90deg, #34d399, #22d3ee); }
+  .s-warn > i { background: linear-gradient(90deg, #fbbf24, #fb923c); }
+  .s-bad > i { background: linear-gradient(90deg, #f87171, #ef4444); }
+  .tags { margin-top: 12px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .tag { font-size: 11px; border-radius: 6px; padding: 2px 8px; background: #232837; color: var(--dim); }
+  .tag.ok { color: var(--ok); } .tag.bad { color: var(--bad); } .tag.warn { color: var(--warn); }
+  .err { margin-top: 10px; font-size: 12px; color: var(--bad); word-break: break-all; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .stat { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .stat b { display: block; font-size: 20px; font-weight: 600; }
+  .stat span { color: var(--dim); font-size: 12px; }
+  footer { color: var(--dim); font-size: 12px; padding: 16px 24px 32px; text-align: center; }
+  .muted { color: var(--dim); }
+</style>
+</head>
+<body>
+<header>
+  <h1>cc-manage · 多账号额度面板</h1>
+  <span id="health" class="badge">加载中…</span>
+  <span id="updated" class="badge"></span>
+</header>
+<main>
+  <div class="stats" id="stats"></div>
+  <div class="toolbar">
+    <button id="refresh">立即刷新额度</button>
+    <button id="auto">自动刷新：开</button>
+    <span class="muted" id="upstream"></span>
+  </div>
+  <div class="grid" id="cards"></div>
+</main>
+<footer>只读面板 · 不显示任何完整 key（仅 keyId / keyPrefix）</footer>
+<script>
+const $ = (id) => document.getElementById(id);
+let auto = true;
+
+function cls(pct) { if (pct === null || pct === undefined) return 's-ok'; return pct >= 90 ? 's-bad' : pct >= 70 ? 's-warn' : 's-ok'; }
+function pctText(pct) { return pct === null || pct === undefined ? '—' : pct.toFixed(1) + '%'; }
+function money(n) { return (n === null || n === undefined) ? '—' : Number(n).toFixed(2); }
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+function bar(label, w) {
+  const pct = w ? w.percent : null;
+  return '<div class="row"><span>' + label + '</span><span>' + pctText(pct) + '</span></div>'
+    + '<div class="bar ' + cls(pct) + '"><i style="width:' + (pct === null ? 0 : Math.min(100, pct)) + '%"></i></div>';
+}
+
+function render(d) {
+  $('health').textContent = '可用 ' + d.summary.available + ' / ' + d.summary.accounts + ' · 在途 ' + d.summary.concurrency;
+  $('health').className = 'badge ' + (d.summary.available > 0 ? 'ok' : 'bad');
+  $('updated').textContent = '更新于 ' + new Date(d.now).toLocaleTimeString();
+  $('upstream').textContent = '内核 ' + d.upstreamProxyUrl + (d.allowPassthrough ? ' · 已开启直连透传' : '');
+
+  $('stats').innerHTML = [
+    ['账号数', d.summary.accounts], ['可用', d.summary.available], ['暂停中', d.summary.paused],
+    ['在途请求', d.summary.concurrency], ['总请求', d.stats.total], ['错误数', d.stats.errors],
+    ['累计 token', d.stats.totalTokens],
+  ].map(([k, v]) => '<div class="stat"><b>' + v + '</b><span>' + k + '</span></div>').join('');
+
+  $('cards').innerHTML = d.accounts.map(a => {
+    const q = a.lastQuota;
+    const cardCls = a.authInvalid ? 'invalid' : a.paused ? 'paused' : '';
+    const tags = [];
+    tags.push(a.enabled ? '<span class="tag ok">已启用</span>' : '<span class="tag warn">手动停用</span>');
+    tags.push(a.available ? '<span class="tag ok">可调度</span>' : '<span class="tag bad">不可用</span>');
+    if (a.paused) tags.push('<span class="tag warn">暂停至 ' + new Date(a.pausedUntil).toLocaleTimeString() + '</span>');
+    if (a.authInvalid) tags.push('<span class="tag bad">鉴权失效</span>');
+    tags.push('<span class="tag">在途 ' + a.concurrency + '</span>');
+    if (q && q.plan) tags.push('<span class="tag">套餐 ' + esc(q.plan.planId ?? '-') + '</span>');
+
+    return '<div class="card ' + cardCls + '">'
+      + '<h2>' + esc(a.name) + (a.lastQuota && a.lastQuota.displayName ? ' <span class="sub">' + esc(a.lastQuota.displayName) + '</span>' : '') + '</h2>'
+      + '<div class="sub">' + esc(a.keyId) + ' · ' + esc(a.keyPrefix) + '…</div>'
+      + '<div class="money">' + money(q ? q.remaining : null) + '<small>剩余额度</small></div>'
+      + (q ? '<div class="sub">月度 ' + money(q.credits.monthlyCredits) + ' · 购买 ' + money(q.credits.purchasedCredits) + ' · 赠送 ' + money(q.credits.freeCredits) + '</div>' : '<div class="sub">尚未获取额度快照</div>')
+      + bar('5 小时窗口', q && q.fiveHour)
+      + bar('本周窗口', q && q.weekly)
+      + bar('本月周期', q && q.monthly)
+      + (q && q.usage ? '<div class="sub" style="margin-top:10px">本周期 token ' + q.usage.totalTokens + ' · 花费 ' + money(q.usage.totalCost) + '</div>' : '')
+      + '<div class="tags">' + tags.join('') + '</div>'
+      + (a.lastError ? '<div class="err">最近错误：' + esc(a.lastError) + '</div>' : '')
+      + '</div>';
+  }).join('') || '<div class="card">账号池为空。请在 accounts.json 里配置账号，或用 CC_ACCOUNTS 环境变量注入。</div>';
+}
+
+async function load() {
+  try {
+    const r = await fetch('/api/status');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    render(await r.json());
+  } catch (e) {
+    $('health').textContent = '加载失败：' + e.message;
+    $('health').className = 'badge bad';
+  }
+}
+
+$('refresh').onclick = async () => {
+  $('refresh').disabled = true;
+  try { const r = await fetch('/api/accounts/refresh', { method: 'POST' }); if (r.ok) render(await r.json()); }
+  catch (e) { /* 保持面板可用 */ }
+  finally { $('refresh').disabled = false; }
+};
+$('auto').onclick = () => {
+  auto = !auto;
+  $('auto').textContent = '自动刷新：' + (auto ? '开' : '关');
+  if (auto) load();
+};
+load();
+setInterval(() => { if (auto) load(); }, 5000);
+</script>
+</body>
+</html>

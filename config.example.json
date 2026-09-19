@@ -1,0 +1,15 @@
+{
+  "gatewayPort": 3051,
+  "gatewayHost": "127.0.0.1",
+  "upstreamProxyUrl": "http://127.0.0.1:3050",
+  "ccApiBase": "https://api.commandcode.ai",
+  "quotaPollIntervalMs": 300000,
+  "pausedRecheckIntervalMs": 60000,
+  "quotaTimeoutMs": 15000,
+  "sessionAffinityTtlMs": 1800000,
+  "allowPassthrough": false,
+  "logLevel": "info",
+  "logFile": "",
+  "protectAdminApi": false,
+  "maxBodyBytes": 20971520
+}

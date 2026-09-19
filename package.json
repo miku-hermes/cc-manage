@@ -1,0 +1,16 @@
+{
+  "name": "cc-manage",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Command Code 多账号反代网关 + 额度调度 + 网页面板（零外部依赖）",
+  "main": "gateway.mjs",
+  "scripts": {
+    "start": "node gateway.mjs",
+    "dev": "node --watch gateway.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
