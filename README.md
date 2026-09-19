@@ -37,6 +37,75 @@ npm start                                            # 监听 127.0.0.1:3051
 
 默认只监听 `127.0.0.1`。若确实要对外暴露，请务必同时设置 `gatewayHost=0.0.0.0` 与 `protectAdminApi=true`。
 
+### Docker 部署（一键起网关 + 协议内核）
+
+`docker compose` 会同时拉起两个服务：`gateway`（本仓库，宿主只映射 `127.0.0.1:3051`）与 `core`（`vendor/commandcode-proxy`，**不映射宿主端口**）。宿主上的客户端只跟 `gateway` 说话。
+
+```bash
+# 1. 前置准备：填真 key、造本地 key（只读 bind mount 进容器，不进镜像）
+cp accounts.example.json accounts.json     # 填真实 CC 上游 key（user_ 开头）
+cp keys.example.json keys.json             # 填本地 key，必须 sk-cg- 开头
+openssl rand -hex 24                       # 生成随机串，形如 sk-cg-<这串>
+
+# 2. 可选调参
+cp .env.example .env
+
+# 3. 构建 + 后台启动
+docker compose up -d --build
+```
+
+健康检查：
+
+```bash
+docker compose ps                          # 期望 core / gateway 两行都是 healthy
+curl -s 127.0.0.1:3051/health              # {"ok":true,"accounts":N,"available":M}
+```
+
+调用示例（key 用 `keys.json` 里那把）：
+
+```bash
+curl -s -X POST 127.0.0.1:3051/v1/chat/completions \
+  -H "authorization: Bearer sk-cg-xxxxxxxx" \
+  -H "content-type: application/json" \
+  -d '{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"hi"}]}'
+
+# 流式
+curl -N -X POST 127.0.0.1:3051/v1/chat/completions \
+  -H "authorization: Bearer sk-cg-xxxxxxxx" \
+  -H "content-type: application/json" \
+  -d '{"model":"claude-sonnet-4-5","stream":true,"messages":[{"role":"user","content":"hi"}]}'
+```
+
+面板：浏览器打开 `http://127.0.0.1:3051/`。默认 `PROTECT_ADMIN_API=1`，面板与 `/api/*` 也要带 `sk-cg-` key；只在宿主本机自用、想要免密时，用 `PROTECT_ADMIN_API=0 docker compose up -d` 覆盖（**风险**：同机其他用户可直连面板与额度 API）。
+
+**密钥安全**：`accounts.json` / `keys.json` 只通过**只读 bind mount** 进容器，镜像内 `/app` 不含任何密钥文件（可用 §验收 里的 `grep` 自查）。换 key 只需改宿主文件后 `docker compose restart gateway`。
+
+**为什么 `core` 不对外映射**：内核本身不做账号池，暴露出去等于绕过网关直接用一个 key（还丢掉了选号、额度暂停、面板），所以刻意只让 `gateway` 容器访问。
+**公网访问**：宿主只绑 `127.0.0.1:3051`，需要公网时请自己在前面放一个 nginx（不在本 compose 内）。
+
+日志与排障：
+
+```bash
+docker compose logs -f gateway     # 网关日志（已脱敏，只有 keyId/keyPrefix）
+docker compose logs -f core        # 内核日志
+docker compose down                # 清理（不要加 -v，除非你确实想删数据卷）
+```
+
+常见坑：端口被占用（改 `.env` 里的 `GATEWAY_BIND_PORT`）；`core` 未 healthy 时 `gateway` 会一直等（`docker compose ps` 看到 `core` 不是 healthy 就先看它的日志）。
+
+**自测链路（不填真 key 也能验证）**：用 `accounts.json` 里的假 `user_` key 时，网关启动那一刻的额度轮询会从 CC 拿到 401，于是按 SPEC §5 把这些账号标记为 `authInvalid` 并跳过，打反代会得到 `503 no_available_account`（这是**预期**行为，不是故障）。想验证「请求真的转发到了内核、且 key 被替换」，把额度轮询指到一个不可达地址即可（内核仍用自己所带的 `apiBase` 打真实 CC）：
+
+```bash
+CC_API_BASE=http://127.0.0.1:9 docker compose up -d --force-recreate gateway
+curl -s -o /dev/null -w '%{http_code}\n' -X POST 127.0.0.1:3051/v1/chat/completions \
+  -H "authorization: Bearer sk-cg-xxxxxxxx" -H "content-type: application/json" \
+  -d '{"model":"deepseek/deepseek-v4-flash","messages":[{"role":"user","content":"hi"}]}'   # 期望 401
+docker compose logs --tail 20 core   # 能看到请求到达 + 被替换成池内账号的 key（user_dem…）
+docker compose up -d --force-recreate gateway   # 恢复默认
+```
+
+**内存提示**：本机 2GB，已用三重封顶 —— `mem_limit`（core 512m / gateway 256m）+ `CC_MAX_BODY_MB`（默认 20）+ `CC_MAX_INFLIGHT`（默认 8）。公网/高并发还要另加 nginx 侧的连接数限制。
+
 ### 配置 `config.json`
 
 字段全部可选，缺省值如下：

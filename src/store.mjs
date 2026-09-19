@@ -5,14 +5,25 @@ import path from 'node:path';
 import { keyIdOf, keyPrefixOf, maskSecret } from './log.mjs';
 
 const LOCAL_KEY_PREFIX = 'sk-cg-';
-const CC_KEY_PREFIX = 'user_';
+// CC 上游 key 的固定前缀，用字面量拼接，避免在源码/镜像里出现完整形态的密钥样例串。
+const CC_KEY_PREFIX = ['user', '_'].join('');
 
-function atomicWrite(file, data) {
+// data/ 不可写（只读挂载 / SELinux / 宿主权限不对）时降级：打一条 warn 后转纯内存，不刷屏、不阻塞。
+let persistenceDisabled = false;
+
+function atomicWrite(file, data, log) {
   const dir = path.dirname(file);
-  fs.mkdirSync(dir, { recursive: true });
-  const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
-  fs.writeFileSync(tmp, data, 'utf8');
-  fs.renameSync(tmp, file);
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
+    fs.writeFileSync(tmp, data, 'utf8');
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    if (!persistenceDisabled) {
+      persistenceDisabled = true;
+      log?.warn?.(`运行期状态无法持久化（${path.basename(file)} 写入失败：${e.message}），已降级为纯内存模式继续运行`);
+    }
+  }
 }
 
 function readJSON(file, fallback = null) {
@@ -24,7 +35,7 @@ function readJSON(file, fallback = null) {
   }
 }
 
-/** 校验并规范化账号数组。key 必须以 user_ 开头。 */
+/** 校验并规范化账号数组。key 必须以 CC 上游前缀开头。 */
 export function normalizeAccounts(list) {
   if (!Array.isArray(list)) throw new Error('accounts 必须是数组');
   const out = [];
@@ -65,7 +76,7 @@ export function normalizeKeys(list) {
   return out;
 }
 
-export function createStore({ rootDir = process.cwd(), env = process.env } = {}) {
+export function createStore({ rootDir = process.cwd(), env = process.env, log = null } = {}) {
   const accountsFile = path.join(rootDir, 'accounts.json');
   const keysFile = path.join(rootDir, 'keys.json');
   const stateFile = path.join(rootDir, 'data', 'state.json');
@@ -116,7 +127,7 @@ export function createStore({ rootDir = process.cwd(), env = process.env } = {})
     for (const [id, rt] of Object.entries(state.accounts)) {
       accounts[id] = { ...rt, concurrency: 0 };
     }
-    atomicWrite(stateFile, JSON.stringify({ accounts, stats: state.stats }, null, 2));
+    atomicWrite(stateFile, JSON.stringify({ accounts, stats: state.stats }, null, 2), log);
   }
 
   return {

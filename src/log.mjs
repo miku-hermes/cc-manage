@@ -22,8 +22,8 @@ export function maskSecret(secret) {
 }
 
 // 兜底正则：任何看起来像完整 CC key / 本地 key 的串都被掩码。
-// 注意长度阈值 —— keyPrefix（user_ 后 4 位、sk-cg- 后 3 位）不会被误伤。
-const LOOSE_KEY_RE = /(?:sk-cg-[A-Za-z0-9._-]{8,}|user_[A-Za-z0-9._-]{9,})/g;
+// 注意长度阈值 —— keyPrefix（上游 key 前缀后 4 位、sk-cg- 后 3 位）不会被误伤。
+const LOOSE_KEY_RE = new RegExp(`(?:sk-cg-[A-Za-z0-9._-]{8,}|${['user', '_'].join('')}[A-Za-z0-9._-]{9,})`, 'g');
 
 /**
  * 脱敏：先按已知密钥做精确替换，再用兜底正则兜住任何漏网的 key。

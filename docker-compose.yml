@@ -1,0 +1,52 @@
+name: cc-manage
+
+services:
+  core:
+    build: ./vendor/commandcode-proxy
+    environment:
+      PORT: "3050"
+      HOST: "0.0.0.0"
+      CC_MAX_BODY_MB: "${CC_MAX_BODY_MB:-20}"     # 2GB 小机器必须压小，见内核 README 内存章节
+      CC_MAX_INFLIGHT: "${CC_MAX_INFLIGHT:-8}"
+      NODE_OPTIONS: "--max-old-space-size=384"
+    # 刻意不映射宿主端口：core 只允许网关容器访问
+    mem_limit: 512m
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3050/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  gateway:
+    build: .
+    depends_on:
+      core:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${GATEWAY_BIND_PORT:-3051}:3051"   # 只绑宿主回环，默认不对外
+    environment:
+      GATEWAY_HOST: "0.0.0.0"          # 容器内必须监听 0.0.0.0，宿主侧已限制为 127.0.0.1
+      GATEWAY_PORT: "3051"
+      UPSTREAM_PROXY_URL: "http://core:3050"
+      CC_API_BASE: "${CC_API_BASE:-https://api.commandcode.ai}"
+      PROTECT_ADMIN_API: "${PROTECT_ADMIN_API:-1}"     # 容器内绑 0.0.0.0，默认开启保护
+      QUOTA_POLL_INTERVAL_MS: "${QUOTA_POLL_INTERVAL_MS:-300000}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      NODE_OPTIONS: "--max-old-space-size=192"
+    volumes:
+      - ./accounts.json:/app/accounts.json:ro          # 只读挂载，密钥不进镜像
+      - ./keys.json:/app/keys.json:ro
+      - cc-manage-data:/app/data                       # 命名卷，避免宿主目录权限坑
+    mem_limit: 256m
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3051/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  cc-manage-data:

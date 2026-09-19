@@ -4,3 +4,4 @@ data/
 accounts.json
 keys.json
 config.local.json
+.env

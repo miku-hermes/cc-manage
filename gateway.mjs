@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfig } from './src/config.mjs';
-import { createStore } from './src/store.mjs';
+import { createStore, CC_KEY_PREFIX } from './src/store.mjs';
 import { createLogger, keyIdOf, keyPrefixOf, redact } from './src/log.mjs';
 import { fetchQuota } from './src/quota.mjs';
 import { createScheduler } from './src/scheduler.mjs';
@@ -36,7 +36,7 @@ export async function startGateway(overrides = {}) {
   const config = { ...loadConfig(overrides.configPath ?? path.join(ROOT, 'config.json'), overrides.env ?? process.env), ...(overrides.config ?? {}) };
   const log = createLogger({ level: config.logLevel, file: config.logFile });
 
-  const store = createStore({ rootDir: overrides.rootDir ?? ROOT, env: overrides.env ?? process.env });
+  const store = createStore({ rootDir: overrides.rootDir ?? ROOT, env: overrides.env ?? process.env, log });
   const accounts = store.loadAccounts();
   const localKeys = store.loadKeys();
   store.loadState();
@@ -206,7 +206,7 @@ export async function startGateway(overrides = {}) {
       if (!key) return authError(res);
 
       const isLocal = localKeyIndexOf(key) >= 0;
-      const isPassthrough = !isLocal && config.allowPassthrough && key.startsWith('user_');
+      const isPassthrough = !isLocal && config.allowPassthrough && key.startsWith(CC_KEY_PREFIX);
 
       if (!isLocal && !isPassthrough) {
         log.warn(`鉴权失败（不认识的 key: ${keyPrefixOf(key)}***）来自 ${req.socket.remoteAddress}`);
