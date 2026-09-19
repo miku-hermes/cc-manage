@@ -244,3 +244,18 @@ curl 127.0.0.1:3051/health
 - `data/state.json` 含账号运行期状态，已在 `.gitignore` 里，别提交。
 - `resetAt` 可能是秒、毫秒或 ISO 字符串，已统一归一化成秒；写新代码时别假设它是某一种。
 - 月度百分比没有官方 cap 字段，是用「本周期花费 / (花费 + 剩余额度)」推算的（见 `src/quota.mjs` 里的 TODO）。
+
+## 镜像与私有部署
+
+CI 会把两个镜像推到 GitHub Container Registry：
+
+```
+ghcr.io/<owner>/cc-manage-gateway:latest
+ghcr.io/<owner>/cc-manage-core:latest
+```
+
+用镜像跑（不需要本仓库源码，只要 `accounts.json` + `keys.json` 两个文件）：
+
+```bash
+./scripts/run-from-ghcr.sh          # OWNER= VERSION= 可覆盖
+```
