@@ -34,17 +34,34 @@ function readBody(stream, cap = ERROR_BODY_CAP) {
   });
 }
 
-// 从流式片段里粗粒度提取 token 用量（finish 事件的 totalUsage）
-const TOKEN_RE = /"(?:totalTokens|outputTokens|output_tokens)"\s*:\s*(\d+)/g;
-function extractTokens(text) {
+// 从流式片段里粗粒度提取 token 用量（finish 事件的 totalUsage）。
+// 上游字段命名不统一：既有驼峰 totalTokens/outputTokens，也有下划线 total_tokens/output_tokens。
+const TOTAL_TOKEN_RE = /"(?:totalTokens|total_tokens)"\s*:\s*(\d+)/g;
+const OUTPUT_TOKEN_RE = /"(?:outputTokens|output_tokens)"\s*:\s*(\d+)/g;
+const PROMPT_TOKEN_RE = /"(?:promptTokens|prompt_tokens)"\s*:\s*(\d+)/g;
+const COMPLETION_TOKEN_RE = /"(?:completionTokens|completion_tokens)"\s*:\s*(\d+)/g;
+
+function maxMatched(re, text) {
   let max = 0;
   let m;
-  TOKEN_RE.lastIndex = 0;
-  while ((m = TOKEN_RE.exec(text)) !== null) {
+  re.lastIndex = 0;
+  while ((m = re.exec(text)) !== null) {
     const n = Number(m[1]);
     if (Number.isFinite(n) && n > max) max = n;
   }
   return max;
+}
+
+/**
+ * 单块文本里的 token 数：优先 total，其次 output，最后用 prompt + completion 求和兜底。
+ * 流式分块里 total 是累加值，调用方对多次提取结果取最大值即为最终值。
+ */
+export function extractTokens(text) {
+  const total = maxMatched(TOTAL_TOKEN_RE, text);
+  if (total > 0) return total;
+  const output = maxMatched(OUTPUT_TOKEN_RE, text);
+  if (output > 0) return output;
+  return maxMatched(PROMPT_TOKEN_RE, text) + maxMatched(COMPLETION_TOKEN_RE, text);
 }
 
 /** 流式把上游响应边收边转；下游写阻塞时暂停读上游，drain 再恢复。 */

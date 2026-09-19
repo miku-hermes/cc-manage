@@ -1,6 +1,7 @@
 // cc-manage 入口：HTTP 服务 + 路由（多账号反代 + 额度面板 API）
 import http from 'node:http';
 import fs from 'node:fs';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfig } from './src/config.mjs';
@@ -39,7 +40,7 @@ export async function startGateway(overrides = {}) {
   const store = createStore({ rootDir: overrides.rootDir ?? ROOT, env: overrides.env ?? process.env, log });
   const accounts = store.loadAccounts();
   const localKeys = store.loadKeys();
-  store.loadState();
+  store.loadState(accounts);   // 传入当前账号池 → 自动清理已删账号的残留状态
 
   for (const a of accounts) log.registerSecret(a.key);
   for (const k of localKeys) log.registerSecret(k.key);
@@ -106,8 +107,15 @@ export async function startGateway(overrides = {}) {
     return '';
   }
 
+  // 两侧都先 sha256 成等长摘要再 timingSafeEqual，避免逐字符比较泄漏时序信息；
+  // 长度/内容不同都走同一条比较路径（摘要等长，timingSafeEqual 不会因长度抛错）。
+  function sha256(text) {
+    return createHash('sha256').update(String(text ?? ''), 'utf8').digest();
+  }
+
   function localKeyIndexOf(key) {
-    return localKeys.findIndex((k) => k.key === key);
+    const probe = sha256(key);
+    return localKeys.findIndex((k) => timingSafeEqual(probe, sha256(k.key)));
   }
 
   function sendJSON(res, status, obj) {
@@ -192,7 +200,7 @@ export async function startGateway(overrides = {}) {
     // 面板
     if (req.method === 'GET' && url.pathname === '/') {
       const html = readPanel();
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'x-content-type-options': 'nosniff' });
       return res.end(html);
     }
 

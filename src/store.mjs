@@ -108,7 +108,38 @@ export function createStore({ rootDir = process.cwd(), env = process.env, log = 
     return { concurrency: 0, pausedUntil: null, lastQuota: null, lastError: null, lastErrorAt: null };
   }
 
-  function loadState() {
+  /**
+   * 清理已从 accounts.json 删掉的账号残留：state.accounts 与 stats.byAccount 里
+   * 凡是不在当前账号池 keyId 集合中的条目一律删除，并把它们的请求数从全局合计里扣掉，
+   * 保证 byAccount 之和与 total/errors/totalTokens 仍然自洽。返回被清理的 keyId。
+   */
+  function pruneState(accounts = []) {
+    const alive = new Set(accounts.map((a) => a.keyId));
+    const removed = { accounts: [], stats: [] };
+    for (const id of Object.keys(state.accounts)) {
+      if (!alive.has(id)) {
+        delete state.accounts[id];
+        removed.accounts.push(id);
+      }
+    }
+    const byAccount = state.stats?.byAccount ?? {};
+    for (const id of Object.keys(byAccount)) {
+      if (alive.has(id)) continue;
+      const s = byAccount[id] ?? {};
+      state.stats.total = Math.max(0, (state.stats.total ?? 0) - (s.requests ?? 0));
+      state.stats.errors = Math.max(0, (state.stats.errors ?? 0) - (s.errors ?? 0));
+      state.stats.totalTokens = Math.max(0, (state.stats.totalTokens ?? 0) - (s.tokens ?? 0));
+      delete byAccount[id];
+      removed.stats.push(id);
+    }
+    return removed;
+  }
+
+  /**
+   * 加载运行期状态。传入当前账号数组时，顺带清理已删账号的残留并落盘。
+   * @param {Array<{keyId: string}>|null} accounts 当前账号池（可选）
+   */
+  function loadState(accounts = null) {
     const raw = readJSON(stateFile, null);
     if (raw && typeof raw === 'object') {
       if (raw.accounts && typeof raw.accounts === 'object') {
@@ -116,6 +147,13 @@ export function createStore({ rootDir = process.cwd(), env = process.env, log = 
       }
       if (raw.stats && typeof raw.stats === 'object') {
         state.stats = { total: 0, errors: 0, totalTokens: 0, byAccount: {}, ...raw.stats };
+      }
+    }
+    if (Array.isArray(accounts)) {
+      const removed = pruneState(accounts);
+      if (removed.accounts.length > 0 || removed.stats.length > 0) {
+        log?.info?.(`清理已删除账号的残留状态: ${[...new Set([...removed.accounts, ...removed.stats])].join(', ')}`);
+        saveState();
       }
     }
     return state;
@@ -139,6 +177,7 @@ export function createStore({ rootDir = process.cwd(), env = process.env, log = 
     loadAccounts,
     loadKeys,
     loadState,
+    pruneState,
     saveState,
     runtimeFor(keyId) {
       if (!state.accounts[keyId]) state.accounts[keyId] = blankRuntime();

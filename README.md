@@ -91,7 +91,20 @@ docker compose logs -f core        # 内核日志
 docker compose down                # 清理（不要加 -v，除非你确实想删数据卷）
 ```
 
-常见坑：端口被占用（改 `.env` 里的 `GATEWAY_BIND_PORT`）；`core` 未 healthy 时 `gateway` 会一直等（`docker compose ps` 看到 `core` 不是 healthy 就先看它的日志）。
+**排障：默认以 `PROTECT_ADMIN_API=1` 重启容器**。看面板只能拿到 401、或想确认管理 API 处于受保护状态时，用下面这条命令**以安全默认值重建网关**（`docker-compose.yml` 里已写成 `${PROTECT_ADMIN_API:-1}`，此处显式给值只是防呆；不要用 `PROTECT_ADMIN_API=0`，那等于把 `/api/status`（含账号名、余额、keyId、token 统计）向同机任何进程开放）：
+
+```bash
+cd /root/projects/cc-manage
+PROTECT_ADMIN_API=1 docker compose build gateway && PROTECT_ADMIN_API=1 docker compose up -d --force-recreate gateway
+curl -s -o /dev/null -w '%{http_code}\n' 127.0.0.1:3051/api/status                                    # 期望 401
+curl -s -H "Authorization: Bearer $(python3 -c "import json;print(json.load(open('keys.json'))['keys'][0]['key'])")" 127.0.0.1:3051/api/status | head -c 200   # 期望 200 + JSON
+```
+
+面板同样要带 key：打开 `http://127.0.0.1:3051/` 后在右上角输入框填入同一把 `sk-cg-` key。
+
+常见坑：端口被占用（改 `.env` 里的 `GATEWAY_BIND_PORT`）；`core` 未 healthy 时 `gateway` 会一直等（`docker compose ps` 看到 `core` 不是 healthy 就先看它的日志）；401 但 key 明明是对的 → 确认没有多余空格/换行（面板会自动 `trim`）。
+
+**已删账号的残留会自动清理**：`data/state.json` 里 `accounts` 与 `stats.byAccount` 中以 keyId 为键的条目，凡是**不在当前 `accounts.json` 里**的，网关启动加载状态时会一并删除（被删账号的请求数 / 错误数 / token 数也从全局合计里扣掉，保证 `byAccount` 之和与 `total*` 自洽），并立即落盘，避免删号后统计与状态一直残留。
 
 **自测链路（不填真 key 也能验证）**：用 `accounts.json` 里的假 `user_` key 时，网关启动那一刻的额度轮询会从 CC 拿到 401，于是按 SPEC §5 把这些账号标记为 `authInvalid` 并跳过，打反代会得到 `503 no_available_account`（这是**预期**行为，不是故障）。想验证「请求真的转发到了内核、且 key 被替换」，把额度轮询指到一个不可达地址即可（内核仍用自己所带的 `apiBase` 打真实 CC）：
 
@@ -202,6 +215,10 @@ curl -N -X POST 127.0.0.1:3051/v1/chat/completions \
 ## 面板
 
 浏览器打开 `http://127.0.0.1:3051/`：每个账号一张卡片，显示可辨识前缀（`keyId · keyPrefix`）、剩余额度、5h / 周 / 月进度条、在途数、暂停与鉴权状态、最近错误；顶部是账号数 / 可用数 / 暂停数 / 在途数 / 总请求 / 错误数 / 累计 token，并提供「立即刷新额度」按钮。
+
+**面板需要填 key**：`PROTECT_ADMIN_API=1`（默认）时 `/api/*` 要鉴权，所以右上角有一个 `type=password` 的 key 输入框——把 `keys.json` 里的 `sk-cg-…` 粘进去点「保存」，值只存在浏览器 `sessionStorage`（关标签页即失效，不落盘、不写 cookie），之后面板所有请求（含「立即刷新额度」）都会自动带上 `Authorization: Bearer <key>`。没填 key 时面板只显示一条提示，不会每 5 秒刷一堆 401 报错。key 只留在本机浏览器里，服务端不回显、不记录。
+
+面板响应固定带 `X-Content-Type-Options: nosniff`。
 
 ## 测试与自测
 

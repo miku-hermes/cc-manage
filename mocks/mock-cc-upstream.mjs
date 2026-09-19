@@ -102,6 +102,18 @@ export async function startMockUpstream(opts = {}) {
         if (req.url.includes('/v1/models')) {
           return sendJSON(res, 200, { object: 'list', data: [{ id: 'mock-model', object: 'model' }] });
         }
+        // 可配置的用量响应（供 token 统计用例）：usageBody → 非流式 JSON；sseChunks → 自定义流式分块
+        if (behavior.usageBody) {
+          const body = JSON.stringify(behavior.usageBody);
+          res.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) });
+          return res.end(body);
+        }
+        if (Array.isArray(behavior.sseChunks)) {
+          res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+          for (const c of behavior.sseChunks) res.write(`data: ${JSON.stringify(c)}\n\n`);
+          res.write('data: [DONE]\n\n');
+          return res.end();
+        }
         // 默认：3 个 SSE chunk + [DONE]
         res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
         for (const c of SSE_CHUNKS) res.write(`data: ${JSON.stringify(c)}\n\n`);

@@ -505,3 +505,114 @@ test('面板数据契约：/api/status 提供 index.html 读取的全部字段',
   // 面板 HTML 就是从这个接口取数的
   assert.match((await request(`${ctx.baseUrl}/`)).body, /'\/api\/status'/);
 });
+
+// ── token 统计（Bug 1）──────────────────────────────────────────────
+test('token 统计：非流式响应里的 total_tokens（下划线）被计入 stats', async (t) => {
+  const ctx = await startTestGateway({
+    behavior: { usageBody: { usage: { prompt_tokens: 33, completion_tokens: 60, total_tokens: 93 } } },
+  });
+  t.after(() => ctx.close());
+
+  const res = await request(`${ctx.baseUrl}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${ctx.localKey}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ model: 'mock-model' }),
+  });
+  assert.equal(res.status, 200);
+
+  const status = JSON.parse((await request(`${ctx.baseUrl}/api/status`)).body);
+  assert.equal(status.stats.totalTokens, 93, 'total_tokens 必须被统计进来');
+  assert.equal(status.stats.total, 1);
+  const acct = Object.values(status.stats.byAccount).find((s) => s.requests === 1);
+  assert.equal(acct.tokens, 93, '按账号也应累计 token');
+});
+
+test('token 统计：流式多分块的累加 total 取最终值（不是相加）', async (t) => {
+  const ctx = await startTestGateway({
+    behavior: {
+      sseChunks: [
+        { id: 'c', choices: [{ delta: { content: 'a' } }] },
+        { id: 'c', choices: [{ delta: { content: 'b' } }], usage: { total_tokens: 40 } },
+        { id: 'c', choices: [{ delta: {}, finish_reason: 'stop' }], usage: { total_tokens: 93 } },
+      ],
+    },
+  });
+  t.after(() => ctx.close());
+
+  const res = await request(`${ctx.baseUrl}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${ctx.localKey}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ stream: true }),
+  });
+  assert.equal(res.status, 200);
+
+  const status = JSON.parse((await request(`${ctx.baseUrl}/api/status`)).body);
+  assert.equal(status.stats.totalTokens, 93, '分块累加值取最大（最终值）');
+});
+
+test('token 统计：只有 prompt/completion 时求和兜底（驼峰与下划线都认）', async (t) => {
+  const ctx = await startTestGateway({
+    behavior: { usageBody: { usage: { prompt_tokens: 33, completion_tokens: 60 } } },
+  });
+  t.after(() => ctx.close());
+
+  await request(`${ctx.baseUrl}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${ctx.localKey}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ model: 'mock-model' }),
+  });
+  let status = JSON.parse((await request(`${ctx.baseUrl}/api/status`)).body);
+  assert.equal(status.stats.totalTokens, 93, '33 + 60 = 93');
+
+  // 再来一次驼峰 outputTokens 的响应，应当累加而不是覆盖
+  ctx.upstream.setBehavior({ usageBody: { usage: { outputTokens: 7 } } });
+  await request(`${ctx.baseUrl}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${ctx.localKey}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ model: 'mock-model' }),
+  });
+  status = JSON.parse((await request(`${ctx.baseUrl}/api/status`)).body);
+  assert.equal(status.stats.totalTokens, 100, '第二次的 outputTokens=7 应累加');
+});
+
+// ── 管理 API 鉴权（Bug 2 的接口侧）──────────────────────────────────
+test('PROTECT_ADMIN_API=1：/api/status 无 key → 401，带本地 key → 200', async (t) => {
+  const ctx = await startTestGateway({ config: { protectAdminApi: true } });
+  t.after(() => ctx.close());
+
+  const noKey = await request(`${ctx.baseUrl}/api/status`);
+  assert.equal(noKey.status, 401, '无 key 必须 401');
+
+  const badKey = await request(`${ctx.baseUrl}/api/status`, { headers: { authorization: 'Bearer sk-cg-totallywrong' } });
+  assert.equal(badKey.status, 401, '错 key 必须 401');
+
+  const ok = await request(`${ctx.baseUrl}/api/status`, { headers: { authorization: `Bearer ${ctx.localKey}` } });
+  assert.equal(ok.status, 200, '正确 key 必须 200');
+  assert.equal(JSON.parse(ok.body).ok, true);
+
+  // 刷新额度接口同样受保护
+  assert.equal((await request(`${ctx.baseUrl}/api/accounts/refresh`, { method: 'POST' })).status, 401);
+  assert.equal((await request(`${ctx.baseUrl}/api/accounts/refresh`, {
+    method: 'POST', headers: { authorization: `Bearer ${ctx.localKey}` },
+  })).status, 200);
+});
+
+// ── 面板 HTML 契约（Bug 2）──────────────────────────────────────────
+test('面板 HTML：含 key 输入框（type=password）与 Authorization 头', async (t) => {
+  const ctx = await startTestGateway();
+  t.after(() => ctx.close());
+
+  const res = await request(`${ctx.baseUrl}/`);
+  assert.equal(res.status, 200);
+  assert.equal(res.headers['x-content-type-options'], 'nosniff', '面板响应必须带 nosniff');
+
+  const html = res.body;
+  assert.match(html, /<input[^>]*id="key"[^>]*type="password"/, '必须存在 type=password 的 key 输入框');
+  assert.match(html, /Authorization:\s*'?\s*'?\s*Bearer/i, 'fetch 必须带 Authorization: Bearer');
+  assert.match(html, /sessionStorage/, 'key 必须存 sessionStorage');
+  // /api/status 与刷新接口都必须走带鉴权的 fetch
+  assert.match(html, /apiFetch\('\/api\/status'\)/);
+  assert.match(html, /apiFetch\('\/api\/accounts\/refresh'/);
+  assert.doesNotMatch(html, /fetch\('\/api\/status'\)/, '不能有无鉴权的裸 fetch');
+  assert.doesNotMatch(html, /fetch\('\/api\/accounts\/refresh'/, '刷新也必须带 key');
+});

@@ -48,6 +48,12 @@
   .stat span { color: var(--dim); font-size: 12px; }
   footer { color: var(--dim); font-size: 12px; padding: 16px 24px 32px; text-align: center; }
   .muted { color: var(--dim); }
+  .keybar { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+  .keybar input { background: var(--card2); color: var(--fg); border: 1px solid var(--line);
+    border-radius: 8px; padding: 6px 10px; font-size: 13px; width: 220px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .keybar input:focus { outline: none; border-color: var(--accent); }
+  .keybar input.bad { border-color: #55262a; }
+  .keybar .hint { font-size: 12px; color: var(--warn); }
 </style>
 </head>
 <body>
@@ -55,6 +61,11 @@
   <h1>cc-manage · 多账号额度面板</h1>
   <span id="health" class="badge">加载中…</span>
   <span id="updated" class="badge"></span>
+  <div class="keybar">
+    <input id="key" type="password" placeholder="本地 key（sk-cg-…）" autocomplete="off" spellcheck="false" aria-label="本地 key">
+    <button id="savekey" type="button">保存 key</button>
+    <span id="keyhint" class="hint"></span>
+  </div>
 </header>
 <main>
   <div class="stats" id="stats"></div>
@@ -118,10 +129,44 @@ function render(d) {
   }).join('') || '<div class="card">账号池为空。请在 accounts.json 里配置账号，或用 CC_ACCOUNTS 环境变量注入。</div>';
 }
 
+// ── 本地 key：存 sessionStorage，所有请求都带 Authorization ──────────
+const KEY_STORE = 'cc-manage-key';
+
+function getKey() {
+  try { return sessionStorage.getItem(KEY_STORE) || ''; } catch { return ''; }
+}
+function setKey(v) {
+  try { v ? sessionStorage.setItem(KEY_STORE, v) : sessionStorage.removeItem(KEY_STORE); } catch { /* 隐私模式忽略 */ }
+}
+function authHeaders(extra) {
+  const k = getKey();
+  return k ? Object.assign({ authorization: 'Bearer ' + k }, extra) : Object.assign({}, extra);
+}
+/** 带 key 的 fetch：无 key 时不发请求，直接抛错让上层提示。 */
+function apiFetch(path, opts = {}) {
+  if (!getKey()) return Promise.reject(new Error('NO_KEY'));
+  return fetch(path, Object.assign({}, opts, { headers: authHeaders(opts.headers) }));
+}
+function setHint(text, bad) {
+  $('keyhint').textContent = text || '';
+  $('key').className = bad ? 'bad' : '';
+}
+function showNoKey() {
+  $('health').textContent = '未填写 key';
+  $('health').className = 'badge';
+  setHint('请先填入 sk-cg- key 再刷新', true);
+  $('stats').innerHTML = '';
+  $('cards').innerHTML = '<div class="card">面板需要本地 key（<span class="sub">sk-cg-…</span>）才能读取数据：'
+    + '在右上角输入框填入 keys.json 里的 key 并保存，之后会自动刷新。</div>';
+}
+
 async function load() {
+  if (!getKey()) return showNoKey();
   try {
-    const r = await fetch('/api/status');
+    const r = await apiFetch('/api/status');
+    if (r.status === 401) { setHint('key 无效或缺失（401）', true); $('health').textContent = '鉴权失败 401'; $('health').className = 'badge bad'; return; }
     if (!r.ok) throw new Error('HTTP ' + r.status);
+    setHint('', false);
     render(await r.json());
   } catch (e) {
     $('health').textContent = '加载失败：' + e.message;
@@ -130,18 +175,29 @@ async function load() {
 }
 
 $('refresh').onclick = async () => {
+  if (!getKey()) return showNoKey();
   $('refresh').disabled = true;
-  try { const r = await fetch('/api/accounts/refresh', { method: 'POST' }); if (r.ok) render(await r.json()); }
-  catch (e) { /* 保持面板可用 */ }
+  try {
+    const r = await apiFetch('/api/accounts/refresh', { method: 'POST' });
+    if (r.status === 401) { setHint('key 无效或缺失（401）', true); }
+    else if (r.ok) { setHint('', false); render(await r.json()); }
+  } catch (e) { /* 保持面板可用 */ }
   finally { $('refresh').disabled = false; }
 };
+$('savekey').onclick = () => {
+  setKey($('key').value.trim());
+  setHint('', false);
+  load();
+};
+$('key').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('savekey').click(); });
 $('auto').onclick = () => {
   auto = !auto;
   $('auto').textContent = '自动刷新：' + (auto ? '开' : '关');
   if (auto) load();
 };
-load();
-setInterval(() => { if (auto) load(); }, 5000);
+$('key').value = getKey();
+if (!getKey()) showNoKey(); else load();
+setInterval(() => { if (auto && getKey()) load(); }, 5000);
 </script>
 </body>
 </html>
