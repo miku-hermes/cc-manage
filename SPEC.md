@@ -86,13 +86,15 @@ user-agent: commandcode-cli/1.53.1
 1. `GET /alpha/whoami`
    → `{ org: { login, id }, user: { userName|name, keyName|displayName } }`
    取 `orgId = org.id`，展示名 = `org.login || user.userName || user.name`。
-2. `GET /alpha/billing/credits?orgId=<orgId>`
+   ⚠️ 实测真实账号 `org` 为 `null`（无 `org.id`）：此时 `orgId` 可选（后续接口省略该参数），
+   账号标识回退到 `user.userName || user.name`；只要有用户标识即视为解析成功。
+2. `GET /alpha/billing/credits?orgId=<orgId>`（无 orgId 时省略该参数，接口照样返回数据）
    → `{ credits: { monthlyCredits, purchasedCredits, freeCredits },
         windowLimits: { fiveHour: { used, cap, resetAt }, weekly: { used, cap, resetAt } } }`
    剩余 = 三项相加；`resetAt` 可能是秒级数字、毫秒级数字或 ISO 字符串，统一归一化成秒（>=1e12 视为毫秒 → /1000）。
-3. `GET /alpha/billing/subscriptions?orgId=<orgId>`
+3. `GET /alpha/billing/subscriptions?orgId=<orgId>`（同上可省略）
    → `{ data: { planId, status, currentPeriodStart, currentPeriodEnd } }`
-4. `GET /alpha/usage/summary?orgId=<orgId>&since=<currentPeriodStart>`
+4. `GET /alpha/usage/summary?orgId=<orgId>&since=<currentPeriodStart>`（无 orgId 时用 `?since=...`）
    → `{ totalCost, totalCount, totalTokens }`
 
 **错误处理**：401/403 → 该账号标记 `authInvalid`（面板显示红色，但不自动删除）；

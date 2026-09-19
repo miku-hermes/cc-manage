@@ -93,6 +93,58 @@ test('whoami 缺少 org.id 视为查询失败', async () => {
   assert.match(snap.error, /org\.id/);
 });
 
+test('org 为 null：仍解析成功，orgId 为 undefined，后续接口不带 orgId', async () => {
+  const ff = fakeFetch({
+    '/alpha/whoami': {
+      success: true,
+      user: { id: 'u-1', name: '主号', email: 'a@b.c', userName: 'demo-user' },
+      org: null,
+    },
+    '/alpha/billing/credits': {
+      credits: { monthlyCredits: 10, purchasedCredits: 5, freeCredits: 2.5 },
+      windowLimits: { fiveHour: { used: 5, cap: 50 }, weekly: { used: 20, cap: 200 } },
+    },
+    '/alpha/billing/subscriptions': { data: { planId: 'pro', status: 'active', currentPeriodStart: '2026-09-01T00:00:00Z', currentPeriodEnd: 1800000000 } },
+    '/alpha/usage/summary': { totalCost: 3, totalCount: 2, totalTokens: 999 },
+  });
+  const snap = await fetchQuota('user_orgnull_xxxxx', { fetchImpl: ff });
+
+  assert.equal(snap.ok, true);
+  assert.equal(snap.authInvalid, false);
+  assert.equal(snap.orgId, undefined);          // org 缺失 → 不设 orgId
+  assert.equal(snap.displayName, 'demo-user'); // 回退到 user.userName
+  assert.equal(snap.remaining, 17.5);
+  assert.equal(snap.fiveHour.percent, 10);
+  assert.equal(snap.plan.planId, 'pro');
+  assert.equal(snap.usage.totalTokens, 999);
+
+  // 三个额度接口都必须被调用，且都不带 orgId 参数
+  const paths = ff.calls.map((c) => c.path);
+  assert.deepEqual(paths, ['/alpha/whoami', '/alpha/billing/credits', '/alpha/billing/subscriptions', '/alpha/usage/summary']);
+  for (const c of ff.calls.slice(1)) {
+    assert.ok(!c.search.includes('orgId'), `${c.path} 不应带 orgId: ${c.search}`);
+  }
+  // since 仍然照常带上
+  assert.match(ff.calls.find((c) => c.path === '/alpha/usage/summary').search, /since=/);
+});
+
+test('org 有 id：三个额度接口仍带上 orgId', async () => {
+  const ff = fakeFetch({
+    '/alpha/whoami': { org: { id: 'org-99', login: 'acme' }, user: { userName: 'someone' } },
+    '/alpha/billing/credits': {},
+    '/alpha/billing/subscriptions': { data: { currentPeriodStart: '2026-09-01T00:00:00Z' } },
+    '/alpha/usage/summary': {},
+  });
+  const snap = await fetchQuota('user_withorg_xxxx', { fetchImpl: ff });
+
+  assert.equal(snap.ok, true);
+  assert.equal(snap.orgId, 'org-99');
+  assert.equal(snap.displayName, 'acme'); // 有 org 时 org.login 优先
+  for (const c of ff.calls.slice(1)) {
+    assert.match(c.search, /orgId=org-99/, `${c.path} 应带 orgId`);
+  }
+});
+
 test('401 → authInvalid；403 也算', async () => {
   for (const status of [401, 403]) {
     const ff = fakeFetch({ '/alpha/whoami': { __status: status, body: { error: 'bad key user_supersecretvalue' } } });

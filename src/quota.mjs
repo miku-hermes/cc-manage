@@ -26,6 +26,19 @@ function num(v, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+/**
+ * 解析 whoami 里的账号标识。实测真实账号的 org 为 null（没有 org.id），
+ * 此时 orgId 置为 undefined（查询时省略该参数），展示名回退到 user.userName || user.name。
+ * 有 org.id 时照常带上。只要拿到 org.id 或 user 标识即视为解析成功。
+ * @returns {{ orgId: string|undefined, displayName: string|null, userName: string|null, identified: boolean }}
+ */
+export function parseIdentity(whoami) {
+  const orgId = whoami?.org?.id ?? undefined;
+  const userName = whoami?.user?.userName || whoami?.user?.name || null;
+  const displayName = whoami?.org?.login || userName;
+  return { orgId, displayName, userName, identified: Boolean(orgId || userName) };
+}
+
 /** 从 windowLimits 里的一个窗口算 used/cap/百分比 */
 export function parseWindow(w) {
   if (!w || typeof w !== 'object') return null;
@@ -46,8 +59,7 @@ export function parseWindow(w) {
 
 /** 把 4 个接口的原始响应拼成一份额度快照 */
 export function parseSnapshot({ whoami, credits, subscriptions, usage }) {
-  const orgId = whoami?.org?.id ?? null;
-  const displayName = whoami?.org?.login || whoami?.user?.userName || whoami?.user?.name || null;
+  const { orgId, displayName } = parseIdentity(whoami);
   const keyName = whoami?.user?.keyName || whoami?.user?.displayName || null;
 
   const c = credits?.credits ?? {};
@@ -130,13 +142,15 @@ export async function fetchQuota(key, opts = {}) {
 
   try {
     const whoami = await get('/alpha/whoami');
-    const orgId = whoami?.org?.id;
-    if (!orgId) throw new Error('whoami 响应缺少 org.id');
-    const q = `?orgId=${encodeURIComponent(orgId)}`;
+    // org 可能为 null（实测真实账号如此），此时省略 orgId 参数，其余三个接口照样可用。
+    const { orgId, identified } = parseIdentity(whoami);
+    if (!identified) throw new Error('whoami 响应缺少用户标识（org.id / user.userName / user.name）');
+    const q = orgId ? `?orgId=${encodeURIComponent(orgId)}` : '';
     const credits = await get(`/alpha/billing/credits${q}`);
     const subscriptions = await get(`/alpha/billing/subscriptions${q}`);
     const since = subscriptions?.data?.currentPeriodStart;
-    const usage = await get(`/alpha/usage/summary${q}${since ? `&since=${encodeURIComponent(since)}` : ''}`);
+    const sep = q ? '&' : '?';
+    const usage = await get(`/alpha/usage/summary${q}${since ? `${sep}since=${encodeURIComponent(since)}` : ''}`);
     return parseSnapshot({ whoami, credits, subscriptions, usage });
   } catch (e) {
     const aborted = e?.name === 'AbortError' || e?.code === 'ABORT_ERR';
