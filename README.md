@@ -259,3 +259,27 @@ ghcr.io/<owner>/cc-manage-core:latest
 ```bash
 ./scripts/run-from-ghcr.sh          # OWNER= VERSION= 可覆盖
 ```
+
+### 启用自动构建（GHCR）
+
+CI 配置放在 `ci/docker-publish.yml`（**不在** `.github/workflows/`，因为推送该目录需要 token 具备 `workflow` 权限）。
+启用方式任选其一：
+
+```bash
+# 方式 A：本地一条命令（推的是普通文件，不需要 workflow 权限）
+mkdir -p .github/workflows && git mv ci/docker-publish.yml .github/workflows/ && \
+  git commit -m "ci: 启用自动构建" && git push
+
+# 方式 B：直接在 GitHub 网页上新建 .github/workflows/docker-publish.yml，粘贴 ci/docker-publish.yml 的内容
+```
+
+启用后行为：
+
+- 推送 `master`/`main` 或打 `v*` 标签 → 先跑 `npm test`，通过后构建并推送两个镜像
+- 镜像：`ghcr.io/<owner>/cc-manage-gateway` 与 `ghcr.io/<owner>/cc-manage-core`
+- 标签：`latest`（默认分支）、分支名、`v1.2.3` / `1.2`（打 tag 时）、`sha-<短哈希>`
+- PR 只构建不推送
+- 构建缓存走 GitHub Actions cache；并发构建互不打断
+
+> GHCR 包默认继承仓库可见性；本仓库是 private，因此包也是 private。
+> 换机器拉取需先 `docker login ghcr.io -u <用户名>`（用 PAT，勾 `read:packages`）。
