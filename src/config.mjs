@@ -8,7 +8,7 @@ export const DEFAULTS = {
   upstreamProxyUrl: 'http://127.0.0.1:3050',
   ccApiBase: 'https://api.commandcode.ai',
   // 额度轮询：空闲间隔（<=0 → 完全关闭轮询）
-  quotaPollIntervalMs: 300000,
+  quotaPollIntervalMs: 600000,
   // 活跃间隔：最近 quotaActiveWindowMs 内有代理请求时改用这个间隔（<=0 → 退化为纯空闲间隔）
   quotaActivePollIntervalMs: 60000,
   // 判定「正在被使用」的时间窗

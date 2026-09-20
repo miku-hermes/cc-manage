@@ -18,7 +18,7 @@
  * }} opts
  */
 export function createAdaptivePoller({
-  idleIntervalMs = 300000,
+  idleIntervalMs = 600000,
   activeIntervalMs = 60000,
   activeWindowMs = 300000,
   run,

@@ -147,7 +147,7 @@ docker compose up -d --force-recreate gateway   # 恢复默认
   "gatewayHost": "127.0.0.1",
   "upstreamProxyUrl": "http://127.0.0.1:3050",
   "ccApiBase": "https://api.commandcode.ai",
-  "quotaPollIntervalMs": 300000,
+  "quotaPollIntervalMs": 600000,
   "quotaActivePollIntervalMs": 60000,
   "quotaActiveWindowMs": 300000,
   "pausedRecheckIntervalMs": 60000,
@@ -161,7 +161,7 @@ docker compose up -d --force-recreate gateway   # 恢复默认
 }
 ```
 
-- 额度轮询是**自适应**的：最近 `quotaActiveWindowMs`（默认 5 分钟）内有代理请求 → 用 `quotaActivePollIntervalMs`（默认 60 秒）同步 CC；一直空闲 → 退回 `quotaPollIntervalMs`（默认 300 秒）。实现是**单个自调度 `setTimeout`**，每轮跑完再决定下一次延迟；上一轮没跑完则跳过本轮。`quotaPollIntervalMs: 0` 表示**完全关闭**轮询（`quotaActivePollIntervalMs: 0` 则退化为纯空闲间隔）。
+- 额度轮询是**自适应**的：最近 `quotaActiveWindowMs`（默认 5 分钟）内有代理请求 → 用 `quotaActivePollIntervalMs`（默认 60 秒）同步 CC；一直空闲 → 退回 `quotaPollIntervalMs`（默认 600 秒）。实现是**单个自调度 `setTimeout`**，每轮跑完再决定下一次延迟；上一轮没跑完则跳过本轮。`quotaPollIntervalMs: 0` 表示**完全关闭**轮询（`quotaActivePollIntervalMs: 0` 则退化为纯空闲间隔）。
 - `publicDashboard`（`PUBLIC_DASHBOARD`）：`1`（默认）让 `/` 与 `/api/status` 公开只读；`0` 则要求后台登录 session。
 - 已废弃的 `protectAdminApi`（`PROTECT_ADMIN_API`）：旧版「面板接口要 `sk-cg-` key」开关，仅为老部署兼容保留；新部署请用 `PUBLIC_DASHBOARD=0`。
 

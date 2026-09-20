@@ -133,7 +133,7 @@ user-agent: commandcode-cli/1.53.1
   "gatewayHost": "127.0.0.1",
   "upstreamProxyUrl": "http://127.0.0.1:3050",
   "ccApiBase": "https://api.commandcode.ai",
-  "quotaPollIntervalMs": 300000,
+  "quotaPollIntervalMs": 600000,
   "quotaActivePollIntervalMs": 60000,
   "quotaActiveWindowMs": 300000,
   "pausedRecheckIntervalMs": 60000,

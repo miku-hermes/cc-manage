@@ -522,6 +522,22 @@ test('面板新鲜度：/api/status 的每个额度快照都带可解析的 fetc
   }
 });
 
+test('/api/status 暴露 quotaPoll 配置，供前端推导「过旧」阈值（避免阈值写死）', async (t) => {
+  const ctx = await startTestGateway({
+    config: { quotaPollIntervalMs: 600000, quotaActivePollIntervalMs: 60000, quotaActiveWindowMs: 300000 },
+  });
+  t.after(() => ctx.close());
+
+  const d = JSON.parse((await request(`${ctx.baseUrl}/api/status`)).body);
+  assert.ok(d.quotaPoll, '/api/status 必须带 quotaPoll，否则前端只能写死阈值');
+  assert.equal(d.quotaPoll.idleIntervalMs, 600000, '空闲间隔要如实暴露');
+  assert.equal(d.quotaPoll.activeIntervalMs, 60000);
+  assert.equal(d.quotaPoll.activeWindowMs, 300000);
+  // 前端算的阈值 = 2 倍空闲间隔；这里只锁契约，不锁页面实现
+  assert.ok(d.quotaPoll.idleIntervalMs * 2 > d.quotaPoll.activeWindowMs,
+    '2 倍空闲间隔应大于活跃窗，否则空闲态快照会被误判为过旧');
+});
+
 test('自适应轮询：活跃用 60s、空闲用 300s，且代理请求会 touchActivity', async (t) => {
   const ctx = await startTestGateway({ config: { quotaPollIntervalMs: 300000, quotaActivePollIntervalMs: 60000, quotaActiveWindowMs: 300000 } });
   t.after(() => ctx.close());
@@ -592,7 +608,7 @@ test('配置默认值：新增的自适应字段有默认值，缺失也不会�
   const { loadConfig, DEFAULTS } = await import('../src/config.mjs');
   assert.equal(DEFAULTS.quotaActivePollIntervalMs, 60000);
   assert.equal(DEFAULTS.quotaActiveWindowMs, 300000);
-  assert.equal(DEFAULTS.quotaPollIntervalMs, 300000);
+  assert.equal(DEFAULTS.quotaPollIntervalMs, 600000);
   // 空 env + 不存在的 configPath → 全默认
   const cfg = loadConfig('/nonexistent/config.json', {});
   assert.equal(cfg.quotaActivePollIntervalMs, 60000);
@@ -715,6 +731,9 @@ test('面板 HTML：公开只读（无 key 输入框 + 登录后台入口）', a
   assert.match(html, /href="\/admin"/, '前台必须有登录后台入口');
   // 取数走公开 fetch（不携带 Authorization）
   assert.match(html, /apiFetch\('\/api\/status'\)/);
-  assert.match(html, /apiFetch\('\/api\/accounts\/refresh'/);
-  assert.doesNotMatch(html, /Authorization:\s*'Bearer/, '前台不得再带 Authorization 头');
+  // 额度由后端自适应轮询自动刷新（活跃 60s / 空闲 600s），前台不再提供手动刷新按钮
+  assert.doesNotMatch(html, /apiFetch\('\/api\/accounts\/refresh'/,
+    '前台不应再有手动刷新按钮——额度由自适应轮询自动同步');
+  assert.doesNotMatch(html, /id="refresh"/, '手动刷新按钮已移除');
+  assert.ok(!html.includes('Authoriz' + 'ation'), '前台不得再带 Authorization 头');
 });

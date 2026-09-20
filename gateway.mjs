@@ -451,6 +451,12 @@ export async function startGateway(overrides = {}) {
         byAccount: Object.fromEntries(Object.entries(stats.byAccount).map(([id, s]) => [id, { ...s }])),
       },
       accounts: accounts_,
+      // 轮询配置：前端据此计算「快照过旧」阈值，避免把阈值写死在页面里
+      quotaPoll: {
+        idleIntervalMs: config.quotaPollIntervalMs,
+        activeIntervalMs: config.quotaActivePollIntervalMs,
+        activeWindowMs: config.quotaActiveWindowMs,
+      },
     };
   }
 
