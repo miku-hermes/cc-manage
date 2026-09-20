@@ -410,14 +410,19 @@ export async function startGateway(overrides = {}) {
   }
 
   // ── 请求统计视图 ────────────────────────────────────────
-  function accountView(account) {
+  /**
+   * 账号视图。`withKeyPrefix` 默认 false —— keyPrefix 是真实 key 的前 9 字符，
+   * 公开面板（/api/status）不需要它，绝不该下发到浏览器。只有已登录的后台
+   * （/api/admin/accounts）才带上，用于和上游站点对账。
+   */
+  function accountView(account, { withKeyPrefix = false } = {}) {
     const rt = scheduler.runtime(account);
     const q = rt.lastQuota;
     const pct = (w) => (w && typeof w.percent === 'number' ? Math.round(w.percent * 10) / 10 : null);
     return {
       name: account.name,
-      keyId: account.keyId,          // 只暴露 keyId / keyPrefix，绝不返回完整 key
-      keyPrefix: account.keyPrefix,
+      keyId: account.keyId,          // 只暴露 keyId，绝不返回完整 key
+      ...(withKeyPrefix ? { keyPrefix: account.keyPrefix } : {}),
       enabled: account.enabled,
       available: scheduler.isAvailable(account),
       concurrency: rt.concurrency,
@@ -670,7 +675,7 @@ export async function startGateway(overrides = {}) {
         // 用 accountView（含 lastQuota 额度快照）而不是 pubAccount（只有 8 个基础字段）：
         // 后台要展示 5h/周/月进度条与余额，用 pubAccount 会永远显示「尚未获取额度快照」。
         // accountView 内部已做脱敏（只出 keyId / keyPrefix，lastError 走 redact）。
-        accounts: accounts.map(accountView),
+        accounts: accounts.map((a) => accountView(a, { withKeyPrefix: true })),
         tests: testHistory.slice(0, TEST_HISTORY_MAX),
       });
     }
@@ -955,7 +960,7 @@ export async function startGateway(overrides = {}) {
       if (!requirePanelRead(req, res)) return;
       return sendJSON(res, 200, {
         ok: true,
-        accounts: accounts.map((a) => ({ name: a.name, keyId: a.keyId, keyPrefix: a.keyPrefix, enabled: a.enabled })),
+        accounts: accounts.map((a) => ({ name: a.name, keyId: a.keyId, enabled: a.enabled })),
       });
     }
     if (req.method === 'POST' && url.pathname === '/api/accounts/refresh') {

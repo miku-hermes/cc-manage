@@ -72,7 +72,7 @@ test('SSE 流式：客户端按序收到 3 个 data: 事件 + [DONE]', async (t)
   assert.equal(ctx.upstream.seen.filter((s) => s.url.startsWith('/v1/')).length, 1);
 });
 
-test('/api/status 里不含任何完整 key，只有 keyId / keyPrefix', async (t) => {
+test('/api/status 里不含任何 key 片段（连 keyPrefix 都不下发）', async (t) => {
   const ctx = await startTestGateway();
   t.after(() => ctx.close());
 
@@ -90,8 +90,11 @@ test('/api/status 里不含任何完整 key，只有 keyId / keyPrefix', async (
   const data = JSON.parse(body);
   const alpha = data.accounts.find((a) => a.name === '账号A');
   assert.ok(alpha, '应包含账号A');
-  assert.equal(alpha.keyPrefix, 'user_test');           // sk? 先 9 字符
-  assert.match(alpha.keyId, /^[0-9a-f]{8}$/);
+  // 公开面板只给备注名/额度，不下发 key 的任何片段（keyPrefix 是真实 key 前 9 字符）
+  assert.equal(alpha.keyPrefix, undefined, '公开视图不得下发 keyPrefix');
+  assert.equal(alpha.key, undefined, '公开视图不得下发 key');
+  assert.ok(!body.includes('user_test'), '响应体里不得出现 key 前缀');
+  assert.match(alpha.keyId, /^[A-Za-z0-9]{8}$/);
   assert.equal(alpha.lastQuota.ok, true);
   assert.equal(alpha.lastQuota.remaining, 55);          // 42.5 + 10 + 2.5
   assert.equal(alpha.key, undefined, 'status 里不允许有 key 字段');
@@ -479,8 +482,7 @@ test('面板数据契约：/api/status 提供 index.html 读取的全部字段',
   for (const a of d.accounts) {
     assert.equal(typeof a.name, 'string');
     assert.match(a.keyId, /^[0-9a-f]{8}$/);
-    assert.equal(typeof a.keyPrefix, 'string');
-    assert.equal(a.keyPrefix.length, 9);
+    assert.equal(a.keyPrefix, undefined, '公开视图不得下发 keyPrefix（真实 key 前 9 字符）');
     assert.equal(typeof a.enabled, 'boolean');
     assert.equal(typeof a.available, 'boolean');
     assert.equal(typeof a.concurrency, 'number');
@@ -792,6 +794,30 @@ async function setupAdminCtxHelper() {
   const cookie = (setup.headers['set-cookie'] || []).map((c) => c.split(';')[0]).join('; ');
   return { ctx, cookie };
 }
+
+// ── 回归：keyPrefix 只给已登录的后台，公开面板一律不给 ────────────
+test('keyPrefix 只在已登录的后台视图出现，公开接口与前台页面都不得出现', async (t) => {
+  const { ctx, cookie } = await setupAdminCtxHelper();
+  t.after(() => ctx.close());
+
+  // ① 公开 /api/status：不给
+  const pub = JSON.parse((await request(`${ctx.baseUrl}/api/status`)).body);
+  assert.equal(pub.accounts[0].keyPrefix, undefined, '公开视图不得有 keyPrefix');
+
+  // ② 公开 /api/accounts：不给
+  const pubList = JSON.parse((await request(`${ctx.baseUrl}/api/accounts`)).body);
+  assert.equal(pubList.accounts[0].keyPrefix, undefined, '公开列表不得有 keyPrefix');
+
+  // ③ 已登录的 /api/admin/accounts：要给（后台靠它和上游对账）
+  const admin = JSON.parse((await request(`${ctx.baseUrl}/api/admin/accounts`, { headers: { cookie } })).body);
+  assert.equal(typeof admin.accounts[0].keyPrefix, 'string', '后台视图应保留 keyPrefix');
+  assert.equal(admin.accounts[0].keyPrefix.length, 9);
+
+  // ④ 前台页面不得渲染 key 片段
+  const html = (await request(`${ctx.baseUrl}/`)).body;
+  assert.ok(!html.includes('keyPrefix'), '前台页面不得引用 keyPrefix');
+  assert.ok(!html.includes('keyId'), '前台页面不得渲染 keyId');
+});
 
 // ── 回归：畸形 Host / 请求行不得打挂进程（匿名远程 DoS）────────────
 // 历史 bug：`new URL(req.url, \`http://${req.headers.host}\`)` 在 async 处理器

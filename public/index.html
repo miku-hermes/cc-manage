@@ -470,7 +470,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
         <circle cx="11" cy="11" r="7"/><path d="M20 20l-3.4-3.4"/>
       </svg>
-      <input id="search" type="search" placeholder="搜索账号 / keyId" aria-label="搜索账号" autocomplete="off">
+      <input id="search" type="search" placeholder="搜索账号" aria-label="搜索账号" autocomplete="off">
     </label>
     <button id="theme" class="icon-btn" type="button" title="切换主题" aria-label="切换主题">
       <svg class="ico-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
@@ -647,7 +647,7 @@ function card(a) {
     + '<div class="card-head"><h2>' + esc(a.name)
     + (q && q.displayName ? '<span class="card-display">' + esc(q.displayName) + '</span>' : '') + '</h2>'
     + '<span class="status"><span class="dot" aria-hidden="true"></span>' + st.t + '</span></div>'
-    + '<div class="card-sub mono" title="' + esc(a.keyId + '·' + a.keyPrefix) + '">' + esc(a.keyId) + '·' + esc(a.keyPrefix) + '…</div>'
+    // 前台只显示备注名（h2 里）+ 上游显示名，不下发也不渲染 key 的任何片段
     + '<div class="card-money"><b>' + money(q ? q.remaining : null) + '</b><small>剩余额度</small></div>'
     + (c
       ? '<div class="card-credits">月度 ' + money(c.monthlyCredits) + ' · 购买 ' + money(c.purchasedCredits) + ' · 赠送 ' + money(c.freeCredits) + '</div>'
@@ -676,7 +676,7 @@ function renderCards() {
   const all = state.data ? state.data.accounts : [];
   const f = state.filter.trim().toLowerCase();
   const list = f
-    ? all.filter((a) => [a.name, a.keyId, a.keyPrefix, a.lastQuota && a.lastQuota.displayName]
+    ? all.filter((a) => [a.name, a.lastQuota && a.lastQuota.displayName]
       .some((v) => String(v ?? '').toLowerCase().includes(f)))
     : all;
   if (!list.length) {
@@ -715,7 +715,7 @@ function render(d) {
   renderCards();
 }
 
-// ── 数据：公开只读，不鉴权（没有完整 key，只有 keyId / keyPrefix / 额度百分比）──
+// ── 数据：公开只读，不鉴权（只有备注名 / 额度百分比，不含 key 的任何片段）──
 /** 面板取数：同源公开接口，不需要任何凭证。 */
 function apiFetch(path, opts = {}) {
   return fetch(path, Object.assign({ credentials: 'same-origin' }, opts));
