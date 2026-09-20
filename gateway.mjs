@@ -441,7 +441,12 @@ export async function startGateway(overrides = {}) {
         accounts: accounts.length,
         enabled: accounts.filter((a) => a.enabled).length,
         available: accounts.filter((a) => scheduler.isAvailable(a)).length,
-        paused: accounts.filter((a) => a.pausedUntil && a.pausedUntil > Date.now()).length,
+        // 注意：pausedUntil 在运行期状态（rt）上，不在账号对象本身。
+        // 早期写成 a.pausedUntil（恒为 undefined）→「暂停中」永远显示 0。
+        paused: accounts.filter((a) => {
+          const rt = scheduler.runtime(a);
+          return rt.pausedUntil && rt.pausedUntil > Date.now();
+        }).length,
         concurrency: accounts.reduce((n, a) => n + (scheduler.runtime(a).concurrency || 0), 0),
       },
       stats: {

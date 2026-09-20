@@ -519,15 +519,15 @@
       <div class="kpi-body"><b id="kpi-paused">—</b><span>暂停中</span></div>
     </div>
     <div class="kpi" id="kpi-box-concurrency">
-      <span class="kpi-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2.5L4 14h7l-1 7.5L19 10h-7z"/></svg></span>
+      <span class="kpi-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></span>
       <div class="kpi-body"><b id="kpi-concurrency">—</b><span>在途请求</span></div>
     </div>
     <div class="kpi" id="kpi-box-total">
-      <span class="kpi-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V5M9 19v-9M14 19v-5M19 19V8"/></svg></span>
+      <span class="kpi-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg></span>
       <div class="kpi-body"><b id="kpi-total">—</b><span>总请求</span></div>
     </div>
     <div class="kpi" id="kpi-box-errors">
-      <span class="kpi-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9.5 16.5h-19z"/><path d="M12 10v4M12 17.2v.3"/></svg></span>
+      <span class="kpi-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/></svg></span>
       <div class="kpi-body"><b id="kpi-errors">—</b><span>错误数</span></div>
     </div>
   </section>
@@ -634,7 +634,10 @@ function card(a) {
   const cardCls = st.dot;
   const tags = [];
   tags.push(a.enabled ? '<span class="tag ok">已启用</span>' : '<span class="tag warn">手动停用</span>');
-  tags.push(a.available ? '<span class="tag ok">可调度</span>' : '<span class="tag bad">不可用</span>');
+  // 防御性：暂停/停用的账号绝不能同时标「可调度」。后端 isAvailable 已保证
+  // （now 有默认值），但前端不该依赖单一数据源——历史 bug 就是这里露出矛盾的。
+  const schedulable = a.available && a.enabled !== false && !a.paused && !a.authInvalid;
+  tags.push(schedulable ? '<span class="tag ok">可调度</span>' : '<span class="tag bad">不可用</span>');
   if (a.paused) tags.push('<span class="tag warn">暂停至 ' + esc(timeText(a.pausedUntil)) + '</span>');
   if (a.authInvalid) tags.push('<span class="tag bad">鉴权失效</span>');
   tags.push('<span class="tag info">在途 ' + esc(num(a.concurrency)) + '</span>');

@@ -66,8 +66,16 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
     }
   }
 
-  /** 硬性可用性：enabled、未暂停、未鉴权失效、5h 未打满 */
-  function isAvailable(account, now) {
+  /**
+   * 硬性可用性：enabled、未暂停、未鉴权失效、5h 未打满。
+   *
+   * now 默认取当前时间：面板读接口（/api/status、/api/admin/accounts）只关心
+   * 「此刻」的可用性，调用时不必显式传参。若省掉这个默认值，调用方漏传时会变成
+   * `rt.pausedUntil > undefined` 比较（恒为 false），暂停判断被静默跳过，
+   * 导致暂停中的账号仍被算作可调度（前台会同时渲染「可调度」和「暂停至」两个矛盾徽标）。
+   * 注意语义：显式传 0（falsy 但有效）不会触发默认值，只有 undefined 才会。
+   */
+  function isAvailable(account, now = Date.now()) {
     if (account.enabled === false) return false;
     const rt = runtime(account);
     if (rt.pausedUntil && rt.pausedUntil > now) return false;

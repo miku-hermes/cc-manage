@@ -737,3 +737,55 @@ test('面板 HTML：公开只读（无 key 输入框 + 登录后台入口）', a
   assert.doesNotMatch(html, /id="refresh"/, '手动刷新按钮已移除');
   assert.ok(!html.includes('Authoriz' + 'ation'), '前台不得再带 Authorization 头');
 });
+
+// ── 回归：暂停账号不得被算作可调度 ──────────────────────────────────
+// 历史 bug：scheduler.isAvailable(account, now) 依赖 now，而 gateway.mjs 三处调用
+// 都漏传 → `pausedUntil > undefined` 恒 false → 暂停判断被静默跳过，
+// 前台卡片同时渲染出「可调度」和「暂停至 XX:XX」两个矛盾徽标。
+test('暂停中的账号：available 必须为 false，且不计入 summary.available', async (t) => {
+  const ctx = await startTestGateway();
+  t.after(() => ctx.close());
+
+  // 直接改运行期状态：把「账号A」暂停到 1 小时后
+  const target = ctx.gateway.accounts.find((a) => a.name === '账号A');
+  const rt = ctx.gateway.scheduler.runtime(target);
+  rt.pausedUntil = Date.now() + 3600_000;
+
+  // ① 直接调 isAvailable（不传 now）——这是 gateway 的调用方式，必须也返回 false
+  assert.equal(ctx.gateway.scheduler.isAvailable(target), false,
+    'isAvailable 漏传 now 时必须仍能识别暂停（now 要有默认值）');
+  assert.equal(ctx.gateway.scheduler.isAvailable(target, Date.now()), false, '显式传 now 同样为 false');
+
+  // ② /api/status 的账号视图
+  const d = JSON.parse((await request(`${ctx.baseUrl}/api/status`)).body);
+  const a = d.accounts.find((x) => x.name === '账号A');
+  assert.equal(a.available, false, '暂停账号的 available 必须是 false');
+  assert.equal(a.paused, true, '暂停账号的 paused 必须是 true');
+
+  // ③ 汇总数字不得自相矛盾：暂停的账号不能计入 available
+  assert.equal(d.summary.paused, 1, 'summary.paused 应为 1');
+  assert.equal(d.summary.available, d.summary.accounts - 1,
+    'summary.available 不得包含已暂停的账号');
+
+  // ④ 后台视图（accountView）同样要正确
+  const { ctx: actx, cookie } = await setupAdminCtxHelper();
+  t.after(() => actx.close());
+  const art = actx.gateway.scheduler.runtime(actx.gateway.accounts.find((x) => x.name === '账号A'));
+  art.pausedUntil = Date.now() + 3600_000;
+  const admin = JSON.parse((await request(`${actx.baseUrl}/api/admin/accounts`, { headers: { cookie } })).body);
+  const aa = admin.accounts.find((x) => x.name === '账号A');
+  assert.equal(aa.available, false, '后台视图的 available 也必须识别暂停');
+});
+
+/** 起一个带管理员登录态的网关（后台接口需要 session）。 */
+async function setupAdminCtxHelper() {
+  const ctx = await startTestGateway();
+  const setup = await request(`${ctx.baseUrl}/api/auth/setup`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username: 'admin', password: 'TestPass123' }),
+  });
+  assert.equal(setup.status, 201, '首次初始化管理员返回 201 Created');
+  const cookie = (setup.headers['set-cookie'] || []).map((c) => c.split(';')[0]).join('; ');
+  return { ctx, cookie };
+}
