@@ -103,6 +103,48 @@ export function parseSnapshot({ whoami, credits, subscriptions, usage }) {
   };
 }
 
+/**
+ * 探测一个 CC key 是否有效：只打 whoami，不做池调度、不落任何状态。
+ * 后台「测试连通性」按钮用。永不抛错，失败以 { ok:false, error } 返回。
+ * @param {string} key CC 上游 key
+ * @param {{ baseUrl?: string, timeoutMs?: number, fetchImpl?: Function, log?: object }} opts
+ */
+export async function fetchWhoami(key, opts = {}) {
+  const baseUrl = String(opts.baseUrl ?? 'https://api.commandcode.ai').replace(/\/+$/, '');
+  const timeoutMs = opts.timeoutMs ?? 15000;
+  const doFetch = opts.fetchImpl ?? globalThis.fetch;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  if (timer.unref) timer.unref();
+  try {
+    const res = await doFetch(`${baseUrl}/alpha/whoami`, {
+      method: 'GET',
+      headers: { accept: 'application/json', authorization: `Bearer ${key}`, 'user-agent': CC_USER_AGENT },
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      return { ok: false, status: res.status, error: `HTTP ${res.status}: ${redactMessage(body, key).slice(0, 200)}` };
+    }
+    const whoami = await res.json().catch(() => null);
+    const { orgId, displayName, userName, identified } = parseIdentity(whoami);
+    if (!identified) return { ok: false, error: 'whoami 响应缺少用户标识（org.id / user.userName / user.name）' };
+    return {
+      ok: true,
+      orgId: orgId ?? null,
+      displayName,
+      userName,
+      login: whoami?.org?.login ?? null,
+      keyName: whoami?.user?.keyName ?? whoami?.user?.displayName ?? null,
+    };
+  } catch (e) {
+    const aborted = e?.name === 'AbortError' || e?.code === 'ABORT_ERR';
+    return { ok: false, error: aborted ? `whoami 超时（>${timeoutMs}ms）` : redactMessage(e?.message ?? String(e), key) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function redactMessage(text, key) {
   return redact(String(text ?? '').slice(0, 300), [key]);
 }

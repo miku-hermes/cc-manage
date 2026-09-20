@@ -8,8 +8,8 @@
   "quotaTimeoutMs": 15000,
   "sessionAffinityTtlMs": 1800000,
   "allowPassthrough": false,
+  "publicDashboard": true,
   "logLevel": "info",
   "logFile": "",
-  "protectAdminApi": false,
   "maxBodyBytes": 20971520
 }

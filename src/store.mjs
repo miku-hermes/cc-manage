@@ -119,6 +119,32 @@ export function normalizeKeys(list) {
   return out;
 }
 
+const USERNAME_RE = /^[A-Za-z0-9._@-]{1,64}$/;
+
+/** 校验并规范化后台管理员列表。密码只存 scrypt 哈希，绝不接受/保留明文。 */
+export function normalizeUsers(list) {
+  if (!Array.isArray(list)) throw new Error('users 必须是数组');
+  const out = [];
+  const seen = new Set();
+  for (const item of list) {
+    if (!item || typeof item !== 'object') throw new Error('管理员条目必须是对象');
+    const username = String(item.username ?? '').trim();
+    if (!USERNAME_RE.test(username)) {
+      throw new Error(`管理员用户名不合法（只允许字母数字与 . _ @ -，1-64 字符）：${JSON.stringify(username)}`);
+    }
+    if (seen.has(username)) throw new Error(`管理员用户名重复: ${username}`);
+    const passwordHash = String(item.passwordHash ?? '').trim();
+    if (!passwordHash.startsWith('scrypt$')) throw new Error(`管理员「${username}」的 passwordHash 必须是 scrypt$ 开头（不接受明文密码）`);
+    seen.add(username);
+    out.push({
+      username,
+      passwordHash,
+      createdAt: Number.isFinite(item.createdAt) ? item.createdAt : null,
+    });
+  }
+  return out;
+}
+
 export function createStore({ rootDir = process.cwd(), env = process.env, log = null } = {}) {
   const configDir = path.join(rootDir, CREDENTIAL_DIR);
   const stateFile = path.join(rootDir, 'data', 'state.json');
@@ -128,6 +154,8 @@ export function createStore({ rootDir = process.cwd(), env = process.env, log = 
     return {
       accountsFile: resolveCredentialPath(rootDir, 'accounts.json'),
       keysFile: resolveCredentialPath(rootDir, 'keys.json'),
+      usersFile: resolveCredentialPath(rootDir, 'users.json'),
+      secretFile: path.join(configDir, 'session-secret'),
     };
   }
 
@@ -160,6 +188,27 @@ export function createStore({ rootDir = process.cwd(), env = process.env, log = 
   function loadKeys() {
     const raw = readJSON(currentPaths().keysFile, { keys: [] });
     return normalizeKeys(raw?.keys ?? raw ?? []);
+  }
+
+  /**
+   * 后台管理员。文件不存在 / 内容为空 → 空数组（首次访问 /admin 走 setup 初始化）。
+   * 内容损坏则抛错：宁可拒绝登录，也不能悄悄把管理员当成「未初始化」重新开放 setup。
+   */
+  function loadUsers() {
+    const file = currentPaths().usersFile;
+    const raw = readJSON(file, { users: [] });
+    return normalizeUsers(raw?.users ?? raw ?? []);
+  }
+
+  function saveUsers(list) {
+    const normalized = normalizeUsers(list);
+    const payload = {
+      users: normalized.map((u) => (u.createdAt === null
+        ? { username: u.username, passwordHash: u.passwordHash }
+        : { username: u.username, passwordHash: u.passwordHash, createdAt: u.createdAt })),
+    };
+    atomicWrite(currentPaths().usersFile, `${JSON.stringify(payload, null, 2)}\n`, { log, mode: CREDENTIAL_MODE });
+    return normalized;
   }
 
   /** 凭据落盘：只写规范字段（派生出来的 keyId / keyPrefix 不入盘）。 */
@@ -256,14 +305,18 @@ export function createStore({ rootDir = process.cwd(), env = process.env, log = 
     configDir,
     get accountsFile() { return currentPaths().accountsFile; },
     get keysFile() { return currentPaths().keysFile; },
+    get usersFile() { return currentPaths().usersFile; },
+    get secretFile() { return currentPaths().secretFile; },
     stateFile,
     state,
     writable,
     reload,
     saveAccounts,
     saveKeys,
+    saveUsers,
     loadAccounts,
     loadKeys,
+    loadUsers,
     loadState,
     pruneState,
     saveState,

@@ -2,7 +2,14 @@
 
 Command Code 多账号反代网关：在协议内核 [`vendor/commandcode-proxy/`](vendor/commandcode-proxy/)（默认 `127.0.0.1:3050`）**前面**加一层账号池调度。
 
-客户端只需要一把本地 key（`sk-cg-...`），网关按**剩余额度 / 在途请求**自动挑一个 Command Code 账号，把请求反代给内核并流式透传响应；同时轮询各账号额度、耗尽自动暂停、到点自动恢复，并提供一个只看额度的网页面板。
+**两套凭据职责分清**：
+
+| 凭据 | 谁用 | 存在哪 | 用途 |
+| --- | --- | --- | --- |
+| **后台账号 + 密码** | 人（浏览器登录） | `config/users.json` | 登录 `/admin` 后台 |
+| **客户端 API key**（`sk-cg-…`） | 程序（curl / SDK） | `config/keys.json` | 调用 `/v1/*` 反代接口 |
+
+程序侧只需要一把客户端 key（`sk-cg-...`），网关按**剩余额度 / 在途请求**自动挑一个 Command Code 账号，把请求反代给内核并流式透传响应；同时轮询各账号额度、耗尽自动暂停、到点自动恢复。`/` 是**公开只读**看板（不暴露完整 key），`/admin` 用账号密码登录后管理 CC key、客户端 key 与管理员。
 
 - **零外部依赖**：只用 Node 内置模块，`package.json` 里没有 `dependencies`。
 - **Node 22+ / ESM**：所有文件都是 `.mjs`。
@@ -13,12 +20,14 @@ Command Code 多账号反代网关：在协议内核 [`vendor/commandcode-proxy/
 ```
 gateway.mjs                 入口：HTTP 服务 + 路由（反代 + 面板 API）
 src/config.mjs              配置加载（config.json + 环境变量覆盖）
-src/store.mjs               账号池 / 本地 key / 运行期状态的持久化（JSON 原子写）
+src/store.mjs               账号池 / 客户端 key / 管理员 / 运行期状态的持久化（JSON 原子写）
+src/auth.mjs                scrypt 密码哈希 + HMAC 签名 cookie session + 登录限速
 src/quota.mjs               Command Code 额度查询
 src/scheduler.mjs           账号选择：打分 + 粘性 + 冷却 + 自动暂停/恢复
 src/proxy.mjs               反代转发（流式透传 + 背压 + 失败换号重试）
 src/log.mjs                 日志 + 脱敏
-public/index.html           额度面板（纯 HTML + 内联 CSS/JS）
+public/index.html           公开只读额度面板（纯 HTML + 内联 CSS/JS）
+public/admin.html           后台：登录/初始化 + CC key / 客户端 key / 管理员管理
 mocks/mock-cc-upstream.mjs  测试/演示用假 CC 上游
 test/                       node:test 测试（离线可跑）
 ```
@@ -35,17 +44,19 @@ cp config.example.json config.json                   # 按需改端口/上游地
 npm start                                            # 监听 127.0.0.1:3051
 ```
 
-默认只监听 `127.0.0.1`。若确实要对外暴露，请务必同时设置 `gatewayHost=0.0.0.0` 与 `protectAdminApi=true`。
+默认只监听 `127.0.0.1`。对外暴露时后台走账号密码登录（首次访问 `/admin` 初始化），面板默认公开只读；
+若要连面板也藏起来，设 `PUBLIC_DASHBOARD=0`（此时 `/api/status` 需要登录 session）。
 
 ### Docker 部署（一键起网关 + 协议内核）
 
 `docker compose` 会同时拉起两个服务：`gateway`（本仓库，宿主只映射 `127.0.0.1:3051`）与 `core`（`vendor/commandcode-proxy`，**不映射宿主端口**）。宿主上的客户端只跟 `gateway` 说话。
 
 ```bash
-# 1. 前置准备：填真 key、造本地 key（只读 bind mount 进容器，不进镜像）
-cp accounts.example.json accounts.json     # 填真实 CC 上游 key（user_ 开头）
-cp keys.example.json keys.json             # 填本地 key，必须 sk-cg- 开头
-openssl rand -hex 24                       # 生成随机串，形如 sk-cg-<这串>
+# 1. 前置准备：可写目录挂载（容器 uid 1000）
+mkdir -p config && chown 1000:1000 config
+#   config/accounts.json 不填也行 —— 首次打开 /admin 登录后台，在「CC 账号管理」里加
+#   config/keys.json 留空即可 —— 后台「API 客户端 key」里点生成
+#   config/users.json / config/session-secret 首次启动自动创建（0640 / 0600）
 
 # 2. 可选调参
 cp .env.example .env
@@ -76,9 +87,16 @@ curl -N -X POST 127.0.0.1:3051/v1/chat/completions \
   -d '{"model":"claude-sonnet-4-5","stream":true,"messages":[{"role":"user","content":"hi"}]}'
 ```
 
-面板：浏览器打开 `http://127.0.0.1:3051/`。默认 `PROTECT_ADMIN_API=1`，面板与 `/api/*` 也要带 `sk-cg-` key；只在宿主本机自用、想要免密时，用 `PROTECT_ADMIN_API=0 docker compose up -d` 覆盖（**风险**：同机其他用户可直连面板与额度 API）。
+面板与后台：
 
-**密钥安全**：`accounts.json` / `keys.json` 只通过**只读 bind mount** 进容器，镜像内 `/app` 不含任何密钥文件（可用 §验收 里的 `grep` 自查）。换 key 只需改宿主文件后 `docker compose restart gateway`。
+- `http://127.0.0.1:3051/` —— **公开只读**看板（账号名 / keyId / keyPrefix / 额度百分比，没有完整 key）。
+- `http://127.0.0.1:3051/admin` —— 后台。首次打开是**初始化页**，设第一个管理员（用户名 + 至少 8 位密码）；
+  初始化完成后该接口永久返回 403。之后用同一页登录，session 存 HttpOnly cookie（7 天）。
+  后台里可以：新增/停用/改备注/删除 CC 上游 key、**测试连通性**（调 CC `whoami`，显示登录名与套餐或错误原因）、
+  生成/删除客户端 `sk-cg-` key（明文只显示一次）、增删管理员。
+
+**密钥安全**：`config/` 目录挂载进容器（可写，`0640`；`session-secret` 是 `0600`），镜像内 `/app` 不含任何密钥文件。
+后台改完即时热生效，不需要重启。
 
 **为什么 `core` 不对外映射**：内核本身不做账号池，暴露出去等于绕过网关直接用一个 key（还丢掉了选号、额度暂停、面板），所以刻意只让 `gateway` 容器访问。
 **公网访问**：宿主只绑 `127.0.0.1:3051`，需要公网时请自己在前面放一个 nginx（不在本 compose 内）。
@@ -91,18 +109,18 @@ docker compose logs -f core        # 内核日志
 docker compose down                # 清理（不要加 -v，除非你确实想删数据卷）
 ```
 
-**排障：默认以 `PROTECT_ADMIN_API=1` 重启容器**。看面板只能拿到 401、或想确认管理 API 处于受保护状态时，用下面这条命令**以安全默认值重建网关**（`docker-compose.yml` 里已写成 `${PROTECT_ADMIN_API:-1}`，此处显式给值只是防呆；不要用 `PROTECT_ADMIN_API=0`，那等于把 `/api/status`（含账号名、余额、keyId、token 统计）向同机任何进程开放）：
+**排障**：想看公开面板是否被关掉、或后台是否要求登录：
 
 ```bash
 cd /root/projects/cc-manage
-PROTECT_ADMIN_API=1 docker compose build gateway && PROTECT_ADMIN_API=1 docker compose up -d --force-recreate gateway
-curl -s -o /dev/null -w '%{http_code}\n' 127.0.0.1:3051/api/status                                    # 期望 401
-curl -s -H "Authorization: Bearer $(python3 -c "import json;print(json.load(open('keys.json'))['keys'][0]['key'])")" 127.0.0.1:3051/api/status | head -c 200   # 期望 200 + JSON
+curl -s -o /dev/null -w '%{http_code}\n' 127.0.0.1:3051/api/status        # 默认 200（公开只读）；PUBLIC_DASHBOARD=0 时 401
+curl -s -o /dev/null -w '%{http_code}\n' 127.0.0.1:3051/api/admin/accounts # 未登录必须 401
+curl -s 127.0.0.1:3051/api/auth/me | python3 -m json.tool                  # setupRequired / authenticated
 ```
 
-面板同样要带 key：打开 `http://127.0.0.1:3051/` 后在右上角输入框填入同一把 `sk-cg-` key。
-
-常见坑：端口被占用（改 `.env` 里的 `GATEWAY_BIND_PORT`）；`core` 未 healthy 时 `gateway` 会一直等（`docker compose ps` 看到 `core` 不是 healthy 就先看它的日志）；401 但 key 明明是对的 → 确认没有多余空格/换行（面板会自动 `trim`）。
+常见坑：端口被占用（改 `.env` 里的 `GATEWAY_BIND_PORT`）；`core` 未 healthy 时 `gateway` 会一直等
+（`docker compose ps` 看到 `core` 不是 healthy 就先看它的日志）；登录 429 → 同 IP 连续失败 5 次会锁 5 分钟；
+401 但客户端 key 明明是对的 → 确认没有多余空格/换行。
 
 **已删账号的残留会自动清理**：`data/state.json` 里 `accounts` 与 `stats.byAccount` 中以 keyId 为键的条目，凡是**不在当前 `accounts.json` 里**的，网关启动加载状态时会一并删除（被删账号的请求数 / 错误数 / token 数也从全局合计里扣掉，保证 `byAccount` 之和与 `total*` 自洽），并立即落盘，避免删号后统计与状态一直残留。
 
@@ -134,14 +152,17 @@ docker compose up -d --force-recreate gateway   # 恢复默认
   "quotaTimeoutMs": 15000,
   "sessionAffinityTtlMs": 1800000,
   "allowPassthrough": false,
-  "protectAdminApi": false,
+  "publicDashboard": true,
   "maxBodyBytes": 20971520,
   "logLevel": "info",
   "logFile": ""
 }
 ```
 
-环境变量覆盖：`GATEWAY_PORT` `GATEWAY_HOST` `UPSTREAM_PROXY_URL` `CC_API_BASE` `QUOTA_POLL_INTERVAL_MS` `PAUSED_RECHECK_INTERVAL_MS` `QUOTA_TIMEOUT_MS` `SESSION_AFFINITY_TTL_MS` `MAX_BODY_BYTES` `ALLOW_PASSTHROUGH` `PROTECT_ADMIN_API` `LOG_FILE` `LOG_LEVEL`。
+- `publicDashboard`（`PUBLIC_DASHBOARD`）：`1`（默认）让 `/` 与 `/api/status` 公开只读；`0` 则要求后台登录 session。
+- 已废弃的 `protectAdminApi`（`PROTECT_ADMIN_API`）：旧版「面板接口要 `sk-cg-` key」开关，仅为老部署兼容保留；新部署请用 `PUBLIC_DASHBOARD=0`。
+
+环境变量覆盖：`GATEWAY_PORT` `GATEWAY_HOST` `UPSTREAM_PROXY_URL` `CC_API_BASE` `QUOTA_POLL_INTERVAL_MS` `PAUSED_RECHECK_INTERVAL_MS` `QUOTA_TIMEOUT_MS` `SESSION_AFFINITY_TTL_MS` `MAX_BODY_BYTES` `ALLOW_PASSTHROUGH` `PUBLIC_DASHBOARD` `LOG_FILE` `LOG_LEVEL`。
 
 ### 账号池 `accounts.json`
 
@@ -153,13 +174,25 @@ docker compose up -d --force-recreate gateway   # 恢复默认
 - 也可以用环境变量 `CC_ACCOUNTS` 传 JSON 数组（优先级高于文件）。
 - 运行期状态（在途数、暂停时间、额度快照、最近错误）写在 `data/state.json`，**不**回写 `accounts.json`。
 
-### 本地 key `keys.json`
+### 客户端 API key `keys.json`
 
 ```json
 { "keys": [ { "name": "我的客户端", "key": "sk-cg-xxxxxxxx" } ] }
 ```
 
 必须以 `sk-cg-` 开头。鉴权来源：`Authorization: Bearer <k>` 或 `x-api-key: <k>`。
+**只用于 `/v1/*` 反代调用**，不能登录后台（后台走账号密码）。推荐在后台「API 客户端 key」里点生成。
+
+### 后台管理员 `users.json` 与签名密钥 `session-secret`
+
+```json
+{ "users": [ { "username": "admin", "passwordHash": "scrypt$16384$8$1$<salt-b64>$<hash-b64>" } ] }
+```
+
+- 密码用 `node:crypto` 的 **scrypt** 加盐哈希，**绝不存明文**；校验走 `timingSafeEqual`。
+- `session-secret` 首次启动自动生成（32 字节随机，`0600`），cookie 用 **HMAC-SHA256** 签名；
+  密钥持久化就不会每次重启把用户登出。
+- 文件都可删：`users.json` 删掉后重新打开 `/admin` 会再次进入初始化流程。
 
 `allowPassthrough=true` 时，直接以 `user_` 开头的 key 也会被接受，此时**不做池调度**，原样透传给内核。
 
@@ -179,10 +212,31 @@ docker compose up -d --force-recreate gateway   # 恢复默认
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | `/health` | `{ ok, accounts, available }`，无需 key |
-| GET | `/api/status` | 账号池全量状态 + 请求统计 |
+| GET | `/api/status` | 账号池全量状态 + 请求统计（默认公开只读） |
 | GET | `/api/accounts` | 只读账号列表（无 key 明文） |
-| POST | `/api/accounts/refresh` | 立刻刷新所有账号额度并返回新快照 |
-| GET | `/` | 额度面板 |
+| POST | `/api/accounts/refresh` | 立刻刷新所有账号额度并返回新快照（匿名调用 5s 节流） |
+| GET | `/` | 公开只读额度面板 |
+
+后台鉴权（session cookie）：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/admin` | 未登录显示登录页；`users.json` 为空时显示初始化页 |
+| POST | `/api/auth/setup` | 创建第一个管理员；完成后永久 403 |
+| POST | `/api/auth/login` | `{username, password}` → 设 session cookie；失败 5 次锁 5 分钟（429） |
+| POST | `/api/auth/logout` | 清 cookie 并吊销该会话 |
+| GET | `/api/auth/me` | `{ authenticated, setupRequired, user }` |
+| GET | `/api/admin/session` | 当前管理员 / 管理员列表 / 可写状态（需登录） |
+| GET | `/api/admin/accounts` | CC 账号列表 + 额度 + 连通性测试历史（需登录） |
+| POST | `/api/admin/accounts` | 新增 CC key（`{name, key}`） |
+| POST | `/api/admin/accounts/test` | 调 CC `whoami` 测连通性（`{keyId}` 或 `{key}`） |
+| PATCH/DELETE | `/api/admin/accounts/{keyId}` | 改备注 / 启停 / 删除 |
+| GET/POST | `/api/admin/keys` | 列出 / 生成客户端 key（生成的明文只回一次） |
+| DELETE | `/api/admin/keys/{keyId}` | 删除客户端 key |
+| GET/POST/PATCH/DELETE | `/api/admin/users[/{username}]` | 管理员增删改密（不能删掉最后一个） |
+| GET | `/api/admin/events` | 运行日志（`?level=&limit=`） |
+
+`/api/admin/*` 全部要求登录 session（`sk-cg-` key 无效），未登录返回 401。
 
 ```bash
 curl 127.0.0.1:3051/health

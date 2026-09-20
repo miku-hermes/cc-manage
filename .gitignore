@@ -3,5 +3,7 @@ data/
 *.log
 accounts.json
 keys.json
+users.json
+session-secret
 config.local.json
 .env

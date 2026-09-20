@@ -31,12 +31,12 @@ services:
       GATEWAY_PORT: "3051"
       UPSTREAM_PROXY_URL: "http://core:3050"
       CC_API_BASE: "${CC_API_BASE:-https://api.commandcode.ai}"
-      PROTECT_ADMIN_API: "${PROTECT_ADMIN_API:-1}"     # 容器内绑 0.0.0.0，默认开启保护
+      PUBLIC_DASHBOARD: "${PUBLIC_DASHBOARD:-1}"       # 前台只读面板公开；设 0 则需登录后台
       QUOTA_POLL_INTERVAL_MS: "${QUOTA_POLL_INTERVAL_MS:-300000}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
       NODE_OPTIONS: "--max-old-space-size=192"
     volumes:
-      - ./config:/app/config                           # 凭据目录（可写）：后台可增删账号/客户端 key
+      - ./config:/app/config                           # 凭据目录（可写）：后台账号/CC key/客户端 key
       - cc-manage-data:/app/data                       # 命名卷，避免宿主目录权限坑
     mem_limit: 256m
     restart: unless-stopped

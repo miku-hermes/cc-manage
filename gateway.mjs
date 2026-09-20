@@ -7,7 +7,19 @@ import { fileURLToPath } from 'node:url';
 import { loadConfig } from './src/config.mjs';
 import { createStore, CC_KEY_PREFIX, LOCAL_KEY_PREFIX } from './src/store.mjs';
 import { createLogger, keyIdOf, keyPrefixOf, redact } from './src/log.mjs';
-import { fetchQuota } from './src/quota.mjs';
+import { fetchQuota, fetchWhoami } from './src/quota.mjs';
+import {
+  SESSION_COOKIE,
+  clearCookieHeader,
+  createLoginLimiter,
+  createSessionSigner,
+  hashPassword,
+  loadOrCreateSecret,
+  parseCookies,
+  safeEqualText,
+  sessionCookieHeader,
+  verifyPassword,
+} from './src/auth.mjs';
 import { createScheduler } from './src/scheduler.mjs';
 import { createProxy } from './src/proxy.mjs';
 
@@ -23,6 +35,15 @@ const SESSION_HEADER = 'x-session-id';
 // 后台事件缓冲上限（环形，超出丢最旧的）
 const EVENTS_MAX = 200;
 const ADMIN_BODY_LIMIT = 64 * 1024;
+// 后台登录失败限速：同 IP 连续 5 次失败 → 锁 5 分钟（contract: 429）
+const LOGIN_MAX_FAILS = 5;
+const LOGIN_LOCK_MS = 5 * 60 * 1000;
+const PASSWORD_MIN = 8;
+const PASSWORD_MAX = 200;
+// 连通性测试结果只做展示，不必持久化太多次
+const TEST_HISTORY_MAX = 20;
+// 公开面板匿名触发的额度刷新最小间隔（毫秒）
+const PUBLIC_REFRESH_MIN_MS = 5000;
 
 /** 带 HTTP 状态码的错误，后台接口统一用它转成响应。 */
 class HttpError extends Error {
@@ -72,6 +93,175 @@ export async function startGateway(overrides = {}) {
   const scheduler = createScheduler({ accounts, state: store.state, ttlMs: config.sessionAffinityTtlMs, log });
   const stats = store.state.stats;
   for (const a of accounts) stats.byAccount[a.keyId] ??= { requests: 0, errors: 0, tokens: 0 };
+
+  // ── 后台鉴权（账号 + 密码 → 签名 cookie session）─────────
+  // 与客户端 sk-cg- key 彻底分开：key 只用于 /v1/* API 调用，session 只用于后台页面。
+  const secretFile = store.secretFile;
+  const sessionSecret = loadOrCreateSecret(secretFile, { log });
+  const sessions = createSessionSigner({ secret: sessionSecret });
+  const loginLimiter = createLoginLimiter({ maxFails: LOGIN_MAX_FAILS, lockMs: LOGIN_LOCK_MS, now: () => Date.now() });
+  let users = [];
+  let setupInProgress = false;
+  // 用户不存在时也做一次等价开销的哈希校验，避免用响应时间探测出「哪些用户名存在」
+  let dummyHash = null;
+  const dummyPasswordHash = () => {
+    dummyHash ??= hashPassword(randomBytes(16).toString('hex'));
+    return dummyHash;
+  };
+
+  function loadUsersFromDisk() {
+    try {
+      users = store.loadUsers();
+    } catch (e) {
+      // 损坏的 users.json 不能当成「未初始化」──否则 setup 会重新开放并可覆盖管理员
+      log.error(`管理员列表加载失败（${store.usersFile}）：${e.message}`);
+    }
+    return users;
+  }
+  loadUsersFromDisk();
+
+  function usersView() {
+    return users.map((u) => ({ username: u.username, createdAt: u.createdAt ?? null }));
+  }
+
+  function isSetupRequired() {
+    return users.length === 0;
+  }
+
+  function findUser(name) {
+    const idx = users.findIndex((u) => safeEqualText(u.username, name));
+    return idx < 0 ? null : users[idx];
+  }
+
+  /**
+   * 限速用的来源 IP：**只看 socket**，不信任 X-Forwarded-For。
+   * 反代（1Panel openresty）后面所有请求的 remoteAddress 都是代理地址，于是限速按「整台代理」计数 ——
+   * 宁可锁得宽一点，也不能信任可伪造的 XFF：那样攻击者轮流换假 IP 就能无限试密码。
+   */
+  function clientIp(req) {
+    return req.socket?.remoteAddress ?? '-';
+  }
+
+  /** HTTPS 判断：前面是 1Panel openresty 反代，看 x-forwarded-proto。 */
+  function isSecureRequest(req) {
+    const proto = String(req.headers['x-forwarded-proto'] ?? '').split(',')[0].trim().toLowerCase();
+    return proto === 'https';
+  }
+
+  /** 当前请求携带的原始 session token（没有则空串）。 */
+  function sessionTokenOf(req) {
+    return parseCookies(req.headers.cookie ?? '')[SESSION_COOKIE] ?? '';
+  }
+
+  /** 当前登录的管理员名（session cookie 无效/过期/已吊销/用户已删 → null）。 */
+  function currentUser(req) {
+    if (users.length === 0) return null;
+    const payload = sessions.verify(sessionTokenOf(req));
+    if (!payload) return null;
+    return users.some((u) => safeEqualText(u.username, payload.u)) ? payload.u : null;
+  }
+
+  function setSession(res, username, secure) {
+    res.setHeader('set-cookie', sessionCookieHeader(sessions.sign({ username }), { secure }));
+  }
+
+  function validateUsername(raw) {
+    const username = String(raw ?? '').trim();
+    if (!/^[A-Za-z0-9._@-]{1,64}$/.test(username)) {
+      throw new HttpError(400, '用户名只能包含字母、数字与 . _ @ -，长度 1-64');
+    }
+    return username;
+  }
+
+  function validatePassword(raw) {
+    const password = typeof raw === 'string' ? raw : '';
+    if (password.length < PASSWORD_MIN) throw new HttpError(400, `密码长度至少 ${PASSWORD_MIN} 位`);
+    if (password.length > PASSWORD_MAX) throw new HttpError(400, `密码长度不能超过 ${PASSWORD_MAX} 位`);
+    return password;
+  }
+
+  function rateLimited(res, retryAfterMs) {
+    const sec = Math.max(1, Math.ceil(retryAfterMs / 1000));
+    res.setHeader('retry-after', String(sec));
+    sendJSON(res, 429, {
+      error: { message: `登录失败次数过多，账号已被锁定，请 ${sec} 秒后再试`, type: 'rate_limited' },
+      retryAfterMs,
+    });
+  }
+
+  /** /api/auth/*：初始化 / 登录 / 登出 / 当前登录状态。 */
+  async function handleAuth(req, res, url) {
+    const p = url.pathname;
+    const secure = isSecureRequest(req);
+    const ip = clientIp(req);
+
+    if (req.method === 'GET' && p === '/api/auth/me') {
+      const username = currentUser(req);
+      const me = username ? users.find((u) => safeEqualText(u.username, username)) : null;
+      return sendJSON(res, 200, {
+        ok: true,
+        authenticated: !!username,
+        setupRequired: isSetupRequired(),
+        user: me ? { username: me.username, createdAt: me.createdAt ?? null } : null,
+      });
+    }
+
+    // 初始化：只有 users.json 不存在或为空时才可用，完成后永久关闭（403）
+    if (req.method === 'POST' && p === '/api/auth/setup') {
+      if (!isSetupRequired()) throw new HttpError(403, '已完成初始化，初始化接口已永久关闭');
+      if (!store.writable()) {
+        throw new HttpError(403, '凭据以只读方式挂载，无法创建管理员；请改用可写的 config/ 目录');
+      }
+      if (setupInProgress) throw new HttpError(409, '初始化正在进行，请稍后重试');
+      setupInProgress = true;
+      try {
+        const body = await readJSONBody(req);
+        const username = validateUsername(body.username);
+        const password = validatePassword(body.password);
+        if (users.length > 0) throw new HttpError(403, '已完成初始化，初始化接口已永久关闭');
+        users = store.saveUsers([{ username, passwordHash: hashPassword(password), createdAt: Date.now() }]);
+        note('info', `后台初始化完成：创建管理员「${username}」（${ip}）`);
+        setSession(res, username, secure);
+        return sendJSON(res, 201, { ok: true, user: { username } });
+      } finally {
+        setupInProgress = false;
+      }
+    }
+
+    if (req.method === 'POST' && p === '/api/auth/login') {
+      const gate = loginLimiter.check(ip);
+      if (gate.locked) return rateLimited(res, gate.retryAfterMs);
+
+      const body = await readJSONBody(req);
+      const username = String(body.username ?? '').trim();
+      const password = typeof body.password === 'string' ? body.password : '';
+      const user = findUser(username);
+      const passwordOk = verifyPassword(password, user ? user.passwordHash : dummyPasswordHash());
+
+      if (!user || !passwordOk) {
+        const r = loginLimiter.fail(ip);
+        note('warn', r.locked
+          ? `后台登录失败（连续 ${LOGIN_MAX_FAILS} 次，已锁定 ${Math.round(LOGIN_LOCK_MS / 60000)} 分钟）：来自 ${ip}`
+          : `后台登录失败：来自 ${ip}（剩余 ${r.remaining} 次机会）`);
+        if (r.locked) return rateLimited(res, r.retryAfterMs);
+        return sendJSON(res, 401, { error: { message: '用户名或密码错误', type: 'auth_error' } });
+      }
+
+      loginLimiter.reset(ip);
+      setSession(res, user.username, secure);
+      note('info', `管理员「${user.username}」登录成功（${ip}）`);
+      return sendJSON(res, 200, { ok: true, user: { username: user.username } });
+    }
+
+    if (req.method === 'POST' && p === '/api/auth/logout') {
+      const revoked = sessions.revoke(sessionTokenOf(req));
+      res.setHeader('set-cookie', clearCookieHeader({ secure }));
+      note('info', `管理员退出登录（${ip}）${revoked ? '' : '（会话已过期）'}`);
+      return sendJSON(res, 200, { ok: true });
+    }
+
+    throw new HttpError(404, '未知的鉴权接口');
+  }
 
   // ── 额度查询与刷新 ──────────────────────────────────────
   async function refreshAccount(account) {
@@ -150,13 +340,36 @@ export async function startGateway(overrides = {}) {
     sendJSON(res, 401, { error: { message: 'Invalid or missing API key. Provide Authorization: Bearer <key> or x-api-key.', type: 'auth_error' } });
   }
 
-  /** 管理/后台接口鉴权：PROTECT_ADMIN_API=1 且配置了本地 key 时必须带正确 key。 */
-  function requireLocalKey(req, res) {
-    if (config.protectAdminApi && localKeys.length > 0 && localKeyIndexOf(extractKey(req)) < 0) {
-      authError(res);
-      return false;
-    }
-    return true;
+  /**
+   * 后台/面板读取接口鉴权：只看签名 session cookie（不再接受 sk-cg- key）。
+   * 未登录 → 401 + WWW-Authenticate: Cookie。
+   */
+  function requireSession(req, res) {
+    const username = currentUser(req);
+    if (username) return username;
+    res.setHeader('www-authenticate', 'Cookie');
+    sendJSON(res, 401, { error: { message: '需要登录后台（session 缺失或已过期）', type: 'auth_error' } });
+    return null;
+  }
+
+  /** 前台面板是否公开可读（PUBLIC_DASHBOARD=1 默认公开；0 → 需登录 session）。 */
+  function dashboardPublic() {
+    return config.publicDashboard !== false && config.protectAdminApi !== true;
+  }
+
+  /**
+   * 兼容旧的 PROTECT_ADMIN_API=1（该开关下面板接口仍接受本地 sk-cg- key，老部署不至于被踢下线）。
+   * 新部署请改用 PUBLIC_DASHBOARD=0 + 后台登录 session。
+   */
+  function legacyKeyAllowed(req) {
+    return config.protectAdminApi === true && localKeys.length > 0 && localKeyIndexOf(extractKey(req)) >= 0;
+  }
+
+  /** 面板读接口鉴权：公开 → 放行；隐私模式 → session 或（旧模式）本地 key。 */
+  function requirePanelRead(req, res) {
+    if (dashboardPublic()) return true;
+    if (currentUser(req) || legacyKeyAllowed(req)) return true;
+    return requireSession(req, res);
   }
 
   // ── 请求统计视图 ────────────────────────────────────────
@@ -271,11 +484,9 @@ export async function startGateway(overrides = {}) {
     }
   }
 
-  /** 操作者标识：用本地 key 的 keyId 表示，绝不回显 key 本身。 */
+  /** 操作者标识：后台登录用户名 + 来源 IP。 */
   function actorOf(req) {
-    const idx = localKeyIndexOf(extractKey(req));
-    const id = idx >= 0 ? localKeys[idx].keyId : 'unknown';
-    return `keyId=${id}@${req.socket?.remoteAddress ?? '-'}`;
+    return `user=${currentUser(req) ?? 'unknown'}@${req.socket?.remoteAddress ?? '-'}`;
   }
 
   function cleanName(raw) {
@@ -366,6 +577,10 @@ export async function startGateway(overrides = {}) {
     return `${LOCAL_KEY_PREFIX}${randomBytes(32).toString('base64url')}`;
   }
 
+  // 连通性测试历史（内存环形，只用于后台展示）
+  const testHistory = [];
+  let lastPublicRefreshAt = 0;
+
   function eventsView(url) {
     const level = url.searchParams.get('level');
     const limitRaw = Number(url.searchParams.get('limit'));
@@ -374,10 +589,23 @@ export async function startGateway(overrides = {}) {
     return { ok: true, total: events.length, events: list };
   }
 
-  /** 后台接口路由。命中返回 true；错误一律抛 HttpError，由调用方转成响应。 */
+  /** 后台接口路由。命中返回 true；错误一律抛 HttpError（调用方转响应），返回 false 表示交给通用路由。 */
   async function handleAdmin(req, res, url) {
     const { method } = req;
     const p = url.pathname;
+
+    if (method === 'GET' && p === '/api/admin/session') {
+      const username = currentUser(req);
+      return sendJSON(res, 200, {
+        ok: true,
+        authenticated: !!username,
+        setupRequired: isSetupRequired(),
+        writable: store.writable(),
+        users: usersView(),
+        dashboardPublic: dashboardPublic(),
+        user: username ? { username } : null,
+      });
+    }
 
     if (method === 'GET' && p === '/api/admin/events') {
       return sendJSON(res, 200, eventsView(url));
@@ -388,11 +616,61 @@ export async function startGateway(overrides = {}) {
     }
 
     if (method === 'GET' && p === '/api/admin/accounts') {
-      return sendJSON(res, 200, { ok: true, writable: store.writable(), accounts: accounts.map(pubAccount) });
+      return sendJSON(res, 200, {
+        ok: true,
+        writable: store.writable(),
+        accounts: accounts.map(pubAccount),
+        tests: testHistory.slice(0, TEST_HISTORY_MAX),
+      });
     }
 
     const accountMatch = p.match(/^\/api\/admin\/accounts\/([^/]+)$/);
     const keyMatch = p.match(/^\/api\/admin\/keys\/([^/]+)$/);
+    const userMatch = p.match(/^\/api\/admin\/users\/([^/]+)$/);
+
+    // ── 后台管理员账号 ──────────────────────────────────
+    if (method === 'GET' && p === '/api/admin/users') {
+      return sendJSON(res, 200, { ok: true, users: usersView() });
+    }
+
+    if (method === 'POST' && p === '/api/admin/users') {
+      requireWritable();
+      const body = await readJSONBody(req);
+      const username = validateUsername(body.username);
+      const password = validatePassword(body.password);
+      if (findUser(username)) throw new HttpError(400, `管理员「${username}」已存在`);
+      users = store.saveUsers([...users, { username, passwordHash: hashPassword(password), createdAt: Date.now() }]);
+      note('info', `新增管理员「${username}」（${actorOf(req)}）`);
+      return sendJSON(res, 201, { ok: true, users: usersView() });
+    }
+
+    if (method === 'PATCH' && userMatch) {
+      requireWritable();
+      const username = decodeURIComponent(userMatch[1]);
+      const target = findUser(username);
+      if (!target) throw new HttpError(404, '管理员不存在');
+      const body = await readJSONBody(req);
+      const password = validatePassword(body.password);
+      users = store.saveUsers(users.map((u) => (safeEqualText(u.username, username)
+        ? { ...u, passwordHash: hashPassword(password) }
+        : u)));
+      // 改密码 = 踢掉该管理员的所有旧会话（含自己之外的其它浏览器）
+      const killed = sessions.revokeUser(username);
+      note('info', `修改管理员「${username}」的密码（${actorOf(req)}）${killed ? `，已吊销 ${killed} 个会话` : ''}`);
+      return sendJSON(res, 200, { ok: true, users: usersView() });
+    }
+
+    if (method === 'DELETE' && userMatch) {
+      requireWritable();
+      const username = decodeURIComponent(userMatch[1]);
+      const target = findUser(username);
+      if (!target) throw new HttpError(404, '管理员不存在');
+      if (users.length <= 1) throw new HttpError(409, '至少保留一个管理员：删掉最后一个后将无法登录后台');
+      users = store.saveUsers(users.filter((u) => !safeEqualText(u.username, username)));
+      sessions.revokeUser(username);
+      note('info', `删除管理员「${username}」（${actorOf(req)}）`);
+      return sendJSON(res, 200, { ok: true, users: usersView() });
+    }
 
     if (method === 'POST' && p === '/api/admin/accounts') {
       requireWritable();
@@ -405,6 +683,32 @@ export async function startGateway(overrides = {}) {
       const created = accounts.find((a) => a.key === key);
       note('info', `新增账号「${name}」keyId=${created.keyId}（${actorOf(req)}）`);
       return sendJSON(res, 201, { ok: true, account: pubAccount(created) });
+    }
+
+    // 测试连通性：调 CC 官方 whoami 验证 key 是否有效（不改变账号状态）
+    if (method === 'POST' && p === '/api/admin/accounts/test') {
+      const body = await readJSONBody(req);
+      const name = body.name === undefined ? null : cleanName(body.name);
+      let key = typeof body.key === 'string' ? body.key.trim() : '';
+      if (!key && body.keyId) {
+        const target = accounts.find((a) => a.keyId === String(body.keyId));
+        if (!target) throw new HttpError(404, '账号不存在');
+        key = target.key;
+      }
+      if (!key) throw new HttpError(400, '请提供 key 或 keyId');
+      const result = await fetchWhoami(key, {
+        baseUrl: config.ccApiBase,
+        timeoutMs: config.quotaTimeoutMs,
+        fetchImpl: overrides.fetchImpl,
+        log,
+      });
+      const view = { ...result, keyId: keyIdOf(key), keyPrefix: keyPrefixOf(key), checkedAt: Date.now(), name };
+      testHistory.unshift(view);
+      while (testHistory.length > TEST_HISTORY_MAX) testHistory.pop();
+      note(result.ok
+        ? `连通性测试通过：keyId=${view.keyId} 登录名=${result.displayName ?? result.userName ?? '-'}（${actorOf(req)}）`
+        : `连通性测试失败：keyId=${view.keyId} ${redact(result.error ?? '', secrets)}（${actorOf(req)}）`);
+      return sendJSON(res, 200, { ok: true, result: view });
     }
 
     if (method === 'PATCH' && accountMatch) {
@@ -485,6 +789,17 @@ export async function startGateway(overrides = {}) {
 
     res.on('error', () => { /* 客户端断开导致的写错误，忽略 */ });
 
+    // 鉴权接口（登录 / 登出 / 初始化 / 当前状态）
+    if (url.pathname.startsWith('/api/auth/')) {
+      try {
+        return await handleAuth(req, res, url);
+      } catch (e) {
+        if (e instanceof HttpError) return sendJSON(res, e.status, { error: { message: e.message, type: 'auth_error' } });
+        log.error(`鉴权接口异常: ${e.message}`);
+        return sendJSON(res, 500, { error: { message: '鉴权接口内部错误', type: 'auth_error' } });
+      }
+    }
+
     // 面板
     if (req.method === 'GET' && url.pathname === '/') {
       const html = readPanel();
@@ -545,27 +860,35 @@ export async function startGateway(overrides = {}) {
       return proxy.forward({ req, res, account, pathname: url.pathname, search: url.search, initialChunks, bodyEnded });
     }
 
-    // 管理 API（本地即可访问；若配置了本地 key 则也需鉴权）
+    // 只读面板数据：默认公开（PUBLIC_DASHBOARD=1）；PUBLIC_DASHBOARD=0 时要求后台登录
     if (req.method === 'GET' && url.pathname === '/api/status') {
-      if (!requireLocalKey(req, res)) return;
+      if (!requirePanelRead(req, res)) return;
       return sendJSON(res, 200, statusView());
     }
     if (req.method === 'GET' && url.pathname === '/api/accounts') {
-      if (!requireLocalKey(req, res)) return;
+      if (!requirePanelRead(req, res)) return;
       return sendJSON(res, 200, {
         ok: true,
         accounts: accounts.map((a) => ({ name: a.name, keyId: a.keyId, keyPrefix: a.keyPrefix, enabled: a.enabled })),
       });
     }
     if (req.method === 'POST' && url.pathname === '/api/accounts/refresh') {
-      if (!requireLocalKey(req, res)) return;
+      if (!requirePanelRead(req, res)) return;
+      // 公开面板上的「刷新额度」按钮会走到这里：匿名调用做节流，避免被拿来当打 CC 的放大器
+      if (!currentUser(req) && !legacyKeyAllowed(req)) {
+        const now = Date.now();
+        if (now - lastPublicRefreshAt < PUBLIC_REFRESH_MIN_MS) {
+          return sendJSON(res, 200, { ok: true, throttled: true, ...statusView() });
+        }
+        lastPublicRefreshAt = now;
+      }
       await refreshAll();
       return sendJSON(res, 200, { ok: true, ...statusView() });
     }
 
-    // 后台写接口：/api/admin/*（本地 key 鉴权 + 可写校验）
+    // 后台接口：/api/admin/*（session cookie 鉴权 + 写接口另校验可写）
     if (url.pathname.startsWith('/api/admin/')) {
-      if (!requireLocalKey(req, res)) return;
+      if (!requireSession(req, res)) return;
       try {
         await handleAdmin(req, res, url);
       } catch (e) {
@@ -610,7 +933,12 @@ export async function startGateway(overrides = {}) {
     await new Promise((r) => server.close(r));
   }
 
-  return { server, config, log, accounts, localKeys, store, scheduler, stats, refreshAll, statusView, stop, proxy, events, note, reloadNow, syncPool, handleAdmin };
+  return {
+    server, config, log, accounts, localKeys, store, scheduler, stats, refreshAll, statusView, stop, proxy,
+    events, note, reloadNow, syncPool, handleAdmin, handleAuth, sessions, loginLimiter, currentUser,
+    sessionTokenOf,
+    get users() { return users; }, get testHistory() { return testHistory; }, usersView, isSetupRequired,
+  };
 }
 
 /** 预读请求体头部若干字节，并把已读片段原样返回（后续转发时先写出去）。 */

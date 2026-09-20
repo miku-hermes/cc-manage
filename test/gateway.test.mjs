@@ -597,8 +597,11 @@ test('PROTECT_ADMIN_API=1：/api/status 无 key → 401，带本地 key → 200'
   })).status, 200);
 });
 
-// ── 面板 HTML 契约（Bug 2）──────────────────────────────────────────
-test('面板 HTML：含 key 输入框（type=password）与 Authorization 头', async (t) => {
+// ── 面板 HTML 契约（Bug 2 / 鉴权重设计）──────────────────────────────
+// 测试32 已按 AUTH-REDESIGN.md 改写：前台面板不再要 key（公开只读），
+// 改为「无 key 输入框 + 登录后台入口，且取数不携带任何凭证」。
+// 后台登录流程本身由 test/auth.test.mjs 覆盖。
+test('面板 HTML：公开只读（无 key 输入框 + 登录后台入口）', async (t) => {
   const ctx = await startTestGateway();
   t.after(() => ctx.close());
 
@@ -607,12 +610,13 @@ test('面板 HTML：含 key 输入框（type=password）与 Authorization 头', 
   assert.equal(res.headers['x-content-type-options'], 'nosniff', '面板响应必须带 nosniff');
 
   const html = res.body;
-  assert.match(html, /<input[^>]*id="key"[^>]*type="password"/, '必须存在 type=password 的 key 输入框');
-  assert.match(html, /Authorization:\s*'?\s*'?\s*Bearer/i, 'fetch 必须带 Authorization: Bearer');
-  assert.match(html, /sessionStorage/, 'key 必须存 sessionStorage');
-  // /api/status 与刷新接口都必须走带鉴权的 fetch
+  // 前台不应该再有 key 输入框，也不该把任何凭证存进 sessionStorage
+  assert.doesNotMatch(html, /<input[^>]*id="key"/, '前台不再有 key 输入框');
+  assert.doesNotMatch(html, /sessionStorage/, '前台不再把 key 放进 sessionStorage');
+  // 右上角改为「登录后台」入口
+  assert.match(html, /href="\/admin"/, '前台必须有登录后台入口');
+  // 取数走公开 fetch（不携带 Authorization）
   assert.match(html, /apiFetch\('\/api\/status'\)/);
   assert.match(html, /apiFetch\('\/api\/accounts\/refresh'/);
-  assert.doesNotMatch(html, /fetch\('\/api\/status'\)/, '不能有无鉴权的裸 fetch');
-  assert.doesNotMatch(html, /fetch\('\/api\/accounts\/refresh'/, '刷新也必须带 key');
+  assert.doesNotMatch(html, /Authorization:\s*'Bearer/, '前台不得再带 Authorization 头');
 });

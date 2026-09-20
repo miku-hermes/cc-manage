@@ -199,13 +199,27 @@
   td.actions .btn { padding: 5px 11px; font-size: 12px; margin-left: 6px; }
   .cell-name { font-weight: 600; }
   .cell-sub { font-size: 11px; color: var(--text-tertiary); word-break: break-all; }
+  .cell-quota { min-width: 220px; }
+  .qbar { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text-tertiary); }
+  .qbar + .qbar { margin-top: 5px; }
+  .qbar-label { flex: none; width: 42px; color: var(--text-secondary); }
+  .qbar-track { flex: 1; height: 7px; border-radius: var(--pill); background: var(--bg-tertiary);
+    border: 1px solid var(--border-light); overflow: hidden; min-width: 70px; }
+  .qbar-track > i { display: block; height: 100%; border-radius: var(--pill); background: var(--success); transition: width .35s ease; }
+  .qbar-track.warn > i { background: var(--warning); }
+  .qbar-track.bad > i { background: var(--danger); }
+  .qbar-pct { flex: none; width: 44px; text-align: right; font-variant-numeric: tabular-nums; }
+  .test-note { margin-top: 5px; font-size: 11px; word-break: break-all; }
+  .test-note.ok { color: var(--success); }
+  .test-note.bad { color: var(--danger); }
+  .test-note.pending { color: var(--text-tertiary); }
 
-  select, input[type="text"], textarea {
+  select, input[type="text"], input[type="password"], textarea {
     font: inherit; color: var(--text-primary); background: var(--bg-card);
     border: 1px solid var(--border-color); border-radius: var(--radius-sm);
     padding: 7px 12px; width: 100%;
   }
-  select:focus, input[type="text"]:focus, textarea:focus { outline: none; border-color: var(--accent); }
+  select:focus, input[type="text"]:focus, input[type="password"]:focus, textarea:focus { outline: none; border-color: var(--accent); }
   textarea { resize: vertical; min-height: 84px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; }
   .filter-select { width: auto; border-radius: var(--pill); font-size: 12px; padding: 6px 12px; }
 
@@ -264,6 +278,8 @@
     font-size: 12.5px; word-break: break-all;
   }
   .onetime-value code { flex: 1; user-select: all; }
+  input[type="password"] { font-size: 13px; }
+  .dialog p.sub .mono { color: var(--text-secondary); }
 
   .toast {
     position: fixed; left: 50%; bottom: 28px; transform: translate(-50%, 18px);
@@ -280,8 +296,7 @@
   @media (max-width: 820px) {
     .header { padding: 12px 16px; }
     .tools { width: 100%; border-radius: var(--radius-sm); }
-    #key { width: 100%; }
-    .keybar { flex: 1 1 100%; }
+    .who { flex: 1 1 100%; }
     main { padding: 18px 16px 4px; }
     th, td { padding: 10px 12px; }
   }
@@ -293,7 +308,50 @@
 </head>
 <body>
 
-<header class="header">
+<div class="header" id="gate-head" style="display:none">
+  <div class="brand">
+    <span class="logo" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.6l2.5 6.2 6.2 2.5-6.2 2.5-2.5 6.2-2.5-6.2L3.3 11.3l6.2-2.5z"/></svg>
+    </span>
+    <span class="brand-name">cc-manage</span>
+    <span class="brand-sub">后台</span>
+  </div>
+  <div class="tools">
+    <button id="theme-gate" class="icon-btn" type="button" title="切换主题" aria-label="切换主题">
+      <svg class="ico-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      <svg class="ico-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4.4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.2 5.2l1.4 1.4M17.4 17.4l1.4 1.4M18.8 5.2l-1.4 1.4M6.6 17.4l-1.4 1.4"/></svg>
+    </button>
+  </div>
+</div>
+
+<main class="gate-main" id="gate-main">
+  <section class="gate-card">
+    <div class="gate-logo" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.6l2.5 6.2 6.2 2.5-6.2 2.5-2.5 6.2-2.5-6.2L3.3 11.3l6.2-2.5z"/></svg>
+    </div>
+    <h1 id="gate-title">加载中…</h1>
+    <p class="sub" id="gate-sub"></p>
+    <div class="field">
+      <label for="gate-user">用户名</label>
+      <input id="gate-user" type="text" autocomplete="username" spellcheck="false" maxlength="64">
+    </div>
+    <div class="field">
+      <label for="gate-pass">密码</label>
+      <input id="gate-pass" type="password" autocomplete="current-password" spellcheck="false">
+    </div>
+    <div class="field" id="gate-pass2-field" style="display:none">
+      <label for="gate-pass2">确认密码</label>
+      <input id="gate-pass2" type="password" autocomplete="new-password" spellcheck="false">
+    </div>
+    <div class="gate-actions">
+      <a class="nav-link" href="/">返回前台</a>
+      <button class="btn primary" type="button" id="gate-submit">登录</button>
+    </div>
+    <div class="gate-err hidden" id="gate-err"></div>
+  </section>
+</main>
+
+<div class="header" id="admin-head" style="display:none">
   <div class="brand">
     <span class="logo" aria-hidden="true">
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.6l2.5 6.2 6.2 2.5-6.2 2.5-2.5 6.2-2.5-6.2L3.3 11.3l6.2-2.5z"/></svg>
@@ -311,47 +369,44 @@
       <svg class="ico-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
       <svg class="ico-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4.4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.2 5.2l1.4 1.4M17.4 17.4l1.4 1.4M18.8 5.2l-1.4 1.4M6.6 17.4l-1.4 1.4"/></svg>
     </button>
-    <div class="keybar">
-      <input id="key" type="password" placeholder="本地 key（sk-cg-…）" autocomplete="off" spellcheck="false" aria-label="本地 key">
-      <button id="savekey" class="btn" type="button">保存</button>
-    </div>
-    <span id="keyhint" class="hint"></span>
+    <span class="who" id="who"></span>
+    <button id="logout" class="btn" type="button">退出登录</button>
   </div>
-</header>
+</div>
 
-<main>
+<main id="admin-main" style="display:none">
   <div id="readonly" class="banner hidden"></div>
   <div id="autherr" class="banner hidden"></div>
 
-  <!-- 账号管理 -->
+  <!-- CC 账号（Command Code key）管理 -->
   <section class="panel">
     <div class="panel-head">
       <h2>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M16 20v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></svg>
-        账号管理
+        CC 账号管理
         <span id="acc-count" class="tag info">—</span>
       </h2>
       <div class="panel-tools">
         <button id="add-account" class="btn primary" type="button">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-          新增账号
+          新增 CC key
         </button>
       </div>
     </div>
     <div class="panel-body"><div class="table-wrap"><table>
       <thead>
-        <tr><th>账号名</th><th>keyId</th><th>keyPrefix</th><th>状态</th><th style="text-align:right">操作</th></tr>
+        <tr><th>备注名</th><th>keyId / keyPrefix</th><th>额度</th><th>状态</th><th style="text-align:right">操作</th></tr>
       </thead>
       <tbody id="accounts"></tbody>
     </table></div></div>
   </section>
 
-  <!-- 客户端 key 管理 -->
+  <!-- 客户端 API key 管理 -->
   <section class="panel">
     <div class="panel-head">
       <h2>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 7a4 4 0 1 0-3.4 3.95L10 12H8v2H6v2H3v-3l6.05-6.05A4 4 0 0 1 15 7z"/><circle cx="16.5" cy="10.5" r=".8" fill="currentColor"/></svg>
-        客户端 key 管理
+        API 客户端 key
         <span id="key-count" class="tag info">—</span>
       </h2>
       <div class="panel-tools">
@@ -361,11 +416,38 @@
         </button>
       </div>
     </div>
-    <div class="panel-body"><div class="table-wrap"><table>
+    <div class="panel-body">
+      <p class="sub" style="margin:0 18px 10px;font-size:12px;color:var(--text-tertiary)">
+        这组 <span class="mono">sk-cg-</span> key 只用于程序调用 <span class="mono">/v1/*</span> 反代接口（<span class="mono">Authorization: Bearer …</span>），与后台登录彻底分开。
+      </p>
+      <div class="table-wrap"><table>
       <thead>
         <tr><th>名称</th><th>keyId</th><th>keyPrefix</th><th>创建时间</th><th style="text-align:right">操作</th></tr>
       </thead>
       <tbody id="keys"></tbody>
+    </table></div></div>
+  </section>
+
+  <!-- 后台管理员 -->
+  <section class="panel">
+    <div class="panel-head">
+      <h2>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/></svg>
+        后台管理员
+        <span id="user-count" class="tag info">—</span>
+      </h2>
+      <div class="panel-tools">
+        <button id="add-user" class="btn primary" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          新增管理员
+        </button>
+      </div>
+    </div>
+    <div class="panel-body"><div class="table-wrap"><table>
+      <thead>
+        <tr><th>用户名</th><th>创建时间</th><th style="text-align:right">操作</th></tr>
+      </thead>
+      <tbody id="users"></tbody>
     </table></div></div>
   </section>
 
@@ -392,19 +474,19 @@
   </section>
 </main>
 
-<footer>后台管理 · 所有响应只暴露 keyId / keyPrefix，绝不回显完整 key · cc-manage</footer>
+<footer>后台管理 · 账号密码登录（scrypt + 签名 cookie session）· CC key / 客户端 key 全部只回显 keyId / keyPrefix · cc-manage</footer>
 
-<!-- 新增账号 -->
+<!-- 新增 CC 账号 -->
 <div class="modal" id="m-account">
   <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="m-account-title">
-    <h3 id="m-account-title">新增账号</h3>
-    <p class="sub">CC 上游 key 只用于服务端转发，不会在页面回显。</p>
+    <h3 id="m-account-title">新增 CC 账号</h3>
+    <p class="sub">填备注名 + Command Code API key（<span class="mono">user_…</span>）。提交后不回显 key，列表只显示 keyId / keyPrefix。</p>
     <div class="field">
-      <label for="a-name">账号名</label>
+      <label for="a-name">备注名</label>
       <input id="a-name" type="text" placeholder="例如：主号" maxlength="64" autocomplete="off">
     </div>
     <div class="field">
-      <label for="a-key">账号 key（以 user_ 开头）</label>
+      <label for="a-key">CC API key（以 user_ 开头）</label>
       <textarea id="a-key" placeholder="user_xxxxxxxx…" spellcheck="false" autocomplete="off"></textarea>
     </div>
     <div class="err-text" id="a-err"></div>
@@ -428,6 +510,44 @@
     <div class="dialog-actions">
       <button class="btn" type="button" data-close="m-rename">取消</button>
       <button class="btn primary" type="button" id="r-submit">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 新增管理员 -->
+<div class="modal" id="m-user">
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="m-user-title">
+    <h3 id="m-user-title">新增管理员</h3>
+    <p class="sub">密码用 scrypt 加盐哈希保存，文件里不含明文。</p>
+    <div class="field">
+      <label for="u-name">用户名</label>
+      <input id="u-name" type="text" placeholder="例如：admin" maxlength="64" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="field">
+      <label for="u-pass">密码（至少 8 位）</label>
+      <input id="u-pass" type="password" autocomplete="new-password" spellcheck="false">
+    </div>
+    <div class="err-text" id="u-err"></div>
+    <div class="dialog-actions">
+      <button class="btn" type="button" data-close="m-user">取消</button>
+      <button class="btn primary" type="button" id="u-submit">创建</button>
+    </div>
+  </div>
+</div>
+
+<!-- 修改密码 -->
+<div class="modal" id="m-pass">
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="m-pass-title">
+    <h3 id="m-pass-title">修改密码</h3>
+    <p class="sub" id="p-sub"></p>
+    <div class="field">
+      <label for="p-pass">新密码（至少 8 位）</label>
+      <input id="p-pass" type="password" autocomplete="new-password" spellcheck="false">
+    </div>
+    <div class="err-text" id="p-err"></div>
+    <div class="dialog-actions">
+      <button class="btn" type="button" data-close="m-pass">取消</button>
+      <button class="btn primary" type="button" id="p-submit">保存</button>
     </div>
   </div>
 </div>
@@ -465,70 +585,127 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
-const KEY_STORE = 'cc-manage-key';
 const THEME_STORE = 'cc-manage-theme';
-const state = { writable: true, accounts: [], keys: [], events: [], level: '', readonlyReason: '' };
+const state = {
+  auth: null, writable: true, accounts: [], keys: [], users: [], events: [], tests: [],
+  level: '', readonlyReason: '', mode: 'login',
+};
 let renameTarget = null;
+let passTarget = null;
+const testResults = new Map();   // keyId → 最近一次连通性测试结果
 
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 function timeText(ts) { const d = new Date(ts); return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString('zh-CN', { hour12: false }); }
 function shortId(id) { return String(id ?? '').slice(0, 8); }
+function money(n) { const v = Number(n); return Number.isFinite(v) ? v.toFixed(2) : '—'; }
+function pctText(p) { const v = Number(p); return (p === null || p === undefined || !Number.isFinite(v)) ? '—' : v.toFixed(1) + '%'; }
 
 function toast(text, bad) {
   const el = $('toast');
   el.textContent = text;
   el.className = 'toast show' + (bad ? ' bad' : '');
   clearTimeout(el._t);
-  el._t = setTimeout(() => { el.className = 'toast' + (bad ? ' bad' : ''); }, 2600);
+  el._t = setTimeout(() => { el.className = 'toast' + (bad ? ' bad' : ''); }, 3200);
 }
 
-// ── 本地 key：sessionStorage + Authorization: Bearer ─────────────────
-function getKey() {
-  try { return sessionStorage.getItem(KEY_STORE) || ''; } catch { return ''; }
+// ── HTTP：凭证是 HttpOnly session cookie，JS 完全不接触密码/token ──────
+async function apiJSON(path, { method = 'GET', body } = {}) {
+  const opts = { method, headers: {} };
+  if (body !== undefined) { opts.headers['content-type'] = 'application/json'; opts.body = JSON.stringify(body); }
+  const r = await fetch(path, opts);
+  let data = null;
+  try { data = await r.json(); } catch { /* 非 JSON 响应 */ }
+  if (!r.ok) {
+    // /api/auth/* 的 401 是「密码错」而不是「会话失效」，不要把人踢回登录页
+    if (r.status === 401 && !path.startsWith('/api/auth/')) showGate('login');
+    const err = new Error((data && data.error && data.error.message) || ('HTTP ' + r.status));
+    err.status = r.status;
+    err.retryAfterMs = data && data.retryAfterMs;
+    throw err;
+  }
+  return data;
 }
-function setKey(v) {
-  try { v ? sessionStorage.setItem(KEY_STORE, v) : sessionStorage.removeItem(KEY_STORE); } catch { /* 忽略 */ }
+
+// ── 登录 / 初始化页 ─────────────────────────────────────────────────
+function showGate(mode, me) {
+  state.mode = mode;
+  document.body.className = 'gate';
+  $('gate-head').style.display = '';
+  $('gate-main').style.display = '';
+  $('admin-head').style.display = 'none';
+  $('admin-main').style.display = 'none';
+  $('gate-err').className = 'gate-err hidden';
+  const setup = mode === 'setup';
+  $('gate-title').textContent = setup ? '初始化后台' : '登录后台';
+  $('gate-sub').innerHTML = setup
+    ? '还没有管理员账号（config/users.json 不存在或为空）。<br>设置第一个管理员后，初始化接口将永久关闭。'
+    : '后台用账号 + 密码登录；<span class="mono">sk-cg-</span> 客户端 key 只管 API 调用，不能登录后台。';
+  $('gate-pass2-field').style.display = setup ? '' : 'none';
+  $('gate-submit').textContent = setup ? '创建管理员并登录' : '登录';
+  $('gate-user').value = '';
+  $('gate-pass').value = '';
+  $('gate-pass2').value = '';
+  $('gate-user').focus();
 }
-function authHeaders(extra) {
-  const k = getKey();
-  return k ? Object.assign({ Authorization: 'Bearer ' + k }, extra) : Object.assign({}, extra);
+
+function showAdmin() {
+  document.body.className = '';
+  $('gate-head').style.display = 'none';
+  $('gate-main').style.display = 'none';
+  $('admin-head').style.display = '';
+  $('admin-main').style.display = '';
+  const u = state.auth && state.auth.user;
+  $('who').innerHTML = u ? '已登录 <b>' + esc(u.username) + '</b>' : '';
 }
-function apiFetch(path, opts = {}) {
-  if (!getKey()) return Promise.reject(new Error('NO_KEY'));
-  return fetch(path, Object.assign({}, opts, { headers: authHeaders(opts.headers) }));
+
+function gateError(message) {
+  const el = $('gate-err');
+  el.textContent = message;
+  el.className = 'gate-err';
 }
-function apiJSON(path, { method = 'GET', body } = {}) {
-  const opts = { method, headers: { 'content-type': 'application/json' } };
-  if (body !== undefined) opts.body = JSON.stringify(body);
-  return apiFetch(path, opts).then(async (r) => {
-    let data = null;
-    try { data = await r.json(); } catch { /* 非 JSON 响应 */ }
-    if (!r.ok) {
-      const err = new Error((data && data.error && data.error.message) || ('HTTP ' + r.status));
-      err.status = r.status;
-      throw err;
-    }
-    return data;
-  });
+
+$('gate-submit').onclick = async () => {
+  const username = $('gate-user').value.trim();
+  const password = $('gate-pass').value;
+  const setup = state.mode === 'setup';
+  if (!username) return gateError('请输入用户名');
+  if (!password) return gateError('请输入密码');
+  if (setup && password !== $('gate-pass2').value) return gateError('两次输入的密码不一致');
+  if (setup && password.length < 8) return gateError('密码长度至少 8 位');
+  $('gate-submit').disabled = true;
+  try {
+    await apiJSON(setup ? '/api/auth/setup' : '/api/auth/login', { method: 'POST', body: { username, password } });
+    $('gate-pass').value = '';
+    $('gate-pass2').value = '';
+    await boot();
+    toast(setup ? '初始化完成，已登录' : '登录成功');
+  } catch (e) {
+    gateError(e.message || '登录失败');
+  } finally {
+    $('gate-submit').disabled = false;
+  }
+};
+for (const id of ['gate-user', 'gate-pass', 'gate-pass2']) {
+  $(id).addEventListener('keydown', (e) => { if (e.key === 'Enter') $('gate-submit').click(); });
 }
-function setHint(text, bad) {
-  $('keyhint').textContent = text || '';
-  $('key').className = bad ? 'bad' : '';
-}
-function fatal(message) {
-  $('autherr').textContent = message;
-  $('autherr').className = 'banner';
-}
+
+$('logout').onclick = async () => {
+  try { await apiJSON('/api/auth/logout', { method: 'POST' }); } catch { /* 忽略 */ }
+  state.auth = null;
+  showGate('login');
+  toast('已退出登录');
+};
 
 // ── 只读模式：把所有写按钮置灰并说明原因 ──────────────────────────────
 function applyWritable(writable, reason) {
   state.writable = writable !== false;
   const locked = !state.writable;
-  for (const id of ['add-account', 'add-key', 'k-submit', 'a-submit', 'r-submit']) {
+  for (const id of ['add-account', 'add-key', 'k-submit', 'a-submit', 'r-submit', 'add-user', 'u-submit', 'p-submit']) {
     const el = $(id);
     if (el) { el.disabled = locked; el.title = locked ? (reason || '当前为只读模式') : ''; }
   }
-  for (const btn of document.querySelectorAll('#accounts .actions button, #keys .actions button')) {
+  for (const btn of document.querySelectorAll('#accounts .actions button, #keys .actions button, #users .actions button')) {
+    if (btn.getAttribute('data-act') === 'test') continue;   // 连通性测试是只读操作
     btn.disabled = locked;
   }
   $('readonly').textContent = locked ? (reason || '凭据以只读方式挂载，无法修改；请改用 config/ 目录挂载') : '';
@@ -542,22 +719,47 @@ function statusTag(a) {
   return '<span class="tag ok">可用</span>';
 }
 
+// ── CC 账号（含额度 + 连通性测试）────────────────────────────────────
+function quotaBar(label, w) {
+  const pct = w && typeof w.percent === 'number' ? w.percent : null;
+  const cls = pct === null ? '' : pct >= 90 ? 'bad' : pct >= 70 ? 'warn' : '';
+  return '<div class="qbar"><span class="qbar-label">' + label + '</span>'
+    + '<span class="qbar-track ' + cls + '"><i style="width:' + (pct === null ? 0 : Math.max(0, Math.min(100, pct))) + '%"></i></span>'
+    + '<span class="qbar-pct">' + pctText(pct) + '</span></div>';
+}
+
 function renderAccounts() {
   const list = state.accounts;
   $('acc-count').textContent = list.length + ' 个';
   if (!list.length) {
-    $('accounts').innerHTML = '<tr><td colspan="5" class="empty">还没有账号，点右上角「新增账号」添加</td></tr>';
+    $('accounts').innerHTML = '<tr><td colspan="5" class="empty">还没有账号，点右上角「新增 CC key」添加</td></tr>';
     applyWritable(state.writable, state.readonlyReason);
     return;
   }
   $('accounts').innerHTML = list.map((a) => {
     const id = esc(a.keyId);
+    const q = a.lastQuota;
+    const quota = q && q.ok
+      ? quotaBar('5h', q.fiveHour) + quotaBar('周', q.weekly) + quotaBar('月', q.monthly)
+        + '<div class="cell-sub">余额 ' + money(q.remaining) + (q.plan && q.plan.planId ? ' · 套餐 ' + esc(q.plan.planId) : '')
+        + (q.displayName ? ' · ' + esc(q.displayName) : '') + '</div>'
+      : '<div class="cell-sub">' + (q ? '额度查询失败：' + esc(a.lastError || '未知错误') : '尚未获取额度快照') + '</div>';
+    const test = testResults.get(a.keyId);
+    const testNote = test
+      ? '<div class="test-note ' + (test.ok ? 'ok' : 'bad') + '">'
+        + (test.ok
+          ? '✓ whoami 通过：' + esc(test.result.displayName || test.result.userName || '-')
+            + (test.result.keyName ? '（key ' + esc(test.result.keyName) + '）' : '')
+          : '✗ ' + esc(test.result.error || '测试失败'))
+        + ' · ' + esc(timeText(test.at)) + '</div>'
+      : '';
     return '<tr>'
-      + '<td><div class="cell-name">' + esc(a.name) + '</div></td>'
-      + '<td class="mono cell-sub">' + id + '</td>'
-      + '<td class="mono cell-sub">' + esc(a.keyPrefix) + '…</td>'
+      + '<td><div class="cell-name">' + esc(a.name) + '</div>' + testNote + '</td>'
+      + '<td class="mono cell-sub">' + id + '<br>' + esc(a.keyPrefix) + '…</td>'
+      + '<td class="cell-quota">' + quota + '</td>'
       + '<td>' + statusTag(a) + '</td>'
       + '<td class="actions">'
+      + '<button class="btn" type="button" data-act="test" data-id="' + id + '">测试连通性</button>'
       + '<button class="btn" type="button" data-act="toggle" data-id="' + id + '">' + (a.enabled ? '停用' : '启用') + '</button>'
       + '<button class="btn" type="button" data-act="rename" data-id="' + id + '">改备注</button>'
       + '<button class="btn danger" type="button" data-act="del" data-id="' + id + '">删除</button>'
@@ -587,6 +789,28 @@ function renderKeys() {
   applyWritable(state.writable, state.readonlyReason);
 }
 
+function renderUsers() {
+  const list = state.users;
+  $('user-count').textContent = list.length + ' 个';
+  if (!list.length) {
+    $('users').innerHTML = '<tr><td colspan="3" class="empty">还没有管理员</td></tr>';
+    return;
+  }
+  $('users').innerHTML = list.map((u) => {
+    const name = esc(u.username);
+    const isSelf = state.auth && state.auth.user && state.auth.user.username === u.username;
+    return '<tr>'
+      + '<td><div class="cell-name">' + name + (isSelf ? ' <span class="tag info">当前登录</span>' : '') + '</div></td>'
+      + '<td class="cell-sub">' + esc(u.createdAt ? timeText(u.createdAt) : '—') + '</td>'
+      + '<td class="actions">'
+      + '<button class="btn" type="button" data-act="pass" data-name="' + name + '">改密码</button>'
+      + (list.length > 1
+        ? '<button class="btn danger" type="button" data-act="deluser" data-name="' + name + '">删除</button>'
+        : '<button class="btn" type="button" disabled title="至少保留一个管理员">删除</button>')
+      + '</td></tr>';
+  }).join('');
+}
+
 function renderEvents() {
   const list = state.events;
   $('event-count').textContent = list.length + ' 条';
@@ -609,6 +833,11 @@ function renderEvents() {
 async function loadAccounts() {
   const data = await apiJSON('/api/admin/accounts');
   state.accounts = data.accounts || [];
+  for (const t of data.tests || []) {
+    if (!t.keyId) continue;
+    const prev = testResults.get(t.keyId);
+    if (!prev || prev.at <= t.checkedAt) testResults.set(t.keyId, { ok: !!t.ok, result: t, at: t.checkedAt });
+  }
   state.readonlyReason = '凭据以只读方式挂载，无法修改；请改用 config/ 目录挂载';
   renderAccounts();
   applyWritable(data.writable !== false, state.readonlyReason);
@@ -620,6 +849,12 @@ async function loadKeys() {
   renderKeys();
 }
 
+async function loadUsers() {
+  const data = await apiJSON('/api/admin/session');
+  state.users = data.users || [];
+  renderUsers();
+}
+
 async function loadEvents() {
   const q = state.level ? '?level=' + encodeURIComponent(state.level) : '';
   const data = await apiJSON('/api/admin/events' + q);
@@ -628,26 +863,16 @@ async function loadEvents() {
 }
 
 async function loadAll() {
-  if (!getKey()) {
-    $('autherr').textContent = '请先在右上角填入本地 key（sk-cg-…）并保存，后台需要鉴权。';
-    $('autherr').className = 'banner';
-    return;
-  }
-  try {
-    await loadAccounts();
-    $('autherr').className = 'banner hidden';
-    setHint('', false);
-  } catch (e) {
-    if (e.status === 401) { setHint('key 无效或缺失（401）', true); fatal('本地 key 无效或缺失（401）：请在右上角重新填入 keys.json 里的 key。'); return; }
-    if (e.message === 'NO_KEY') return;
-    fatal('加载失败：' + e.message);
-    return;
-  }
-  await Promise.all([loadKeys().catch((e) => { if (e.status === 401) return; toast('客户端 key 加载失败：' + e.message, true); }),
-                     loadEvents().catch((e) => { if (e.status === 401) return; toast('事件加载失败：' + e.message, true); })]);
+  await loadAccounts();
+  $('autherr').className = 'banner hidden';
+  await Promise.all([
+    loadKeys().catch((e) => { if (e.status !== 401) toast('客户端 key 加载失败：' + e.message, true); }),
+    loadUsers().catch((e) => { if (e.status !== 401) toast('管理员加载失败：' + e.message, true); }),
+    loadEvents().catch((e) => { if (e.status !== 401) toast('事件加载失败：' + e.message, true); }),
+  ]);
 }
 
-// ── 账号操作 ────────────────────────────────────────────────────────
+// ── 弹窗 ────────────────────────────────────────────────────────────
 function openModal(id) { $(id).classList.add('open'); }
 function closeModal(id) { $(id).classList.remove('open'); }
 for (const el of document.querySelectorAll('[data-close]')) {
@@ -660,12 +885,13 @@ for (const el of document.querySelectorAll('.modal')) {
 async function guard(fn) {
   try { await fn(); }
   catch (e) {
-    if (e.status === 401) { setHint('key 无效或缺失（401）', true); fatal('本地 key 无效或缺失（401）。'); return; }
+    if (e.status === 401) return;              // showGate 已在 apiJSON 里触发
     if (e.status === 403) { applyWritable(false, e.message); toast(e.message, true); return; }
     toast(e.message || '操作失败', true);
   }
 }
 
+// ── CC 账号操作 ─────────────────────────────────────────────────────
 $('add-account').onclick = () => { $('a-err').textContent = ''; openModal('m-account'); $('a-name').focus(); };
 $('a-submit').onclick = () => guard(async () => {
   $('a-err').textContent = '';
@@ -675,7 +901,7 @@ $('a-submit').onclick = () => guard(async () => {
     await apiJSON('/api/admin/accounts', { method: 'POST', body: { name, key } });
   } catch (e) { $('a-err').textContent = e.message; return; }
   $('a-name').value = '';
-  $('a-key').value = '';          // 提交后清空
+  $('a-key').value = '';          // 提交后清空，绝不回显
   closeModal('m-account');
   toast('账号已新增并热生效');
   await loadAccounts();
@@ -687,8 +913,25 @@ $('accounts').addEventListener('click', (e) => {
   const id = btn.getAttribute('data-id');
   const account = state.accounts.find((a) => shortId(a.keyId) === shortId(id));
   if (!account) return;
+  const act = btn.getAttribute('data-act');
 
-  if (btn.getAttribute('data-act') === 'toggle') {
+  if (act === 'test') {
+    return guard(async () => {
+      btn.disabled = true;
+      btn.textContent = '测试中…';
+      try {
+        const data = await apiJSON('/api/admin/accounts/test', { method: 'POST', body: { keyId: id } });
+        testResults.set(account.keyId, { ok: !!(data.result && data.result.ok), result: data.result || {}, at: Date.now() });
+        renderAccounts();
+        toast(data.result && data.result.ok ? '连通性正常：key 有效' : '连通性失败：' + ((data.result && data.result.error) || '未知原因'), !(data.result && data.result.ok));
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '测试连通性';
+      }
+    });
+  }
+
+  if (act === 'toggle') {
     return guard(async () => {
       await apiJSON('/api/admin/accounts/' + encodeURIComponent(id), { method: 'PATCH', body: { enabled: !account.enabled } });
       toast(account.enabled ? '账号已停用' : '账号已启用');
@@ -696,7 +939,7 @@ $('accounts').addEventListener('click', (e) => {
     });
   }
 
-  if (btn.getAttribute('data-act') === 'rename') {
+  if (act === 'rename') {
     renameTarget = id;
     $('r-sub').textContent = '账号「' + account.name + '」（keyId ' + shortId(id) + '）';
     $('r-name').value = account.name;
@@ -706,10 +949,11 @@ $('accounts').addEventListener('click', (e) => {
     return;
   }
 
-  if (btn.getAttribute('data-act') === 'del') {
+  if (act === 'del') {
     if (!confirm('确定要删除账号「' + account.name + '」吗？\nkeyId ' + shortId(id) + '，该操作不可撤销。')) return;
     return guard(async () => {
       await apiJSON('/api/admin/accounts/' + encodeURIComponent(id), { method: 'DELETE' });
+      testResults.delete(account.keyId);
       toast('账号已删除');
       await loadAccounts();
     });
@@ -784,6 +1028,56 @@ $('keys').addEventListener('click', (e) => {
   });
 });
 
+// ── 管理员操作 ──────────────────────────────────────────────────────
+$('add-user').onclick = () => { $('u-err').textContent = ''; $('u-name').value = ''; $('u-pass').value = ''; openModal('m-user'); $('u-name').focus(); };
+$('u-submit').onclick = () => guard(async () => {
+  $('u-err').textContent = '';
+  const username = $('u-name').value.trim();
+  const password = $('u-pass').value;
+  try {
+    await apiJSON('/api/admin/users', { method: 'POST', body: { username, password } });
+  } catch (e) { $('u-err').textContent = e.message; return; }
+  closeModal('m-user');
+  toast('管理员已创建');
+  await loadUsers();
+});
+
+$('users').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-act]');
+  if (!btn || btn.disabled) return;
+  const name = btn.getAttribute('data-name');
+  const act = btn.getAttribute('data-act');
+
+  if (act === 'pass') {
+    passTarget = name;
+    $('p-sub').textContent = '为管理员「' + name + '」设置新密码（scrypt 加盐哈希存储）';
+    $('p-pass').value = '';
+    $('p-err').textContent = '';
+    openModal('m-pass');
+    $('p-pass').focus();
+    return;
+  }
+
+  if (act === 'deluser') {
+    if (!confirm('确定要删除管理员「' + name + '」吗？\n删除后该账号无法登录后台。')) return;
+    return guard(async () => {
+      await apiJSON('/api/admin/users/' + encodeURIComponent(name), { method: 'DELETE' });
+      toast('管理员已删除');
+      await loadUsers();
+    });
+  }
+});
+
+$('p-submit').onclick = () => guard(async () => {
+  $('p-err').textContent = '';
+  const password = $('p-pass').value;
+  try {
+    await apiJSON('/api/admin/users/' + encodeURIComponent(passTarget), { method: 'PATCH', body: { password } });
+  } catch (e) { $('p-err').textContent = e.message; return; }
+  closeModal('m-pass');
+  toast('密码已更新');
+});
+
 // ── 事件过滤 ────────────────────────────────────────────────────────
 $('level').onchange = (e) => { state.level = e.target.value; loadEvents().catch((err) => toast(err.message, true)); };
 $('reload-events').onclick = () => loadEvents().catch((err) => toast(err.message, true));
@@ -799,15 +1093,32 @@ function setTheme(t) {
   try { localStorage.setItem(THEME_STORE, t); } catch { /* 忽略 */ }
 }
 $('theme').onclick = () => setTheme(currentTheme() === 'dark' ? 'light' : 'dark');
+$('theme-gate').onclick = () => setTheme(currentTheme() === 'dark' ? 'light' : 'dark');
 
-// ── 启动 ────────────────────────────────────────────────────────────
+// ── 启动：先问 /api/auth/me 决定「初始化 / 登录 / 后台」─────────────
+async function boot() {
+  let me;
+  try {
+    const r = await fetch('/api/auth/me');
+    me = await r.json();
+  } catch (e) {
+    showGate('login');
+    gateError('无法连接服务：' + e.message);
+    return;
+  }
+  state.auth = me;
+  if (!me.authenticated) return showGate(me.setupRequired ? 'setup' : 'login');
+  showAdmin();
+  await loadAll();
+  if (!me.setupRequired && me.user && me.user.username) $('who').innerHTML = '已登录 <b>' + esc(me.user.username) + '</b>';
+}
+
 const savedTheme = storedTheme();
 if (savedTheme) document.documentElement.setAttribute('data-theme', savedTheme);
-$('key').value = getKey();
-$('savekey').onclick = () => { setKey($('key').value.trim()); setHint('', false); loadAll(); };
-$('key').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('savekey').click(); });
-loadAll();
-setInterval(() => { if (getKey() && !document.hidden) loadEvents().catch(() => {}); }, 10000);
+boot();
+setInterval(() => {
+  if (!document.hidden && document.body.className !== 'gate') loadEvents().catch(() => {});
+}, 10000);
 </script>
 </body>
 </html>

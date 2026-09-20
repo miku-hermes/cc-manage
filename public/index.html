@@ -162,14 +162,14 @@
     :root:not([data-theme="light"]) .ico-moon { display: none; }
   }
 
-  .keybar { display: flex; align-items: center; gap: 8px; }
-  #key {
-    width: 190px; padding: 7px 14px; border-radius: var(--pill);
-    border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-primary);
-    font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px;
+  .admin-link {
+    display: inline-flex; align-items: center; gap: 6px; text-decoration: none;
+    color: var(--text-secondary); font-size: 13px; padding: 7px 15px;
+    border-radius: var(--pill); border: 1px solid var(--border-color); background: var(--bg-card);
+    transition: color .15s, border-color .15s;
   }
-  #key:focus { outline: none; border-color: var(--accent); }
-  #key.bad { border-color: var(--danger); }
+  .admin-link:hover { color: var(--accent); border-color: var(--accent); }
+  .admin-link svg { width: 15px; height: 15px; }
   .hint { font-size: 12px; color: var(--warning); }
 
   /* ── 主区域 ───────────────────────────────────────────── */
@@ -257,8 +257,7 @@
     .tools { width: 100%; border-radius: var(--radius-sm); }
     .search-box { flex: 1 1 160px; }
     .search-box input { width: 100%; }
-    #key { width: 100%; }
-    .keybar { flex: 1 1 100%; }
+    .admin-link { flex: 1 1 auto; justify-content: center; }
     main { padding: 18px 16px 4px; }
     .hero { padding: 20px; }
     .greeting { font-size: 24px; }
@@ -299,10 +298,10 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.4 6.2"/><path d="M20 5v6h-6"/></svg>
       刷新额度
     </button>
-    <div class="keybar">
-      <input id="key" type="password" placeholder="本地 key（sk-cg-…）" autocomplete="off" spellcheck="false" aria-label="本地 key">
-      <button id="savekey" class="btn" type="button">保存</button>
-    </div>
+    <a class="admin-link" href="/admin" title="账号密码登录后台，管理 CC key 与客户端 key">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10.5" width="16" height="10" rx="2.2"/><path d="M8 10.5V7.6a4 4 0 0 1 8 0v2.9"/></svg>
+      登录后台
+    </a>
     <span id="keyhint" class="hint"></span>
   </div>
 </header>
@@ -333,11 +332,10 @@
   <section class="grid" id="cards"></section>
 </main>
 
-<footer>只读面板 · 不显示任何完整 key（仅 keyId / keyPrefix）· cc-manage</footer>
+<footer>公开只读面板 · 不显示任何完整 key（仅 keyId / keyPrefix / 额度百分比）· 管理请<a href="/admin">登录后台</a> · cc-manage</footer>
 
 <script>
 const $ = (id) => document.getElementById(id);
-const KEY_STORE = 'cc-manage-key';
 const THEME_STORE = 'cc-manage-theme';
 const state = { data: null, filter: '' };
 
@@ -430,25 +428,15 @@ function render(d) {
   renderCards();
 }
 
-// ── 本地 key：存 sessionStorage，所有请求都带 Authorization ──────────
-function getKey() {
-  try { return sessionStorage.getItem(KEY_STORE) || ''; } catch { return ''; }
-}
-function setKey(v) {
-  try { v ? sessionStorage.setItem(KEY_STORE, v) : sessionStorage.removeItem(KEY_STORE); } catch { /* 隐私模式忽略 */ }
-}
-function authHeaders(extra) {
-  const k = getKey();
-  return k ? Object.assign({ Authorization: 'Bearer ' + k }, extra) : Object.assign({}, extra);
-}
-/** 带 key 的 fetch：无 key 时不发请求，直接抛错让上层提示。 */
+// ── 数据：公开只读，不鉴权（没有完整 key，只有 keyId / keyPrefix / 额度百分比）──
+/** 面板取数：同源公开接口，不需要任何凭证。 */
 function apiFetch(path, opts = {}) {
-  if (!getKey()) return Promise.reject(new Error('NO_KEY'));
-  return fetch(path, Object.assign({}, opts, { headers: authHeaders(opts.headers) }));
+  return fetch(path, Object.assign({ credentials: 'same-origin' }, opts));
 }
 function setHint(text, bad) {
-  $('keyhint').textContent = text || '';
-  $('key').className = bad ? 'bad' : '';
+  const el = $('keyhint');
+  el.textContent = text || '';
+  el.className = bad ? 'hint bad' : 'hint';
 }
 function clearKpis() {
   for (const id of ['kpi-accounts', 'kpi-available', 'kpi-paused', 'kpi-concurrency', 'kpi-total', 'kpi-errors']) {
@@ -456,24 +444,22 @@ function clearKpis() {
     $(id).className = '';
   }
 }
-function showNoKey() {
+function showPrivate() {
   state.data = null;
-  $('health').textContent = '未填写 key';
-  $('health').className = 'pill';
+  $('health').textContent = '需要登录后台';
+  $('health').className = 'pill bad';
   $('tokens').textContent = '0';
   $('upstream').textContent = '';
   $('updated').textContent = '';
-  setHint('请先填入 sk-cg- key 再刷新', true);
   clearKpis();
-  $('cards').innerHTML = '<div class="card empty">面板需要本地 key（<span class="mono">sk-cg-…</span>）才能读取数据：'
-    + '在右上角输入框填入 keys.json 里的 key 并保存，之后会自动刷新。</div>';
+  $('cards').innerHTML = '<div class="card empty">当前实例已开启隐私模式（<span class="mono">PUBLIC_DASHBOARD=0</span>）：'
+    + '请先<a href="/admin">登录后台</a>再查看面板数据。</div>';
 }
 
 async function load() {
-  if (!getKey()) return showNoKey();
   try {
     const r = await apiFetch('/api/status');
-    if (r.status === 401) { setHint('key 无效或缺失（401）', true); $('health').textContent = '鉴权失败 401'; $('health').className = 'pill bad'; return; }
+    if (r.status === 401) { showPrivate(); return; }
     if (!r.ok) throw new Error('HTTP ' + r.status);
     setHint('', false);
     render(await r.json());
@@ -484,21 +470,14 @@ async function load() {
 }
 
 $('refresh').onclick = async () => {
-  if (!getKey()) return showNoKey();
   $('refresh').disabled = true;
   try {
     const r = await apiFetch('/api/accounts/refresh', { method: 'POST' });
-    if (r.status === 401) { setHint('key 无效或缺失（401）', true); }
-    else if (r.ok) { setHint('', false); render(await r.json()); }
+    if (r.status === 401) showPrivate();
+    else if (r.ok) render(await r.json());
   } catch (e) { /* 保持面板可用 */ }
   finally { $('refresh').disabled = false; }
 };
-$('savekey').onclick = () => {
-  setKey($('key').value.trim());
-  setHint('', false);
-  load();
-};
-$('key').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('savekey').click(); });
 $('search').addEventListener('input', (e) => { state.filter = e.target.value || ''; renderCards(); });
 
 // ── 主题：默认跟随系统，按钮手动切换 ────────────────────────────────
@@ -550,9 +529,8 @@ petals();
 tick();
 setInterval(tick, 1000);
 
-$('key').value = getKey();
-if (!getKey()) showNoKey(); else load();
-setInterval(() => { if (getKey() && !document.hidden) load(); }, 5000);
+load();
+setInterval(() => { if (!document.hidden) load(); }, 5000);
 </script>
 </body>
 </html>

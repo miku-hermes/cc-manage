@@ -13,8 +13,11 @@ export const DEFAULTS = {
   sessionAffinityTtlMs: 1800000,
   allowPassthrough: false,
   maxBodyBytes: 20 * 1024 * 1024,
-  // 管理 API 是否也要求本地 key。默认 false：网关默认只监听 127.0.0.1，
-  // 面板需要免密打开才能直接用。监听 0.0.0.0 时建议置 true。
+  // 前台只读面板（/ 与 /api/status）是否公开。默认 1 = 公开（只暴露账号名/keyId/keyPrefix/额度百分比，
+  // 没有完整 key）；设 0 → 需要后台登录 session 才能看。
+  publicDashboard: true,
+  // 已废弃：旧版「面板接口是否要求本地 key」。为兼容老部署保留，
+  // 置 true 时面板读接口接受 sk-cg- key，等价于关闭公开面板；新部署请用 PUBLIC_DASHBOARD=0。
   protectAdminApi: false,
   logLevel: 'info',
   logFile: '',
@@ -31,6 +34,7 @@ const ENV_MAP = {
   SESSION_AFFINITY_TTL_MS: ['sessionAffinityTtlMs', 'number'],
   MAX_BODY_BYTES: ['maxBodyBytes', 'number'],
   ALLOW_PASSTHROUGH: ['allowPassthrough', 'boolean'],
+  PUBLIC_DASHBOARD: ['publicDashboard', 'boolean'],
   PROTECT_ADMIN_API: ['protectAdminApi', 'boolean'],
   LOG_FILE: ['logFile', 'string'],
   LOG_LEVEL: ['logLevel', 'string'],
