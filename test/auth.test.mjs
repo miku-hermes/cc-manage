@@ -281,6 +281,34 @@ test('/api/admin/*：未登录 → 401；带 session → 200；sk-cg- key 不能
   }
 });
 
+test('/api/admin/accounts 必须带 lastQuota 额度快照（后台额度列的数据源）', async (t) => {
+  const { ctx, cookie } = await setupGateway();
+  t.after(() => ctx.close());
+
+  // 先让后端拿到额度快照，否则无从判断字段是否透传
+  await ctx.gateway.refreshAll();
+
+  const res = await request(`${ctx.baseUrl}/api/admin/accounts`, { headers: { cookie } });
+  assert.equal(res.status, 200);
+  const d = JSON.parse(res.body);
+  assert.ok(d.accounts.length > 0, '应至少有一个账号');
+
+  for (const a of d.accounts) {
+    // 关键回归：后台用 pubAccount 会漏掉 lastQuota，导致页面永远显示「尚未获取额度快照」
+    assert.ok('lastQuota' in a, `账号「${a.name}」必须带 lastQuota，否则后台额度列永远是「尚未获取额度快照」`);
+    if (a.lastQuota) {
+      assert.equal(typeof a.lastQuota.fetchedAt, 'number', 'lastQuota.fetchedAt 供前端算新鲜度');
+      assert.ok('remaining' in a.lastQuota, 'lastQuota 必须含余额');
+      assert.ok('fiveHour' in a.lastQuota && 'weekly' in a.lastQuota && 'monthly' in a.lastQuota,
+        'lastQuota 必须含三个窗口，供后台画进度条');
+    }
+    // 脱敏：绝不能因为换了视图函数就把完整 key 带出来
+    assert.ok(!res.body.includes('user_test_alpha') && !res.body.includes('user_test_beta'),
+      '后台接口不得出现完整账号 key');
+    assert.ok(!res.body.includes(ctx.localKey), '后台接口不得出现本地客户端 key');
+  }
+});
+
 test('写接口：未登录 → 401，登录后可增删（登出后立刻 401）', async (t) => {
   const { ctx, cookie } = await setupGateway();
   t.after(() => ctx.close());

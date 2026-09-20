@@ -647,7 +647,10 @@ export async function startGateway(overrides = {}) {
       return sendJSON(res, 200, {
         ok: true,
         writable: store.writable(),
-        accounts: accounts.map(pubAccount),
+        // 用 accountView（含 lastQuota 额度快照）而不是 pubAccount（只有 8 个基础字段）：
+        // 后台要展示 5h/周/月进度条与余额，用 pubAccount 会永远显示「尚未获取额度快照」。
+        // accountView 内部已做脱敏（只出 keyId / keyPrefix，lastError 走 redact）。
+        accounts: accounts.map(accountView),
         tests: testHistory.slice(0, TEST_HISTORY_MAX),
       });
     }
