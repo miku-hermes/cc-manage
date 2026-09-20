@@ -2,21 +2,45 @@
 const HOUR_MS = 3600 * 1000;
 const FIVE_HOUR_MS = 5 * HOUR_MS;
 
-/** 取用于打分的窗口：5h 优先，其次周窗口，都没有则视为无限额。 */
-export function ratioWindow(quota) {
-  if (quota?.fiveHour && typeof quota.fiveHour.usedRatio === 'number') return quota.fiveHour;
-  if (quota?.weekly && typeof quota.weekly.usedRatio === 'number') return quota.weekly;
-  return null;
+/**
+ * 所有能用的额度窗口（5h、周）。任何一个打满，账号就不可用。
+ *
+ * 历史 bug：早期只取「5h 优先、其次周」，于是当 5h 是空的而**周额度已打满**时
+ * 二者都看不见 —— 账号既被判定「可用」，又因 5h 剩余 100% 拿到最高分被优先选中，
+ * 于是每次路由都先撞一次 429 再 failover。
+ */
+export function quotaWindows(quota) {
+  const out = [];
+  for (const w of [quota?.fiveHour, quota?.weekly]) {
+    if (w && typeof w.usedRatio === 'number') out.push(w);
+  }
+  return out;
 }
 
-/** remainingRatio = 1 - used/cap；无数据算 1.0。 */
-export function remainingRatio(quota) {
-  const w = ratioWindow(quota);
-  if (!w) return 1.0;
+/** 取最受限的窗口（剩余比例最小的那个）。都没有则 null。 */
+export function ratioWindow(quota) {
+  const ws = quotaWindows(quota);
+  if (ws.length === 0) return null;
+  let worst = ws[0];
+  for (const w of ws.slice(1)) {
+    if (ratioOf(w) < ratioOf(worst)) worst = w;
+  }
+  return worst;
+}
+
+/** 单个窗口的剩余比例：1 - used/cap；cap 无效按 1.0。 */
+function ratioOf(w) {
   const used = Number(w.used) || 0;
   const cap = Number(w.cap) || 0;
   if (!(cap > 0)) return 1.0;
   return Math.max(0, 1 - used / cap);
+}
+
+/** remainingRatio = 最受限窗口的剩余比例；无数据算 1.0。 */
+export function remainingRatio(quota) {
+  const w = ratioWindow(quota);
+  if (!w) return 1.0;
+  return ratioOf(w);
 }
 
 /** 上游是否报了「额度耗尽」。402 一律算；429 需 body 里含关键字。 */
@@ -81,7 +105,10 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
     if (rt.pausedUntil && rt.pausedUntil > now) return false;
     if (rt.authInvalid) return false;
     const q = rt.lastQuota;
-    if (q?.fiveHour && q.fiveHour.cap > 0 && q.fiveHour.used >= q.fiveHour.cap) return false;
+    // 任一窗口打满即不可用：只看 5h 会让「周额度已打满」的账号被继续调度
+    for (const w of quotaWindows(q)) {
+      if (w.cap > 0 && w.used >= w.cap) return false;
+    }
     return true;
   }
 

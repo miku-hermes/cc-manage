@@ -1,7 +1,7 @@
 // §8-2 调度：打分 / 粘性 / 冷却 / 自动暂停恢复
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createScheduler, isQuotaError, remainingRatio } from '../src/scheduler.mjs';
+import { createScheduler, isQuotaError, remainingRatio, ratioWindow } from '../src/scheduler.mjs';
 import { normalizeAccounts } from '../src/store.mjs';
 
 function makeAccounts(list) {
@@ -213,6 +213,41 @@ test('isQuotaError / remainingRatio / pauseForQuota 行为', () => {
   s.recordQuota(accounts[0], quotaWith({ used: 100, cap: 100, resetAt: Math.floor((now + 3600_000) / 1000) }));
   const until = s.pauseForQuota(accounts[0], now);
   assert.equal(until, Math.floor((now + 3600_000) / 1000) * 1000, '应暂停到 5h 窗口的 resetAt');
+});
+
+// ── 回归：周额度打满的账号不得被当成可用，也不得拿高分 ──────────────
+// 历史 bug：早期只看 5h 窗口，于是「5h 空着 + 周额度 100%」的账号既被判可用、
+// 又因 5h 剩余 100% 拿到最高分被优先选中 → 每次路由先撞一次 429 再 failover。
+test('周额度打满：isAvailable 必须为 false，remainingRatio 必须为 0', () => {
+  const now = Date.now();
+  const reset = Math.floor((now + 40 * 3600_000) / 1000);   // 40 小时后才重置
+
+  // 5h 全新（0/3），周额度打满（6/6）
+  const exhaustedWeekly = quotaWith({ used: 0, cap: 3 }, { used: 6, cap: 6, resetAt: reset });
+  assert.equal(remainingRatio(exhaustedWeekly), 0,
+    '周额度打满时 remainingRatio 必须是 0（不能因为 5h 空着就返回 1.0）');
+  assert.equal(ratioWindow(exhaustedWeekly).used, 6, '应取最受限的窗口（周）');
+
+  const accounts = makeAccounts([
+    { name: '周满', key: 'user_weekly_full_xxxx' },
+    { name: '健康', key: 'user_healthy_xxxxxx' },
+  ]);
+  const s = createScheduler({ accounts, state: makeState() });
+  s.recordQuota(accounts[0], exhaustedWeekly);
+  s.recordQuota(accounts[1], quotaWith({ used: 1, cap: 3 }, { used: 1, cap: 6, resetAt: reset }));
+
+  assert.equal(s.isAvailable(accounts[0]), false, '周额度打满的账号不得判为可用');
+  assert.equal(s.isAvailable(accounts[1]), true);
+
+  // 选择时必须挑健康的那个 —— 不能再出现「优先选中周满账号」
+  const picked = s.select({ now });
+  assert.equal(picked.account.name, '健康', '必须跳过周额度打满的账号');
+
+  // 5h 打满、周健康 → 同样不可用（两个方向都要成立）
+  const exhausted5h = quotaWith({ used: 3, cap: 3 }, { used: 1, cap: 6, resetAt: reset });
+  assert.equal(remainingRatio(exhausted5h), 0);
+  s.recordQuota(accounts[1], exhausted5h);
+  assert.equal(s.isAvailable(accounts[1]), false, '5h 打满同样不得可用');
 });
 
 test('暂停没有 resetAt 时默认 now + 5 小时', () => {
