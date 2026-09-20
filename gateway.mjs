@@ -110,12 +110,21 @@ export async function startGateway(overrides = {}) {
     return dummyHash;
   };
 
+  /** users.json 是否加载失败（fail-closed 用）。加载失败绝不能当成「未初始化」。 */
+  let usersLoadFailed = false;
+
   function loadUsersFromDisk() {
     try {
       users = store.loadUsers();
+      usersLoadFailed = false;
     } catch (e) {
-      // 损坏的 users.json 不能当成「未初始化」──否则 setup 会重新开放并可覆盖管理员
-      log.error(`管理员列表加载失败（${store.usersFile}）：${e.message}`);
+      // 损坏的 users.json 不能当成「未初始化」── 否则 setup 会重新开放，
+      // 任意匿名者 POST /api/auth/setup 就能创建管理员并**整文件覆盖**掉真实管理员。
+      // 这里必须 fail-closed：标记失败，让 isSetupRequired() 恒为 false，
+      // 并让登录/初始化接口返回 503，等人来修文件。
+      usersLoadFailed = true;
+      users = [];
+      log.error(`管理员列表加载失败（${store.usersFile}）：${e.message} —— 初始化接口已关闭，请修复该文件`);
     }
     return users;
   }
@@ -126,6 +135,8 @@ export async function startGateway(overrides = {}) {
   }
 
   function isSetupRequired() {
+    // 加载失败时绝不报告「需要初始化」——那是可被利用的 fail-open。
+    if (usersLoadFailed) return false;
     return users.length === 0;
   }
 
@@ -209,6 +220,10 @@ export async function startGateway(overrides = {}) {
 
     // 初始化：只有 users.json 不存在或为空时才可用，完成后永久关闭（403）
     if (req.method === 'POST' && p === '/api/auth/setup') {
+      // fail-closed：users.json 损坏时绝不能重新开放初始化（否则匿名者可接管并覆盖管理员）
+      if (usersLoadFailed) {
+        throw new HttpError(503, '管理员列表读取失败，初始化接口已关闭；请修复 config/users.json 后重启');
+      }
       if (!isSetupRequired()) throw new HttpError(403, '已完成初始化，初始化接口已永久关闭');
       if (!store.writable()) {
         throw new HttpError(403, '凭据以只读方式挂载，无法创建管理员；请改用可写的 config/ 目录');
@@ -818,8 +833,43 @@ export async function startGateway(overrides = {}) {
   }
 
   // ── 主 HTTP 服务 ───────────────────────────────────────
+  /**
+   * 安全解析请求 URL。
+   *
+   * 不能用 `new URL(req.url, \`http://${req.headers.host}\`)`：
+   * 攻击者控制 Host 头（如 `Host: [`）或请求行时 `new URL` 会抛
+   * `TypeError: ERR_INVALID_URL`，而这里在 async 处理器体内、位于各 try/catch
+   * 之外，rejected promise 会让 Node 直接终止进程 —— 一个匿名请求即可打挂
+   * 整个网关（含全部 /v1 代理流量）。故：base 用固定字面量，解析失败返回 null。
+   */
+  function parseUrl(req) {
+    const raw = typeof req.url === 'string' && req.url.length > 0 ? req.url : '/';
+    try {
+      return new URL(raw, 'http://localhost');
+    } catch {
+      return null;
+    }
+  }
+
   const server = http.createServer(async (req, res) => {
-    const url = new URL(req.url, `http://${req.headers.host ?? 'localhost'}`);
+    // 顶层兜底：任何未预期的异常都不允许逃逸出处理器（否则会打挂进程）
+    try {
+      await handleRequest(req, res);
+    } catch (e) {
+      log.error(`请求处理未捕获异常 ${req.method} ${req.url}: ${e && e.stack ? e.stack : e}`);
+      if (!res.headersSent) {
+        try { sendJSON(res, 500, { error: { message: '内部错误', type: 'internal_error' } }); } catch { /* 已断开 */ }
+      } else {
+        try { res.destroy(); } catch { /* 已断开 */ }
+      }
+    }
+  });
+
+  async function handleRequest(req, res) {
+    const url = parseUrl(req);
+    if (!url) {
+      return sendJSON(res, 400, { error: { message: '非法请求 URL', type: 'bad_request' } });
+    }
     const routeKey = `${req.method} ${url.pathname}`;
     const isProxyRoute = PROXY_ROUTES.has(routeKey);
 
@@ -936,7 +986,7 @@ export async function startGateway(overrides = {}) {
     }
 
     sendJSON(res, 404, { error: { message: 'Not found', type: 'not_found' } });
-  });
+  }
 
   function readPanel() {
     return fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');

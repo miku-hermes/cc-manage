@@ -593,14 +593,17 @@ test('自适应轮询：定时器真的按间隔触发 refreshAll，stop() 后�
 
   const p = ctx.gateway.poller;
   assert.equal(p.enabled, true);
-  await sleep(140);
+  // 等待预算要留足余量：每轮要打 4 个上游接口，机器高负载（CI/并行任务）时
+  // 调度会被拖慢。轮询自身是「跳过重叠轮次」语义（skip-on-overlap），
+  // 所以等得久不会多跑出预期外的轮数，只会让 runs 单调增长到至少 2。
+  await sleep(400);
   assert.ok(p.stats.runs >= 2, `定时器应至少触发 2 轮，实际 ${p.stats.runs}`);
   const polls = ctx.upstream.requestsTo((r) => r.url.startsWith('/alpha/')).length;
   assert.ok(polls >= 4, `每轮每个账号 4 个接口，应真的打到了上游，实际 ${polls}`);
 
   ctx.gateway.poller.stop();
   const after = p.stats.runs;
-  await sleep(120);
+  await sleep(200);
   assert.equal(p.stats.runs, after, 'stop() 之后不能再触发');
 });
 
@@ -789,3 +792,71 @@ async function setupAdminCtxHelper() {
   const cookie = (setup.headers['set-cookie'] || []).map((c) => c.split(';')[0]).join('; ');
   return { ctx, cookie };
 }
+
+// ── 回归：畸形 Host / 请求行不得打挂进程（匿名远程 DoS）────────────
+// 历史 bug：`new URL(req.url, \`http://${req.headers.host}\`)` 在 async 处理器
+// 体内、各 try/catch 之外，攻击者发 `Host: [` 即抛 ERR_INVALID_URL，
+// rejected promise 让 Node 直接终止进程 → 一次匿名请求打挂整个网关。
+test('畸形 Host 头不得打挂网关（未认证远程 DoS 回归）', async (t) => {
+  const ctx = await startTestGateway();
+  t.after(() => ctx.close());
+
+  const before = await request(`${ctx.baseUrl}/health`);
+  assert.equal(before.status, 200);
+
+  // 逐个发畸形请求，每个都必须「不致命」
+  const { connect } = await import('node:net');
+  const port = new URL(ctx.baseUrl).port;
+  const malformed = [
+    'GET /health HTTP/1.1\r\nHost: [\r\n\r\n',
+    'GET /health HTTP/1.1\r\nHost: \r\n\r\n',
+    'GET /health HTTP/1.1\r\nHost: a b\r\n\r\n',
+    'GET http://[ HTTP/1.1\r\nHost: localhost\r\n\r\n',
+  ];
+  for (const raw of malformed) {
+    await new Promise((resolve) => {
+      const s = connect(Number(port), '127.0.0.1');
+      s.on('connect', () => { s.write(raw); setTimeout(() => { s.destroy(); resolve(); }, 150); });
+      s.on('error', () => resolve());
+    });
+  }
+
+  // 关键断言：进程还活着，服务仍可响应
+  const after = await request(`${ctx.baseUrl}/health`);
+  assert.equal(after.status, 200, '畸形 Host 之后服务必须仍然可用（进程未被终止）');
+});
+
+// ── 回归：损坏的 users.json 不得让初始化接口重新开放 ──────────────
+// 历史 bug：loadUsersFromDisk 吞掉解析异常后 users 仍为 []，isSetupRequired()
+// 于是为真 → 任意匿名者可 POST /api/auth/setup 覆盖掉真实管理员。
+test('users.json 损坏时必须 fail-closed，不得重开初始化接口', async (t) => {
+  const { writeFileSync, readFileSync, mkdirSync } = await import('node:fs');
+  const path = await import('node:path');
+  const ctx = await startTestGateway();
+  t.after(() => ctx.close());
+
+  const setup = await request(`${ctx.baseUrl}/api/auth/setup`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username: 'realadmin', password: 'RealPass123' }),
+  });
+  assert.equal(setup.status, 201);
+
+  // 模拟损坏（写盘中断 / 手工编辑出错）
+  const usersPath = path.join(ctx.dir, 'config', 'users.json');
+  assert.ok(readFileSync(usersPath, 'utf8').length > 0, '初始化后 users.json 应存在');
+  writeFileSync(usersPath, '{"users":[{"username":"realadmin","passwordHash":');
+
+  // 重新起一个实例读这个损坏的目录
+  const ctx2 = await startTestGateway({ rootDir: ctx.dir });
+  t.after(() => ctx2.close());
+  const me = JSON.parse((await request(`${ctx2.baseUrl}/api/auth/me`)).body);
+  assert.equal(me.setupRequired, false, '损坏的 users.json 不能被当成「未初始化」');
+
+  const atk = await request(`${ctx2.baseUrl}/api/auth/setup`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username: 'attacker', password: 'Attack12345' }),
+  });
+  assert.notEqual(atk.status, 201, '匿名者不得通过 setup 接管管理员');
+});
