@@ -7,7 +7,12 @@ export const DEFAULTS = {
   gatewayHost: '127.0.0.1',
   upstreamProxyUrl: 'http://127.0.0.1:3050',
   ccApiBase: 'https://api.commandcode.ai',
+  // 额度轮询：空闲间隔（<=0 → 完全关闭轮询）
   quotaPollIntervalMs: 300000,
+  // 活跃间隔：最近 quotaActiveWindowMs 内有代理请求时改用这个间隔（<=0 → 退化为纯空闲间隔）
+  quotaActivePollIntervalMs: 60000,
+  // 判定「正在被使用」的时间窗
+  quotaActiveWindowMs: 300000,
   pausedRecheckIntervalMs: 60000,
   quotaTimeoutMs: 15000,
   sessionAffinityTtlMs: 1800000,
@@ -29,6 +34,8 @@ const ENV_MAP = {
   UPSTREAM_PROXY_URL: ['upstreamProxyUrl', 'string'],
   CC_API_BASE: ['ccApiBase', 'string'],
   QUOTA_POLL_INTERVAL_MS: ['quotaPollIntervalMs', 'number'],
+  QUOTA_ACTIVE_POLL_INTERVAL_MS: ['quotaActivePollIntervalMs', 'number'],
+  QUOTA_ACTIVE_WINDOW_MS: ['quotaActiveWindowMs', 'number'],
   PAUSED_RECHECK_INTERVAL_MS: ['pausedRecheckIntervalMs', 'number'],
   QUOTA_TIMEOUT_MS: ['quotaTimeoutMs', 'number'],
   SESSION_AFFINITY_TTL_MS: ['sessionAffinityTtlMs', 'number'],

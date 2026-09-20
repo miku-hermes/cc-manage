@@ -506,6 +506,104 @@ test('面板数据契约：/api/status 提供 index.html 读取的全部字段',
   assert.match((await request(`${ctx.baseUrl}/`)).body, /'\/api\/status'/);
 });
 
+test('面板新鲜度：/api/status 的每个额度快照都带可解析的 fetchedAt', async (t) => {
+  const ctx = await startTestGateway();
+  t.after(() => ctx.close());
+  const before = Date.now();
+  await ctx.gateway.refreshAll();
+  const after = Date.now();
+
+  const d = JSON.parse((await request(`${ctx.baseUrl}/api/status`)).body);
+  assert.ok(d.accounts.length > 0);
+  for (const a of d.accounts) {
+    assert.equal(typeof a.lastQuota.fetchedAt, 'number', '前台靠 fetchedAt 算「xx 秒前」');
+    assert.ok(a.lastQuota.fetchedAt >= before && a.lastQuota.fetchedAt <= after,
+      'fetchedAt 应是本次刷新的时间戳（毫秒）');
+  }
+});
+
+test('自适应轮询：活跃用 60s、空闲用 300s，且代理请求会 touchActivity', async (t) => {
+  const ctx = await startTestGateway({ config: { quotaPollIntervalMs: 300000, quotaActivePollIntervalMs: 60000, quotaActiveWindowMs: 300000 } });
+  t.after(() => ctx.close());
+
+  const p = ctx.gateway.poller;
+  assert.equal(p.enabled, true);
+  assert.equal(p.isActive(), false, '还没有请求 → 空闲');
+  assert.equal(p.nextDelayMs(), 300000, '空闲间隔 = quotaPollIntervalMs');
+
+  // 一次真实代理请求 → 记录活动
+  const res = await request(`${ctx.baseUrl}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${ctx.localKey}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ model: 'mock-model' }),
+  });
+  assert.equal(res.status, 200);
+  assert.equal(p.isActive(), true, '刚有代理请求 → 活跃');
+  assert.equal(p.nextDelayMs(), 60000, '活跃间隔 = quotaActivePollIntervalMs');
+});
+
+test('手动刷新进行中时轮询跳过本轮（同一份 refreshAll 不叠加）', async (t) => {
+  const ctx = await startTestGateway({
+    behavior: { delayMs: 120 },   // 让一轮刷新慢到能撞上下一拍
+    config: { quotaPollIntervalMs: 30, quotaTimeoutMs: 5000 },
+    noTimers: false,
+  });
+  t.after(() => ctx.close());
+
+  const p = ctx.gateway.poller;
+  const slow = ctx.gateway.refreshAll();       // 模拟手动刷新（约 120ms）
+  await sleep(150);                            // 期间轮询应该已经到点好几次
+  assert.ok(p.stats.skips >= 1, `手动刷新进行中轮询应跳过，实际 skips=${p.stats.skips}`);
+  await slow;
+  const before = p.stats.runs;
+  await sleep(120);
+  assert.ok(p.stats.runs > before, '手动刷新结束后轮询恢复运行');
+  p.stop();
+});
+
+test('自适应轮询：quotaPollIntervalMs=0 仍然完全关闭（配置默认值兼容老配置）', async (t) => {
+  const ctx = await startTestGateway({ config: { quotaPollIntervalMs: 0 } });
+  t.after(() => ctx.close());
+  assert.equal(ctx.gateway.poller.enabled, false, '0 → 不排任何定时器');
+});
+
+/** 轮询是「单个自调度 setTimeout」：真的会按间隔触发 refreshAll（端到端）。 */
+test('自适应轮询：定时器真的按间隔触发 refreshAll，stop() 后停止', async (t) => {
+  const ctx = await startTestGateway({
+    config: { quotaPollIntervalMs: 40, quotaActivePollIntervalMs: 20, quotaActiveWindowMs: 300000 },
+    noTimers: false,
+  });
+  t.after(() => ctx.close());
+
+  const p = ctx.gateway.poller;
+  assert.equal(p.enabled, true);
+  await sleep(140);
+  assert.ok(p.stats.runs >= 2, `定时器应至少触发 2 轮，实际 ${p.stats.runs}`);
+  const polls = ctx.upstream.requestsTo((r) => r.url.startsWith('/alpha/')).length;
+  assert.ok(polls >= 4, `每轮每个账号 4 个接口，应真的打到了上游，实际 ${polls}`);
+
+  ctx.gateway.poller.stop();
+  const after = p.stats.runs;
+  await sleep(120);
+  assert.equal(p.stats.runs, after, 'stop() 之后不能再触发');
+});
+
+test('配置默认值：新增的自适应字段有默认值，缺失也不会炸', async (t) => {
+  const { loadConfig, DEFAULTS } = await import('../src/config.mjs');
+  assert.equal(DEFAULTS.quotaActivePollIntervalMs, 60000);
+  assert.equal(DEFAULTS.quotaActiveWindowMs, 300000);
+  assert.equal(DEFAULTS.quotaPollIntervalMs, 300000);
+  // 空 env + 不存在的 configPath → 全默认
+  const cfg = loadConfig('/nonexistent/config.json', {});
+  assert.equal(cfg.quotaActivePollIntervalMs, 60000);
+  assert.equal(cfg.quotaActiveWindowMs, 300000);
+  // 老配置（只有 quotaPollIntervalMs）也能跑
+  const ctx = await startTestGateway({ config: { quotaPollIntervalMs: 120000 } });
+  t.after(() => ctx.close());
+  assert.equal(ctx.gateway.poller.enabled, true);
+  assert.equal(ctx.gateway.poller.nextDelayMs(), 120000);
+});
+
 // ── token 统计（Bug 1）──────────────────────────────────────────────
 test('token 统计：非流式响应里的 total_tokens（下划线）被计入 stats', async (t) => {
   const ctx = await startTestGateway({

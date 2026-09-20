@@ -201,7 +201,7 @@ function drainRemaining(req, bodyState, maxBodyBytes) {
   });
 }
 
-export function createProxy({ config, scheduler, log, stats, secrets = [], refreshAccount } = {}) {
+export function createProxy({ config, scheduler, log, stats, secrets = [], refreshAccount, touchActivity } = {}) {
   const maxBodyBytes = config.maxBodyBytes ?? 20 * 1024 * 1024;
   const base = new URL(config.upstreamProxyUrl);
   const upstreamTimeoutMs = config.upstreamTimeoutMs ?? 300000;
@@ -253,7 +253,10 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
       stats.errors++;
     };
 
+    // 代理请求的收尾（成功 / 失败都算一次「活动」）：让额度轮询切到活跃间隔。
+    // 放在 bump 里 = 在途请求不会漏记；touchActivity 自身不抛错，失败也不影响转发。
     const bump = (err) => {
+      try { touchActivity?.(); } catch { /* 活动标记失败不影响转发 */ }
       stats.total++;
       const s = stats.byAccount[account.keyId] ?? (stats.byAccount[account.keyId] = { requests: 0, errors: 0, tokens: 0 });
       s.requests++;

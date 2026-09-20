@@ -22,6 +22,7 @@ import {
 } from './src/auth.mjs';
 import { createScheduler } from './src/scheduler.mjs';
 import { createProxy } from './src/proxy.mjs';
+import { createAdaptivePoller } from './src/poll.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PROXY_ROUTES = new Map([
@@ -279,7 +280,16 @@ export async function startGateway(overrides = {}) {
     return { account, snapshot };
   }
 
-  async function refreshAll() {
+  // 进行中的一轮刷新（含手动点「刷新额度」触发的）：轮询要据此跳过，避免叠起来
+  let refreshInFlight = null;
+
+  function refreshAll() {
+    const p = doRefreshAll().finally(() => { if (refreshInFlight === p) refreshInFlight = null; });
+    refreshInFlight = p;
+    return p;
+  }
+
+  async function doRefreshAll() {
     // 各账号互不影响：单个失败不会中断其它查询
     const results = await Promise.all(accounts.map((a) => refreshAccount(a).catch((e) => ({
       account: a,
@@ -289,16 +299,28 @@ export async function startGateway(overrides = {}) {
     return results;
   }
 
-  const proxy = createProxy({ config, scheduler, log, stats, secrets, refreshAccount });
+  // ── 额度轮询：自适应间隔（活跃 60s / 空闲 300s）─────────
+  // 单个自调度 setTimeout：每轮跑完再根据「距上次代理活动多久」决定下一拍。
+  const poller = createAdaptivePoller({
+    idleIntervalMs: config.quotaPollIntervalMs,
+    activeIntervalMs: config.quotaActivePollIntervalMs,
+    activeWindowMs: config.quotaActiveWindowMs,
+    run: refreshAll,
+    onError: (e) => log.error(`额度轮询异常: ${e.message}`),
+    isBusy: () => refreshInFlight !== null,
+    log,
+  });
+  /** 代理请求后回调：标记「最近有活动」，让下一拍换成活跃间隔（60s）。 */
+  function touchActivity() {
+    poller.touch();
+  }
+
+  const proxy = createProxy({ config, scheduler, log, stats, secrets, refreshAccount, touchActivity });
 
   // ── 后台定时器 ─────────────────────────────────────────
-  let pollTimer = null;
   let recheckTimer = null;
   if (!overrides.noTimers) {
-    if (config.quotaPollIntervalMs > 0) {
-      pollTimer = setInterval(() => { refreshAll().catch((e) => log.error(`额度轮询异常: ${e.message}`)); }, config.quotaPollIntervalMs);
-      pollTimer.unref?.();
-    }
+    poller.start();
     if (config.pausedRecheckIntervalMs > 0) {
       recheckTimer = setInterval(() => {
         scheduler.recheckPaused({ fetchQuota: (a) => fetchQuota(a.key, { baseUrl: config.ccApiBase, timeoutMs: config.quotaTimeoutMs, fetchImpl: overrides.fetchImpl, log }) })
@@ -926,7 +948,7 @@ export async function startGateway(overrides = {}) {
   }
 
   async function stop() {
-    if (pollTimer) clearInterval(pollTimer);
+    poller.stop();
     if (recheckTimer) clearInterval(recheckTimer);
     store.saveState();
     try { server.closeAllConnections?.(); } catch { /* 忽略 */ }
@@ -936,6 +958,7 @@ export async function startGateway(overrides = {}) {
   return {
     server, config, log, accounts, localKeys, store, scheduler, stats, refreshAll, statusView, stop, proxy,
     events, note, reloadNow, syncPool, handleAdmin, handleAuth, sessions, loginLimiter, currentUser,
+    poller, touchActivity,
     sessionTokenOf,
     get users() { return users; }, get testHistory() { return testHistory; }, usersView, isSetupRequired,
   };

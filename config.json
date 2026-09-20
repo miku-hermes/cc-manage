@@ -4,6 +4,8 @@
   "upstreamProxyUrl": "http://127.0.0.1:3050",
   "ccApiBase": "https://api.commandcode.ai",
   "quotaPollIntervalMs": 300000,
+  "quotaActivePollIntervalMs": 60000,
+  "quotaActiveWindowMs": 300000,
   "pausedRecheckIntervalMs": 60000,
   "quotaTimeoutMs": 15000,
   "sessionAffinityTtlMs": 1800000,

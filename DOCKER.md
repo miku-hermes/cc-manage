@@ -91,6 +91,8 @@ services:
       CC_API_BASE: "${CC_API_BASE:-https://api.commandcode.ai}"
       PROTECT_ADMIN_API: "${PROTECT_ADMIN_API:-1}"     # 容器内绑 0.0.0.0，默认开启保护
       QUOTA_POLL_INTERVAL_MS: "${QUOTA_POLL_INTERVAL_MS:-300000}"
+      QUOTA_ACTIVE_POLL_INTERVAL_MS: "${QUOTA_ACTIVE_POLL_INTERVAL_MS:-60000}"
+      QUOTA_ACTIVE_WINDOW_MS: "${QUOTA_ACTIVE_WINDOW_MS:-300000}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
       NODE_OPTIONS: "--max-old-space-size=192"
     volumes:
@@ -156,8 +158,11 @@ GATEWAY_BIND_PORT=3051
 CC_API_BASE=https://api.commandcode.ai
 # 管理 API 是否要求本地 key（1=要求；只在 127.0.0.1 自用时可设 0）
 PROTECT_ADMIN_API=1
-# 额度轮询间隔（毫秒）
+# 额度轮询间隔（毫秒）：空闲间隔，设 0 完全关闭轮询
 QUOTA_POLL_INTERVAL_MS=300000
+# 最近 5 分钟内有代理请求时改用的活跃间隔（毫秒）
+QUOTA_ACTIVE_POLL_INTERVAL_MS=60000
+QUOTA_ACTIVE_WINDOW_MS=300000
 # 内核限流（小内存机器必调）
 CC_MAX_BODY_MB=20
 CC_MAX_INFLIGHT=8

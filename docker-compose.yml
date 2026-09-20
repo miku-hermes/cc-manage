@@ -33,6 +33,8 @@ services:
       CC_API_BASE: "${CC_API_BASE:-https://api.commandcode.ai}"
       PUBLIC_DASHBOARD: "${PUBLIC_DASHBOARD:-1}"       # 前台只读面板公开；设 0 则需登录后台
       QUOTA_POLL_INTERVAL_MS: "${QUOTA_POLL_INTERVAL_MS:-300000}"
+      QUOTA_ACTIVE_POLL_INTERVAL_MS: "${QUOTA_ACTIVE_POLL_INTERVAL_MS:-60000}"
+      QUOTA_ACTIVE_WINDOW_MS: "${QUOTA_ACTIVE_WINDOW_MS:-300000}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
       NODE_OPTIONS: "--max-old-space-size=192"
     volumes:

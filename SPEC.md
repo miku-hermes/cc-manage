@@ -134,6 +134,8 @@ user-agent: commandcode-cli/1.53.1
   "upstreamProxyUrl": "http://127.0.0.1:3050",
   "ccApiBase": "https://api.commandcode.ai",
   "quotaPollIntervalMs": 300000,
+  "quotaActivePollIntervalMs": 60000,
+  "quotaActiveWindowMs": 300000,
   "pausedRecheckIntervalMs": 60000,
   "quotaTimeoutMs": 15000,
   "sessionAffinityTtlMs": 1800000,
@@ -144,7 +146,7 @@ user-agent: commandcode-cli/1.53.1
 ```
 
 环境变量覆盖（与字段一一对应）：`GATEWAY_PORT` `GATEWAY_HOST` `UPSTREAM_PROXY_URL` `CC_API_BASE`
-`QUOTA_POLL_INTERVAL_MS` `ALLOW_PASSTHROUGH` `LOG_FILE` `LOG_LEVEL`。
+`QUOTA_POLL_INTERVAL_MS` `QUOTA_ACTIVE_POLL_INTERVAL_MS` `QUOTA_ACTIVE_WINDOW_MS` `ALLOW_PASSTHROUGH` `LOG_FILE` `LOG_LEVEL`。
 
 本地 key 文件 `keys.json`：
 ```json
