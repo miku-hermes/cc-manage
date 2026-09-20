@@ -117,7 +117,9 @@ user-agent: commandcode-cli/1.53.1
 命中但该账号不可用时，重新挑并把 affinity 更新到新账号。
 
 **自动暂停/恢复**：
-- 上游返回额度耗尽类错误（HTTP 402，或 429 且 body 含 `quota`/`limit`/`exceeded`）→ `pausedUntil = 5h 窗口的 resetAt`（无则 now + 5h），并立刻触发一次额度刷新。
+- 上游返回**额度耗尽**类错误（HTTP 402，或 429 且 body 含明确额度语义 `quota`/`quota_exceeded`/`windowLimits`/`credits`/`weekly|monthly limit`）→ `pausedUntil = 5h 窗口的 resetAt`（无则 now + 5h），并立刻触发一次额度刷新。
+- 普通限流（429 但不是额度耗尽）→ 只置 `rateLimitedUntil = now + 60s`，账号短暂退出选择后自动恢复；**不得**写 `pausedUntil`。
+- 上游 401/403 → 标记 `authInvalid`，立刻停止调度该账号。
 - 一个后台定时器（默认 60s）检查 `pausedUntil` 已到期的账号 → 重新查一次额度，确认 `used < cap` 才恢复。
 - 手动停用（`enabled=false`）**永远**不自动恢复。
 
@@ -175,7 +177,7 @@ user-agent: commandcode-cli/1.53.1
   下游写阻塞（`res.write()` 返回 false）时要暂停读上游（背压），`drain` 再 `resume`。
 - 请求头白名单转发：`content-type` `accept` `user-agent`（改写为 `commandcode-cli/1.53.1`）`x-session-id`；
   **不要**把下游的 `authorization`/`x-api-key` 透传给上游（必须替换）。
-- 请求体：流式透传（`req.pipe(upstreamReq)`），设 `maxBodyBytes`（默认 20MB），超限返回 413。
+- 请求体：流式透传（`req.pipe(upstreamReq)`），设 `maxBodyBytes`（默认 8MB），超限返回 413；在途请求上限 `maxInflight`（默认 8）超出返回 503。
 - 客户端断开（`req.on('aborted')` / `res.on('close')`）→ 立刻 abort 上游请求。
 - **失败换号重试**：仅当上游返回 5xx/超时/连接错误，**且还没有向客户端写出任何字节**时，
   才换一个账号重试一次（最多一次）。已开始写响应则一律不重试。

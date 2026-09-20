@@ -93,3 +93,109 @@ test('loadState：不传账号列表（旧调用方式）时不做清理，兼�
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ── F1：state.json 损坏不得阻塞启动（cache 丢弃 + warn + 重建）─────────
+const CORRUPT_CASES = {
+  '0 字节（掉电典型形态）': '',
+  '截断的 JSON': '{"accounts":{"abc":',
+  '垃圾字节（NUL）': '\u0000\u0000\u0000\u0000garbage',
+};
+
+for (const [label, content] of Object.entries(CORRUPT_CASES)) {
+  test(`loadState：${label} → 不抛错、丢弃缓存、重建默认值并落盘`, () => {
+    const dir = makeTmpDir();
+    try {
+      writeAccountFiles(dir, { accounts: [{ name: '在册', key: ALIVE }], keys: [{ name: 'c', key: 'sk-cg-local0001' }] });
+      fs.mkdirSync(path.join(dir, 'data'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'data', 'state.json'), content);
+
+      const warnings = [];
+      const store = createStore({ rootDir: dir, log: { warn: (m) => warnings.push(m), info: () => {} } });
+      const accounts = store.loadAccounts();
+
+      // 绝不能抛错（抛错 = 网关 crash-loop，整个服务下线）
+      assert.doesNotThrow(() => store.loadState(accounts));
+      assert.deepEqual(Object.keys(store.state.accounts), [], '损坏缓存必须被丢弃');
+      assert.deepEqual(store.state.stats, { total: 0, errors: 0, totalTokens: 0, byAccount: {} });
+      assert.ok(warnings.some((w) => w.includes('已损坏')), `必须 warn，实际 ${JSON.stringify(warnings)}`);
+
+      // 落盘默认值：下次启动读到的就是合法 JSON
+      const onDisk = JSON.parse(fs.readFileSync(path.join(dir, 'data', 'state.json'), 'utf8'));
+      assert.deepEqual(onDisk.accounts, {});
+      assert.equal(onDisk.stats.total, 0);
+      assert.equal(store.persistedAfterLoad, true);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
+
+test('F1：atomicWrite 写出的文件立即可读且无残留 tmp（fsync 路径可用）', () => {
+  const dir = makeTmpDir();
+  try {
+    writeAccountFiles(dir, { accounts: [{ name: '在册', key: ALIVE }], keys: [{ name: 'c', key: 'sk-cg-local0001' }] });
+    const store = createStore({ rootDir: dir });
+    store.loadState(store.loadAccounts());
+    store.state.stats.total = 7;
+    store.saveState();
+
+    const files = fs.readdirSync(path.join(dir, 'data'));
+    assert.deepEqual(files, ['state.json'], `不得留下临时文件，实际 ${files.join(',')}`);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'data', 'state.json'), 'utf8')).stats.total, 7);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ── F12：崩溃残留的 *.tmp-* 启动时清理 ──────────────────────────────
+test('F12：启动时清理 data/ 下残留的 state.json.tmp-<pid>-<ts>', () => {
+  const dir = makeTmpDir();
+  try {
+    writeAccountFiles(dir, { accounts: [{ name: '在册', key: ALIVE }], keys: [{ name: 'c', key: 'sk-cg-local0001' }] });
+    seedState(dir, { accountsStatus: { [keyIdOf(ALIVE)]: { concurrency: 0 } } });
+    const stale = [
+      'state.json.tmp-999-1700000000000',
+      'state.json.tmp-1-1700000000001',
+    ];
+    for (const name of stale) fs.writeFileSync(path.join(dir, 'data', name), '{"partial":');
+    fs.writeFileSync(path.join(dir, 'data', 'keep-me.json'), '{}');
+
+    const warnings = [];
+    const store = createStore({ rootDir: dir, log: { warn: (m) => warnings.push(m), info: () => {} } });
+    store.loadState(store.loadAccounts());
+
+    const left = fs.readdirSync(path.join(dir, 'data')).sort();
+    assert.deepEqual(left, ['keep-me.json', 'state.json'], `残留 tmp 必须清掉，实际 ${left.join(',')}`);
+    assert.ok(warnings.some((w) => w.includes('残留')), '清理残留要 warn 一次');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ── F10：中止计数同样要参与残留清理，保证 byAccount 之和自洽 ──────────
+test('F10：删账号时全局 aborted 一并扣减', () => {
+  const dir = makeTmpDir();
+  try {
+    writeAccountFiles(dir, { accounts: [{ name: '在册', key: ALIVE }], keys: [{ name: 'c', key: 'sk-cg-local0001' }] });
+    const aliveId = keyIdOf(ALIVE);
+    const deadId = keyIdOf(DELETED);
+    fs.mkdirSync(path.join(dir, 'data'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'data', 'state.json'), JSON.stringify({
+      accounts: { [aliveId]: {}, [deadId]: {} },
+      stats: {
+        total: 5, errors: 1, totalTokens: 10, aborted: 2,
+        byAccount: {
+          [aliveId]: { requests: 3, errors: 1, tokens: 10, aborted: 0 },
+          [deadId]: { requests: 2, errors: 0, tokens: 0, aborted: 2 },
+        },
+      },
+    }));
+
+    const store = createStore({ rootDir: dir });
+    store.loadState(store.loadAccounts());
+    assert.equal(store.state.stats.aborted, 0, '已删账号的中止数必须扣掉');
+    assert.equal(store.state.stats.total, 3);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

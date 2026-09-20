@@ -1,9 +1,15 @@
 node_modules/
 data/
 *.log
+*.bak
 accounts.json
 keys.json
 users.json
 session-secret
+revoked.json
 config.local.json
 .env
+# 凭据目录整体忽略（含 state / 吊销记录 / *.bak），只保留示例文件。
+# 用 config/* 而不是 config/ —— 目录被整体忽略时，! 反选规则不生效。
+config/*
+!config/*.example.json

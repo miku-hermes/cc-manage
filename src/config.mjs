@@ -17,7 +17,11 @@ export const DEFAULTS = {
   quotaTimeoutMs: 15000,
   sessionAffinityTtlMs: 1800000,
   allowPassthrough: false,
-  maxBodyBytes: 20 * 1024 * 1024,
+  // 请求体上限（F18）：每个在途请求都会把 body tee 进内存供换号重放，
+  // 20MB × 并发会直接吃掉容器 256m 的额度。收到 8MB，够放长 prompt。
+  maxBodyBytes: 8 * 1024 * 1024,
+  // 在途请求上限（F18）：对照内核的 CC_MAX_INFLIGHT=8
+  maxInflight: 8,
   // 前台只读面板（/ 与 /api/status）是否公开。默认 1 = 公开（只暴露账号名/keyId/keyPrefix/额度百分比，
   // 没有完整 key）；设 0 → 需要后台登录 session 才能看。
   publicDashboard: true,
@@ -40,6 +44,7 @@ const ENV_MAP = {
   QUOTA_TIMEOUT_MS: ['quotaTimeoutMs', 'number'],
   SESSION_AFFINITY_TTL_MS: ['sessionAffinityTtlMs', 'number'],
   MAX_BODY_BYTES: ['maxBodyBytes', 'number'],
+  MAX_INFLIGHT: ['maxInflight', 'number'],
   ALLOW_PASSTHROUGH: ['allowPassthrough', 'boolean'],
   PUBLIC_DASHBOARD: ['publicDashboard', 'boolean'],
   PROTECT_ADMIN_API: ['protectAdminApi', 'boolean'],

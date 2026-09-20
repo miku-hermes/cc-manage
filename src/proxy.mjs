@@ -64,16 +64,25 @@ export function extractTokens(text) {
   return maxMatched(PROMPT_TOKEN_RE, text) + maxMatched(COMPLETION_TOKEN_RE, text);
 }
 
-/** 流式把上游响应边收边转；下游写阻塞时暂停读上游，drain 再恢复。 */
+/**
+ * 流式把上游响应边收边转；下游写阻塞时暂停读上游，drain 再恢复。
+ *
+ * 必须区分「正常结束」与「提前关闭」：'end' 才是上游把响应完整发完；
+ * 半路 'close'/'error'（上游重启、网络抖动、内核被 OOM kill）说明**响应被截断**。
+ * 历史 bug：把 destroy() 触发的 'close' 也当成正常结束 → 网关把半截字节 res.end()
+ * 收尾，分块传输「正常」结束，客户端看到完整的 200 SSE 但回答被静默截断。
+ *
+ * 返回的 Promise resolve(true) = 正常结束，resolve(false) = 提前中断（调用方负责收尾）。
+ */
 function pipeResponse(upstreamRes, res, { onChunk, log, secrets }) {
   return new Promise((resolve, reject) => {
     let done = false;
     let offAll = () => {};
-    const finish = (err) => {
+    const finish = (ended, err) => {
       if (done) return;
       done = true;
       offAll();
-      err ? reject(err) : resolve();
+      err ? reject(err) : resolve(ended);
     };
     const onData = (chunk) => {
       try {
@@ -84,14 +93,15 @@ function pipeResponse(upstreamRes, res, { onChunk, log, secrets }) {
         res.once('drain', () => upstreamRes.resume());
       }
     };
-    const onEnd = () => finish();
+    // 'end' = 上游把响应体完整发完（唯一的「成功」信号）
+    const onEnd = () => finish(true);
     const onErr = (e) => {
       log?.warn?.(`上游响应中断: ${redact(e?.message ?? String(e), secrets)}`);
-      finish(e);
+      finish(false, e);
     };
     // 'close' 兜底：被 destroy() 的流不会发 'end'，只发 'close'，
-    // 不处理会让 await 永远挂着、在途计数泄漏。
-    const onClose = () => finish();
+    // 不处理会让 await 永远挂着、在途计数泄漏；但它**不是**成功（ended=false）。
+    const onClose = () => finish(false);
     upstreamRes.on('data', onData);
     upstreamRes.on('end', onEnd);
     upstreamRes.on('error', onErr);
@@ -120,6 +130,8 @@ function pipingBody(req, upstreamReq, maxBodyBytes, initialChunks = [], alreadyE
     state.size += chunk.length;
     if (state.size > maxBodyBytes) {
       state.tooLarge = true;
+      // complete 也置真：流已经停了，后面的字节没人会再读，绝不能当成「还能重放完整 body」。
+      state.complete = true;
       state.error = Object.assign(new Error(`请求体超过上限 ${maxBodyBytes} 字节`), { code: 'BODY_TOO_LARGE' });
       state.stop();
       upstreamReq.destroy(state.error);
@@ -145,6 +157,7 @@ function pipingBody(req, upstreamReq, maxBodyBytes, initialChunks = [], alreadyE
     state.size += c.length;
     if (state.size > maxBodyBytes) {
       state.tooLarge = true;
+      state.complete = true;   // 与 onData 同理：不许被当成可重放的完整 body
       state.error = Object.assign(new Error(`请求体超过上限 ${maxBodyBytes} 字节`), { code: 'BODY_TOO_LARGE' });
       upstreamReq.destroy(state.error);
       state.bytes = () => Buffer.concat(state.chunks);
@@ -180,6 +193,9 @@ function drainRemaining(req, bodyState, maxBodyBytes) {
       bodyState.size += chunk.length;
       if (bodyState.size > maxBodyBytes) {
         bodyState.tooLarge = true;
+        // 关键：超限后既不缓冲也不重放，必须置 complete，
+        // 否则重试分支会以为「已完整收到」而给上游发空体（用户拿到与请求无关的成功响应）。
+        bodyState.complete = true;
         req.off('data', onData);
         req.resume();
         resolve();
@@ -203,6 +219,11 @@ function drainRemaining(req, bodyState, maxBodyBytes) {
 
 export function createProxy({ config, scheduler, log, stats, secrets = [], refreshAccount, touchActivity } = {}) {
   const maxBodyBytes = config.maxBodyBytes ?? 20 * 1024 * 1024;
+  // 客户端中止计数（F10）：不计入 errors，单独展示，保证错误率口径真实
+  if (typeof stats.aborted !== 'number') stats.aborted = 0;
+  // 在途请求上限（F18）：单进程内存有限，无上限时并发大上传会把容器打爆
+  const maxInflight = Number(config.maxInflight) > 0 ? Number(config.maxInflight) : 8;
+  let inflight = 0;
   const base = new URL(config.upstreamProxyUrl);
   const upstreamTimeoutMs = config.upstreamTimeoutMs ?? 300000;
 
@@ -222,14 +243,21 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
    * 转发一次请求（含最多一次换号重试）。
    * @param {{req, res, account, pathname, search}} opts
    */
-  async function forward({ req, res, account, pathname, search = '', initialChunks = [], bodyEnded = false }) {
+  async function forward({ req, res, account, pathname, search = '', initialChunks = [], bodyEnded = false, sessionId = null }) {
     // 客户端在转发前就断了：不占用账号、不计数，直接放弃
     if (req.destroyed && !req.readableEnded) {
       log?.warn?.('客户端在转发前已断开，放弃本次请求');
       return;
     }
+    // 在途上限（F18）：每个在途请求都会驻留最多 maxBodyBytes 的重试缓冲，
+    // 无上限时并发大上传会把网关容器（mem_limit 256m）打爆。
+    if (inflight >= maxInflight) {
+      log?.warn?.(`在途请求已达上限 ${maxInflight}，拒绝新请求`);
+      res.setHeader('retry-after', '1');
+      return sendJSON(res, 503, { error: { message: 'Gateway busy, retry later', type: 'overloaded' } });
+    }
+    inflight++;
     const hasBody = req.method !== 'GET' && req.method !== 'HEAD';
-    let wroteBytes = false;
     let acquired = false;
     let tokens = 0;
 
@@ -246,19 +274,24 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
       }
     };
 
-    // 单独记某账号的一次失败（换号重试时，原账号的那次尝试也要算进它的错误数）
+    // 单独记某账号的一次尝试失败：换号重试时原账号的这次尝试也算它的错误，
+    // 但**只计账号维度**，不进全局 total/errors —— 一个客户端请求只占一行统计。
     const bumpAccountError = (acct) => {
-      const s = stats.byAccount[acct.keyId] ?? (stats.byAccount[acct.keyId] = { requests: 0, errors: 0, tokens: 0 });
+      const s = stats.byAccount[acct.keyId] ?? (stats.byAccount[acct.keyId] = { requests: 0, errors: 0, tokens: 0, aborted: 0 });
       s.errors++;
-      stats.errors++;
     };
 
-    // 代理请求的收尾（成功 / 失败都算一次「活动」）：让额度轮询切到活跃间隔。
-    // 放在 bump 里 = 在途请求不会漏记；touchActivity 自身不抛错，失败也不影响转发。
+    const accountStatsOf = (acct) => stats.byAccount[acct.keyId]
+      ?? (stats.byAccount[acct.keyId] = { requests: 0, errors: 0, tokens: 0, aborted: 0 });
+
+    /**
+     * 全局统计只记一次（一个客户端请求 == 一行）：err 为真才算错误，
+     * 换号过程中的内部失败绝不能重复累加全局 errors（历史上会出现 errors > total）。
+     */
     const bump = (err) => {
       try { touchActivity?.(); } catch { /* 活动标记失败不影响转发 */ }
       stats.total++;
-      const s = stats.byAccount[account.keyId] ?? (stats.byAccount[account.keyId] = { requests: 0, errors: 0, tokens: 0 });
+      const s = accountStatsOf(account);
       s.requests++;
       if (err) {
         s.errors++;
@@ -266,6 +299,21 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
       }
       stats.totalTokens += tokens;
       s.tokens += tokens;
+    };
+
+    /**
+     * 客户端主动中止（长回答被 Ctrl-C，很常见）既不是成功也不是上游错误：
+     * 单独计数，不污染错误率（历史 bug：中止被当成成功，系统性低估错误率）。
+     */
+    const bumpAborted = () => {
+      try { touchActivity?.(); } catch { /* 同上 */ }
+      stats.total++;
+      if (typeof stats.aborted !== 'number') stats.aborted = 0;
+      stats.aborted++;
+      const s = accountStatsOf(account);
+      s.requests++;
+      if (typeof s.aborted !== 'number') s.aborted = 0;
+      s.aborted++;
     };
 
     const clientGone = new AbortController();
@@ -283,6 +331,18 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
       while (true) {
         let current = account;
         if (attempt > 0) {
+          // 请求体的处置必须先于换号：
+          //  - 客户端中途断了（bodyState.error === null）→ 重放只会发残缺 body，宁可 502
+          //  - 超限（tooLarge）→ 明确 413，不能给上游发空体
+          if (hasBody && bodyState && (bodyState.error || bodyState.tooLarge)) {
+            const tooLarge = bodyState.tooLarge || bodyState.error?.code === 'BODY_TOO_LARGE';
+            bump(true);
+            bodyState.stop?.();
+            if (tooLarge) {
+              return sendJSON(res, 413, { error: { message: 'Payload too large', type: 'invalid_request_error' } });
+            }
+            return sendJSON(res, 502, { error: { message: 'Client aborted before request body was fully read', type: 'upstream_error' } });
+          }
           const next = pickRetryAccount(account);
           if (!next) {
             bump(true);
@@ -331,10 +391,15 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
         if (hasBody) {
           if (attempt === 0) {
             bodyState = pipingBody(req, upstreamReq, maxBodyBytes, initialChunks, bodyEnded);
-          } else if (bodyState?.complete) {
+          } else if (bodyState?.complete && !bodyState?.tooLarge && !bodyState?.error) {
             upstreamReq.end(bodyState.bytes());
           } else {
-            upstreamReq.end();
+            // 走到这里说明 body 没能完整拿到：绝不给上游发空体（那会让用户拿到与请求无关的「成功」）
+            clientGone.signal.removeEventListener('abort', abortEarly);
+            release();
+            bodyState?.stop?.();
+            bump(!!bodyState?.error);
+            return sendJSON(res, 502, { error: { message: 'Upstream request failed', type: 'upstream_error' } });
           }
         } else {
           upstreamReq.end();
@@ -354,7 +419,7 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
             return sendJSON(res, 413, { error: { message: 'Payload too large', type: 'invalid_request_error' } });
           }
           scheduler.recordError(current, connError?.message ?? String(connError));
-          if (retryable && attempt === 0 && !wroteBytes && !current.__passthrough) {
+          if (retryable && attempt === 0 && !res.headersSent && !current.__passthrough) {
             bumpAccountError(current);
             bodyState?.stop?.();
             if (hasBody && !bodyState?.complete) await drainRemaining(req, bodyState, maxBodyBytes).catch(() => {});
@@ -368,7 +433,7 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
         const status = upstreamRes.statusCode ?? 502;
 
         // 5xx：未向客户端写字节则可换号一次
-        if (status >= 500 && attempt === 0 && !wroteBytes && !current.__passthrough) {
+        if (status >= 500 && attempt === 0 && !res.headersSent && !current.__passthrough) {
           clientGone.signal.removeEventListener('abort', abortEarly);
           await readBody(upstreamRes);
           release();
@@ -386,15 +451,27 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
           const buf = await readBody(upstreamRes);
           const text = buf.toString('utf8');
           if (isQuotaError(status, text)) {
+            // 只有明确额度语义（quota / windowLimits / 周期额度）才暂停到 5h resetAt
             const until = scheduler.pauseForQuota(current);
             log?.warn?.(`账号「${current.name}」额度耗尽，暂停到 ${new Date(until).toISOString()}`);
             scheduler.recordError(current, '额度耗尽');
             if (refreshAccount) await refreshAccount(current).catch(() => {});
+          } else if (status === 429) {
+            // 普通限流：只短暂冷却（默认 60s），绝不是 5 小时停用。
+            // 历史 bug：`"Rate limit exceeded"` 命中了 /limit|exceeded/ → 账号被误判额度耗尽。
+            const until = scheduler.markRateLimited(current);
+            log?.warn?.(`账号「${current.name}」被上游限流，冷却到 ${new Date(until).toISOString()}`);
+            scheduler.recordError(current, `上游 HTTP 429（限流，冷却 60 秒）`);
           } else {
             scheduler.recordError(current, `上游 HTTP ${status}`);
+            // 401/403：key 被吊销/权限不对 → 立刻停止调度该账号，不再把 401 透传给客户端
+            if (status === 401 || status === 403) {
+              scheduler.markAuthInvalid(current, `上游 HTTP ${status}`);
+              log?.warn?.(`账号「${current.name}」鉴权失效（HTTP ${status}），已停止调度`);
+              if (refreshAccount) refreshAccount(current).catch(() => {});
+            }
           }
           bump(true);
-          wroteBytes = true;
           release();
           res.writeHead(status, { 'content-type': upstreamRes.headers['content-type'] ?? 'application/json' });
           res.end(redact(text, secrets));
@@ -407,7 +484,6 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
           if (upstreamRes.headers[h] !== undefined) outHeaders[h] = upstreamRes.headers[h];
         }
         if (!outHeaders['content-type']) outHeaders['content-type'] = 'application/octet-stream';
-        wroteBytes = true;
         res.writeHead(status, outHeaders);
 
         const abortUpstream = () => {
@@ -417,19 +493,42 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
         clientGone.signal.removeEventListener('abort', abortEarly);
         clientGone.signal.addEventListener('abort', abortUpstream);
         if (clientGone.signal.aborted) abortUpstream();
-        try {
-          await pipeResponse(upstreamRes, res, {
-            onChunk: (c) => { tokens = Math.max(tokens, extractTokens(c.toString('utf8'))); },
-            log,
-            secrets,
-          });
-        } catch {
-          /* 上游中断：下面统一收尾 */
-        } finally {
-          clientGone.signal.removeEventListener('abort', abortUpstream);
+        const completed = await pipeResponse(upstreamRes, res, {
+          onChunk: (c) => { tokens = Math.max(tokens, extractTokens(c.toString('utf8'))); },
+          log,
+          secrets,
+        }).catch(() => false);
+        clientGone.signal.removeEventListener('abort', abortUpstream);
+
+        if (!completed) {
+          // 客户端主动中止：单独计数，既不算成功也不算上游失败（否则错误率被系统性低估）
+          if (clientGone.signal.aborted) {
+            scheduler.recordError(current, '客户端中止');
+            release();
+            bumpAborted();
+            return;
+          }
+          // 上游把响应发了一半就断了：已写出的字节注定不完整 → res.destroy() 让下游
+          // 立刻看到连接异常（绝不用 res.end() 把半截内容当完整 200 收尾）。
+          scheduler.recordError(current, '上游响应中断');
+          release();
+          if (res.headersSent) {
+            // 已经向客户端写出（可能只写出响应头）→ 必须让下游看到连接异常，
+            // 否则半截内容会被当成一个「完整的 200」。
+            try { res.destroy(); } catch { /* 忽略 */ }
+          } else {
+            sendJSON(res, 502, { error: { message: 'Upstream response interrupted', type: 'upstream_error' } });
+          }
+          bump(true);
+          return;
         }
+
         if (!res.writableEnded && !res.destroyed) res.end();
         release();
+        // 换号成功后把粘性指到真正服务本次请求的账号，否则同 session 的下个请求又粘回坏账号
+        if (sessionId && attempt > 0) {
+          try { scheduler.setAffinity(sessionId, current.keyId, Date.now()); } catch { /* 粘性失败不影响响应 */ }
+        }
         bump(false);
         return;
       }
@@ -440,10 +539,11 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
       sendJSON(res, 502, { error: { message: 'Gateway error', type: 'upstream_error' } });
     } finally {
       release();
+      inflight = Math.max(0, inflight - 1);
       req.off('aborted', onClientGone);
       res.off('close', onClientGone);
     }
   }
 
-  return { forward, sendJSON };
+  return { forward, sendJSON, inflightCount: () => inflight, maxInflight };
 }

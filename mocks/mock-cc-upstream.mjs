@@ -36,16 +36,50 @@ export async function startMockUpstream(opts = {}) {
   // 传入的 plans 覆盖默认设定（默认设定里含 §9 面板演示账号与测试账号）
   const plans = new Map(Object.entries({ ...DEFAULT_PLANS, ...(opts.plans ?? {}) }));
   const seen = []; // 每个请求的 { method, url, headers, body }
-  const behavior = { failNext5xx: 0, quotaError: false, delayMs: 0, ...(opts.behavior ?? {}) };
+  const behavior = {
+    failNext5xx: 0, quotaError: false, delayMs: 0,
+    // 测试用开关（默认全关，不影响既有用例）
+    rateLimitError: false,      // 429 普通限流
+    notFound404: false,         // 401/403：key 失效
+    authErrorStatus: 0,         // 指定后按该状态码回鉴权错误（401/403）
+    abortAfterChunks: 0,        // 流式：写 N 个 chunk 后直接 destroy 连接（模拟上游中途断）
+    delayBeforeBodyMs: 0,       // 收到请求后先等再回响应体
+    bodyBytesSeen: [],          // 每次 /v1 实收请求体字节数
+    immediate5xx: 0,            // 不等 body 收完就秒回 503（复现「上游秒败 + 客户端还在发 body」）
+    chunkDelayMs: 0,            // SSE 分块之间插入延迟（用于客户端中途掐断的用例）
+    firstDataAt: null,          // /v1 首次收到**请求体字节**的时间戳（F11 断言用）
+    ...(opts.behavior ?? {}),
+  };
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   const server = http.createServer((req, res) => {
     const chunks = [];
-    req.on('data', (c) => chunks.push(c));
+    let received = 0;
+    const isV1 = () => req.url.startsWith('/v1/');
+    // 秒回失败：连 body 都不等（复现「上游第 1 次秒回 5xx，客户端还在慢慢发 body」）
+    if (behavior.immediate5xx > 0 && isV1()) {
+      behavior.immediate5xx--;
+      req.on('data', (c) => { received += c.length; });
+      req.on('end', () => {});
+      req.resume();
+      if (behavior.firstDataAt === null) behavior.firstDataAt = Date.now();
+      // 不往 bodyBytesSeen 里塞：这里根本没收 body，塞 0 会与「上游实收字节」的语义混淆
+      seen.push({ method: req.method, url: req.url, headers: req.headers, body: '' });
+      return sendJSON(res, 503, { error: { message: 'mock upstream busy' } });
+    }
+    req.on('data', (c) => {
+      received += c.length;
+      // F11：记录上游**首次收到请求体字节**的时刻。网关若等 body 收完才连接/转发，
+      // 这个时刻会≈客户端把 body 发完的时刻。
+      if (behavior.firstDataAt === null && isV1()) behavior.firstDataAt = Date.now();
+      chunks.push(c);
+    });
     req.on('end', async () => {
       const bodyText = Buffer.concat(chunks).toString('utf8');
       seen.push({ method: req.method, url: req.url, headers: req.headers, body: bodyText });
 
-      if (behavior.delayMs) await new Promise((r) => setTimeout(r, behavior.delayMs));
+      if (behavior.delayMs) await sleep(behavior.delayMs);
 
       // ── 额度接口 ─────────────────────────────────────────
       if (req.url.startsWith('/alpha/')) {
@@ -92,6 +126,16 @@ export async function startMockUpstream(opts = {}) {
 
       // ── 转发接口 ─────────────────────────────────────────
       if (req.url.startsWith('/v1/')) {
+        behavior.bodyBytesSeen.push(received);
+        if (behavior.authErrorStatus) {
+          return sendJSON(res, behavior.authErrorStatus, { error: { message: 'invalid api key', type: 'authentication_error' } });
+        }
+        if (behavior.notFound404) {
+          return sendJSON(res, 404, { error: { message: 'unknown key', type: 'not_found' } });
+        }
+        if (behavior.rateLimitError) {
+          return sendJSON(res, 429, { error: { message: 'Rate limit exceeded, retry later', type: 'rate_limit' } });
+        }
         if (behavior.failNext5xx > 0) {
           behavior.failNext5xx--;
           return sendJSON(res, 503, { error: { message: 'mock upstream busy' } });
@@ -110,13 +154,29 @@ export async function startMockUpstream(opts = {}) {
         }
         if (Array.isArray(behavior.sseChunks)) {
           res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
-          for (const c of behavior.sseChunks) res.write(`data: ${JSON.stringify(c)}\n\n`);
+          for (const c of behavior.sseChunks) {
+            res.write(`data: ${JSON.stringify(c)}\n\n`);
+            if (behavior.chunkDelayMs) await sleep(behavior.chunkDelayMs);
+          }
           res.write('data: [DONE]\n\n');
           return res.end();
         }
+        if (behavior.abortAfterChunks > 0) {
+          // 模拟上游中途断开（重启 / 网络抖动 / 内核被 OOM kill）：
+          // 只写出前 N 个 chunk 就 destroy，不发 [DONE]、不 end()
+          res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+          for (let i = 0; i < behavior.abortAfterChunks; i++) {
+            res.write(`data: ${JSON.stringify({ id: 'chatcmpl-mock', choices: [{ index: 0, delta: { content: `partial-${i + 1}` } }] })}\n\n`);
+          }
+          setTimeout(() => { try { res.destroy(); } catch { /* 忽略 */ } }, 10);
+          return undefined;
+        }
         // 默认：3 个 SSE chunk + [DONE]
         res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
-        for (const c of SSE_CHUNKS) res.write(`data: ${JSON.stringify(c)}\n\n`);
+        for (const c of SSE_CHUNKS) {
+          res.write(`data: ${JSON.stringify(c)}\n\n`);
+          if (behavior.chunkDelayMs) await sleep(behavior.chunkDelayMs);
+        }
         res.write('data: [DONE]\n\n');
         return res.end();
       }

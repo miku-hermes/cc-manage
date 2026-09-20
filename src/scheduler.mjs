@@ -1,6 +1,8 @@
 // 账号选择：打分 + 粘性 + 冷却 + 自动暂停/恢复（SPEC §5）
 const HOUR_MS = 3600 * 1000;
 const FIVE_HOUR_MS = 5 * HOUR_MS;
+// 普通限流（rate limit）的冷却时间：只让账号短暂退出选择，不再暂停 5 小时。
+const RATE_LIMIT_COOLDOWN_MS = 60 * 1000;
 
 /**
  * 所有能用的额度窗口（5h、周）。任何一个打满，账号就不可用。
@@ -43,30 +45,55 @@ export function remainingRatio(quota) {
   return ratioOf(w);
 }
 
-/** 上游是否报了「额度耗尽」。402 一律算；429 需 body 里含关键字。 */
+/**
+ * 429 里「普通限流」与「额度耗尽」的判别。
+ *
+ * 历史 bug：早先只要 429 body 里出现 /quota|limit|exceeded/ 就判成额度耗尽 ——
+ * `"Rate limit exceeded"` 这种普通限流措辞、甚至 `"type":"rate_limit"` 这个**字段名**
+ * 都含 limit/exceeded，于是一次瞬时限流就把账号暂停 5 小时（线上副号被莫名停用的根因）。
+ *
+ * 现在只有明确指向「额度窗口/额度用量」的措辞才算额度耗尽：quota / quota_exceeded /
+ * windowLimits / credit(s) / <周期> limit|window（weekly limit reached 这种仍是额度语义）。
+ * 裸的 "rate limit" / "too many requests" / "rate_limit" 字段一律不算。
+ */
+const QUOTA_HINT_RE = /quota|window_?limits?|credits?|(?:weekly|monthly|daily|hourly|usage|plan|subscription|account)[\s_-]*(?:limit|window|quota|exhaust)/i;
+
+/** 上游是否报了「额度耗尽」。402 一律算；429 需 body 里明确出现额度语义。 */
 export function isQuotaError(status, bodyText = '') {
   if (status === 402) return true;
   if (status !== 429) return false;
-  return /quota|limit|exceeded/i.test(String(bodyText));
+  return QUOTA_HINT_RE.test(String(bodyText));
 }
 
 export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffinity = 2000, log } = {}) {
   // 运行期状态：state.accounts[keyId]
   const runtime = (account) => {
     if (!state.accounts[account.keyId]) {
-      state.accounts[account.keyId] = { concurrency: 0, pausedUntil: null, lastQuota: null, lastError: null, lastErrorAt: null };
+      state.accounts[account.keyId] = {
+        concurrency: 0, pausedUntil: null, lastQuota: null, lastError: null, lastErrorAt: null,
+        // 普通限流（429 但非额度耗尽）的短冷却，绝不变成 5 小时停用
+        rateLimitedUntil: null,
+      };
     }
     return state.accounts[account.keyId];
   };
   for (const a of accounts) runtime(a);
 
-  // sessionAffinity: Map 保持插入顺序 = LRU（命中时 delete + set 移到末尾）
+  // sessionAffinity: Map 保持插入顺序 = LRU（命中时 delete + set 移到末尾并刷新 at）
   const affinity = new Map();
 
   function affinityKey(sessionId) {
     return String(sessionId);
   }
 
+  /**
+   * 取 session 的粘性账号。
+   *
+   * 命中时必须 delete + set 回写并更新 at：TTL 从**最后一次命中**起算（持续活跃的会话
+   * 不中途掉粘性），同时把该条目移到 Map 末尾（插入顺序 = LRU，上限淘汰时先淘汰最冷的）。
+   * 早先只读不写：TTL 从建立时刻起算 → 30 分钟活跃会话掉亲和性；
+   * 且上限淘汰按插入顺序 → 刚被命中的最热条目反而先被淘汰，与注释/SPEC 都不符。
+   */
   function getAffinity(sessionId, now) {
     if (!sessionId) return null;
     const key = affinityKey(sessionId);
@@ -76,6 +103,12 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
       affinity.delete(key);
       return null;
     }
+    // 移到 Map 末尾（插入顺序 = LRU）。只有一个条目时无需搬动。
+    if (affinity.size > 1) {
+      affinity.delete(key);
+      affinity.set(key, entry);
+    }
+    entry.at = now;
     return entry.keyId;
   }
 
@@ -103,6 +136,7 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
     if (account.enabled === false) return false;
     const rt = runtime(account);
     if (rt.pausedUntil && rt.pausedUntil > now) return false;
+    if (rt.rateLimitedUntil && rt.rateLimitedUntil > now) return false;
     if (rt.authInvalid) return false;
     const q = rt.lastQuota;
     // 任一窗口打满即不可用：只看 5h 会让「周额度已打满」的账号被继续调度
@@ -164,12 +198,31 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
       rt.lastError = null;
       rt.lastErrorAt = null;
       rt.authInvalid = false;
+      rt.rateLimitedUntil = null;
     } else if (snapshot) {
       rt.authInvalid = !!snapshot.authInvalid;
       rt.lastError = snapshot.error ?? '额度查询失败';
       rt.lastErrorAt = Date.now();
       rt.lastQuota = rt.lastQuota ?? null;
     }
+  }
+
+  /**
+   * 普通限流（429 非额度类）：只把账号短暂移出选择（默认 60s），
+   * 绝不写成 pausedUntil（那会变成 5 小时停用，多账号池被压垮、单账号池直接 503）。
+   */
+  function markRateLimited(account, now = Date.now(), cooldownMs = RATE_LIMIT_COOLDOWN_MS) {
+    const rt = runtime(account);
+    rt.rateLimitedUntil = now + cooldownMs;
+    return rt.rateLimitedUntil;
+  }
+
+  /** 上游 401/403：账号 key 失效，立刻停止调度它（不再等到额度轮询才纠正）。 */
+  function markAuthInvalid(account, message = null, now = Date.now()) {
+    const rt = runtime(account);
+    rt.authInvalid = true;
+    if (message !== null) recordError(account, message, now);
+    return rt.authInvalid;
   }
 
   /** 额度耗尽 → 暂停到 5h resetAt（无则 now+5h）。 */
@@ -234,6 +287,8 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
     release,
     recordError,
     recordQuota,
+    markRateLimited,
+    markAuthInvalid,
     pauseForQuota,
     availableCount,
     activeCount,

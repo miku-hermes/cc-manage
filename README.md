@@ -7,6 +7,8 @@ Command Code 多账号反代网关：在协议内核 [`vendor/commandcode-proxy/
 | 凭据 | 谁用 | 存在哪 | 用途 |
 | --- | --- | --- | --- |
 | **后台账号 + 密码** | 人（浏览器登录） | `config/users.json` | 登录 `/admin` 后台 |
+
+> 登出 / 改密码的吊销记录持久化在 `config/revoked.json`（0600）。早期只在内存里，重启后旧 cookie 会复活。 |
 | **客户端 API key**（`sk-cg-…`） | 程序（curl / SDK） | `config/keys.json` | 调用 `/v1/*` 反代接口 |
 
 程序侧只需要一把客户端 key（`sk-cg-...`），网关按**剩余额度 / 在途请求**自动挑一个 Command Code 账号，把请求反代给内核并流式透传响应；同时轮询各账号额度、耗尽自动暂停、到点自动恢复。`/` 是**公开只读**看板（不暴露完整 key），`/admin` 用账号密码登录后管理 CC key、客户端 key 与管理员。
@@ -135,7 +137,7 @@ docker compose logs --tail 20 core   # 能看到请求到达 + 被替换成池�
 docker compose up -d --force-recreate gateway   # 恢复默认
 ```
 
-**内存提示**：本机 2GB，已用三重封顶 —— `mem_limit`（core 512m / gateway 256m）+ `CC_MAX_BODY_MB`（默认 20）+ `CC_MAX_INFLIGHT`（默认 8）。公网/高并发还要另加 nginx 侧的连接数限制。
+**内存提示**：本机 2GB，已用四重封顶 —— `mem_limit`（core 512m / gateway 256m）+ `CC_MAX_BODY_MB`（默认 20）+ `CC_MAX_INFLIGHT`（默认 8）+ 网关自己的 `maxBodyBytes`（默认 8MB）/ `maxInflight`（默认 8）。公网/高并发还要另加 nginx 侧的连接数限制。
 
 ### 配置 `config.json`
 
@@ -155,7 +157,8 @@ docker compose up -d --force-recreate gateway   # 恢复默认
   "sessionAffinityTtlMs": 1800000,
   "allowPassthrough": false,
   "publicDashboard": true,
-  "maxBodyBytes": 20971520,
+  "maxBodyBytes": 8388608,
+  "maxInflight": 8,
   "logLevel": "info",
   "logFile": ""
 }
@@ -165,7 +168,7 @@ docker compose up -d --force-recreate gateway   # 恢复默认
 - `publicDashboard`（`PUBLIC_DASHBOARD`）：`1`（默认）让 `/` 与 `/api/status` 公开只读；`0` 则要求后台登录 session。
 - 已废弃的 `protectAdminApi`（`PROTECT_ADMIN_API`）：旧版「面板接口要 `sk-cg-` key」开关，仅为老部署兼容保留；新部署请用 `PUBLIC_DASHBOARD=0`。
 
-环境变量覆盖：`GATEWAY_PORT` `GATEWAY_HOST` `UPSTREAM_PROXY_URL` `CC_API_BASE` `QUOTA_POLL_INTERVAL_MS` `QUOTA_ACTIVE_POLL_INTERVAL_MS` `QUOTA_ACTIVE_WINDOW_MS` `PAUSED_RECHECK_INTERVAL_MS` `QUOTA_TIMEOUT_MS` `SESSION_AFFINITY_TTL_MS` `MAX_BODY_BYTES` `ALLOW_PASSTHROUGH` `PUBLIC_DASHBOARD` `LOG_FILE` `LOG_LEVEL`。
+环境变量覆盖：`MAX_INFLIGHT` `GATEWAY_PORT` `GATEWAY_HOST` `UPSTREAM_PROXY_URL` `CC_API_BASE` `QUOTA_POLL_INTERVAL_MS` `QUOTA_ACTIVE_POLL_INTERVAL_MS` `QUOTA_ACTIVE_WINDOW_MS` `PAUSED_RECHECK_INTERVAL_MS` `QUOTA_TIMEOUT_MS` `SESSION_AFFINITY_TTL_MS` `MAX_BODY_BYTES` `ALLOW_PASSTHROUGH` `PUBLIC_DASHBOARD` `LOG_FILE` `LOG_LEVEL`。
 
 ### 账号池 `accounts.json`
 
@@ -257,14 +260,18 @@ curl -N -X POST 127.0.0.1:3051/v1/chat/completions \
 2. 候选按 `score = remainingRatio / (1 + 在途数)` 降序，`remainingRatio = 1 - used/cap`（5h 优先，无 5h 用周窗口，都没有算 1.0）。
 3. 同分按 `accounts.json` 中的顺序稳定排序，绝不随机。
 4. **粘性路由**：请求带 `x-session-id` 头，或 body 里有 `conversation_id` / `user` 字段时，同一 session 优先复用上次的账号（TTL 30 分钟，最多 2000 条，LRU 淘汰）；原账号不可用则改选并更新粘性表。
-5. **自动暂停**：上游返回 402，或 429 且 body 含 `quota` / `limit` / `exceeded` → 暂停到 5h 窗口的 `resetAt`（没有则 now + 5h），并立刻触发一次额度刷新。
+5. **额度耗尽才暂停**：上游 402，或 429 且 body 有**明确额度语义**（`quota` / `quota_exceeded` / `windowLimits` / `insufficient credits` / `weekly|monthly limit` 等）→ 暂停到 5h 窗口的 `resetAt`（没有则 now + 5h），并立刻触发一次额度刷新。
+   普通限流（`429` + `Rate limit exceeded` / `too many requests` / `type:"rate_limit"`）**只冷却 60 秒**，绝不会把账号停用 5 小时。
+6. **鉴权失效立刻停调度**：上游 401/403 → 标记 `authInvalid`，不再把该账号选进池（早期要等额度轮询才发现，最长 ~10 分钟窗口）。
 6. **自动恢复**：后台默认每 60s 复查到期账号，确认 `used < cap` 才恢复。**手动 `enabled=false` 的账号永不自动恢复。**
 
 ## 转发细节
 
 - 流式透传：`http.request` 拿到上游响应后边收边转，不整体缓冲；下游写阻塞时暂停读上游，`drain` 后恢复。
 - 请求头白名单：`content-type` `accept` `x-session-id`，`user-agent` 一律改写为 `commandcode-cli/1.53.1`；下游的 `authorization` / `x-api-key` **绝不**透传，一定替换成选中账号的 CC key。
-- 请求体流式转发，超过 `maxBodyBytes`（默认 20MB）返回 413。
+- 请求体流式转发，超过 `maxBodyBytes`（默认 8MB）返回 413。
+- 在途请求上限 `maxInflight`（默认 8），超出返回 `503` + `Retry-After`。
+- 上游把响应发到一半就断流时，网关**不会** `res.end()` 把半截内容伪装成完整的 200 —— 已写出的按连接异常 `res.destroy()` 中止，未写出的按 502，并计入 `stats.errors`。
 - 客户端断开立刻 abort 上游。
 - 上游 5xx / 超时 / 连接错误，且**尚未向客户端写出任何字节**时，换一个账号重试一次（最多一次）；已开始写响应一律不重试。
 - 上游 4xx（含 401）原样透传状态码，body 里可能出现的 key 会被脱敏。

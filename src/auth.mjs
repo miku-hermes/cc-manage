@@ -11,14 +11,25 @@ export const SESSION_COOKIE = 'cc_session';
 // session 有效期 7 天（别每次重启都换密钥，否则用户被登出）
 export const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-// scrypt 参数：128*N*r = 16MB 内存，约几十毫秒，登录场景够用且不至于拖垮小机器
-const SCRYPT_N = 16384;
+// scrypt 参数：N=2^16、r=8 → 64MB 内存 / ~200ms，向 OWASP 现行建议（N≥2^15~2^17）靠拢。
+// 1.9GB 小机器上登录不是高频操作，这点开销可以接受。
+const SCRYPT_N = 1 << 16;
 const SCRYPT_R = 8;
 const SCRYPT_P = 1;
 const SCRYPT_KEYLEN = 64;
 const SCRYPT_SALT_BYTES = 16;
-// 校验时拒绝离谱参数（users.json 被改坏/被投毒时不至于把内存打爆）
-const SCRYPT_MAX_N = 1 << 20;
+/**
+ * 校验时只接受**白名单固定档位**的 N/r/p。
+ *
+ * 历史 bug：上限写的是 N ≤ 2^20、r ≤ 32 并从被校验的字符串本身取参数，
+ * 于是被投毒的 users.json（N=2^20, r=32）会请求 4 GiB 内存并长时间阻塞事件循环
+ * → 容器 mem_limit 256m 下直接 OOM/重启。
+ */
+const SCRYPT_N_ALLOWED = new Set([1 << 14, 1 << 15, 1 << 16]);
+const SCRYPT_R_ALLOWED = new Set([8]);
+const SCRYPT_P_ALLOWED = new Set([1]);
+// 白名单里最大的内存占用（用于防御性上限断言）
+const SCRYPT_MAX_MEM = 256 * (1 << 16) * 8;
 
 function b64(buf) {
   return Buffer.from(buf).toString('base64');
@@ -35,7 +46,7 @@ export function hashPassword(password, opts = {}) {
   const p = opts.p ?? SCRYPT_P;
   const keylen = opts.keylen ?? SCRYPT_KEYLEN;
   const salt = opts.salt ?? randomBytes(SCRYPT_SALT_BYTES);
-  const hash = scryptSync(String(password), salt, keylen, { N, r, p, maxmem: 256 * N * r });
+  const hash = scryptSync(String(password), salt, keylen, { N, r, p, maxmem: SCRYPT_MAX_MEM });
   return `scrypt$${N}$${r}$${p}$${b64(salt)}$${b64(hash)}`;
 }
 
@@ -48,13 +59,16 @@ export function verifyPassword(password, stored) {
   const r = Number(parts[2]);
   const p = Number(parts[3]);
   if (!Number.isInteger(N) || !Number.isInteger(r) || !Number.isInteger(p)) return false;
-  if (N < 2 || N > SCRYPT_MAX_N || r < 1 || r > 32 || p < 1 || p > 16) return false;
+  // 白名单：不在固定档位里的参数一律拒绝，绝不按攻击者给的 N/r/p 去分配内存
+  if (!SCRYPT_N_ALLOWED.has(N) || !SCRYPT_R_ALLOWED.has(r) || !SCRYPT_P_ALLOWED.has(p)) return false;
+  // 防御性二次确认：实际需要的内存必须落在白名单允许的上限内
+  if (256 * N * r > SCRYPT_MAX_MEM) return false;
   const salt = Buffer.from(parts[4], 'base64');
   const expected = Buffer.from(parts[5], 'base64');
   if (salt.length === 0 || expected.length === 0) return false;
   let actual;
   try {
-    actual = scryptSync(password, salt, expected.length, { N, r, p, maxmem: 256 * N * r });
+    actual = scryptSync(password, salt, expected.length, { N, r, p, maxmem: SCRYPT_MAX_MEM });
   } catch {
     return false;
   }
@@ -114,34 +128,93 @@ export function parseCookies(header) {
 
 /**
  * 签名 session（HMAC-SHA256）。token = base64url(payload) + '.' + base64url(hmac)。
- * payload: { u: 用户名, sid: 会话随机 id, iat, exp }
+ * payload: { u: 用户名, sid: 会话随机 id, iat, exp, sv }
  *
- * cookie 是自包含的（无服务端 session 表），但额外维护一份**内存吊销表**：
- * 退出登录 / 改密码后旧 token 立刻失效（重启会丢吊销表，最坏情况退回纯 TTL 语义）。
+ * 吊销有两条路：
+ *  1. sid 黑名单 —— 退出登录只吊销**这一个**会话；
+ *  2. 按用户的会话版本号 `sv` —— 改密码 / 删管理员时 +1，该用户所有旧 token 立刻失效。
+ *
+ * 两者都会**持久化**到磁盘（storePath）：内存吊销表在重启后就没了，
+ * 而 cookie 是自包含的 7 天 TTL，于是「已登出 / 已改密码」的 token 重启后会复活。
+ * 落盘失败只 warn 并退回纯内存语义，绝不阻塞启动。
  */
-export function createSessionSigner({ secret, ttlMs = SESSION_TTL_MS, now = () => Date.now() } = {}) {
+export function createSessionSigner({ secret, ttlMs = SESSION_TTL_MS, now = () => Date.now(), storePath = null, log = null } = {}) {
   if (!secret) throw new Error('session 签名密钥缺失');
   const key = Buffer.from(String(secret), 'utf8');
   const mac = (data) => createHmac('sha256', key).update(data).digest();
   const revoked = new Map();              // sid → 该会话的 exp（过期即可遗忘）
-  const byUser = new Map();               // username → Set<sid>，改密码/删用户时整批吊销
+  const byUser = new Map();               // username → Map<sid, exp>，改密码时整批吊销
+  const versions = new Map();             // username → 会话版本号 sv
+
+  function load() {
+    if (!storePath) return;
+    try {
+      if (!fs.existsSync(storePath)) return;
+      const raw = JSON.parse(fs.readFileSync(storePath, 'utf8'));
+      const t = now();
+      for (const [sid, exp] of Object.entries(raw?.sids ?? {})) {
+        if (Number.isFinite(exp) && exp > t) revoked.set(sid, exp);
+      }
+      for (const [u, v] of Object.entries(raw?.versions ?? {})) {
+        if (Number.isInteger(v) && v > 0) versions.set(u, v);
+      }
+    } catch (e) {
+      log?.warn?.(`会话吊销记录损坏，已忽略（${e.message}）`);
+    }
+  }
+
+  function persist() {
+    if (!storePath) return;
+    try {
+      const sids = {};
+      for (const [sid, exp] of revoked) sids[sid] = exp;
+      const rawVersions = {};
+      for (const [u, v] of versions) rawVersions[u] = v;
+      const tmp = `${storePath}.tmp-${process.pid}-${Date.now()}`;
+      fs.mkdirSync(path.dirname(storePath), { recursive: true });
+      fs.writeFileSync(tmp, JSON.stringify({ sids, versions: rawVersions }, null, 2), { mode: 0o600 });
+      fs.chmodSync(tmp, 0o600);
+      fs.renameSync(tmp, storePath);
+    } catch (e) {
+      log?.warn?.(`会话吊销记录无法持久化（${e.message}），本次运行的吊销在重启后会失效`);
+    }
+  }
 
   function prune() {
     const t = now();
     for (const [sid, exp] of revoked) if (exp <= t) revoked.delete(sid);
+    for (const [u, set] of byUser) {
+      for (const [sid, exp] of set) if (exp <= t) set.delete(sid);
+      if (set.size === 0) byUser.delete(u);
+    }
   }
 
+  /** 该用户当前还有效的会话数（测试与诊断用）。 */
+  function liveSessionCount(username) {
+    const set = byUser.get(String(username));
+    if (!set) return 0;
+    const t = now();
+    let n = 0;
+    for (const [, exp] of set) if (exp > t) n++;
+    return n;
+  }
+
+  load();
+
   function sign({ username }) {
+    // 签发时顺手清理过期条目：否则长时间运行 + 反复登录会把 byUser 撑成无界增长
+    prune();
     const sid = randomBytes(12).toString('base64url');
-    const body = { u: String(username), sid, iat: now(), exp: now() + ttlMs };
+    const exp = now() + ttlMs;
+    const body = { u: String(username), sid, iat: now(), exp, sv: versions.get(String(username)) ?? 0 };
     const data = Buffer.from(JSON.stringify(body), 'utf8').toString('base64url');
     let set = byUser.get(body.u);
-    if (!set) { set = new Set(); byUser.set(body.u, set); }
-    set.add(sid);
+    if (!set) { set = new Map(); byUser.set(body.u, set); }
+    set.set(sid, exp);
     return `${data}.${mac(data).toString('base64url')}`;
   }
 
-  /** 校验 token：签名不对 / 过期 / 结构损坏 / 已吊销 → null */
+  /** 校验 token：签名不对 / 过期 / 结构损坏 / 已吊销 / 版本过期 → null */
   function verify(token) {
     if (typeof token !== 'string' || token.length === 0) return null;
     const i = token.lastIndexOf('.');
@@ -161,6 +234,8 @@ export function createSessionSigner({ secret, ttlMs = SESSION_TTL_MS, now = () =
     if (typeof payload.u !== 'string' || !payload.u) return null;
     if (typeof payload.exp !== 'number' || payload.exp <= now()) return null;
     if (payload.sid && revoked.has(payload.sid)) return null;
+    // 会话版本：改密码 / 删用户后旧 token 一律作废（重启后依然作废）
+    if ((payload.sv ?? 0) !== (versions.get(payload.u) ?? 0)) return null;
     return payload;
   }
 
@@ -168,6 +243,8 @@ export function createSessionSigner({ secret, ttlMs = SESSION_TTL_MS, now = () =
     sign,
     verify,
     ttlMs,
+    storePath,
+    liveSessionCount,
     /** 退出登录：立即吊销这一个会话。 */
     revoke(token) {
       const payload = verify(token);
@@ -175,16 +252,18 @@ export function createSessionSigner({ secret, ttlMs = SESSION_TTL_MS, now = () =
       revoked.set(payload.sid, payload.exp);
       byUser.get(payload.u)?.delete(payload.sid);
       prune();
+      persist();
       return true;
     },
-    /** 改密码 / 删管理员：吊销该用户全部会话。 */
+    /** 改密码 / 删管理员：吊销该用户全部会话（版本号 +1，重启后依然有效）。 */
     revokeUser(username) {
-      const set = byUser.get(String(username));
-      if (!set) return 0;
-      let n = 0;
-      for (const sid of set) { revoked.set(sid, now() + ttlMs); n++; }
-      byUser.delete(String(username));
+      const name = String(username);
+      const n = liveSessionCount(name);
+      versions.set(name, (versions.get(name) ?? 0) + 1);
+      for (const sid of byUser.get(name)?.keys() ?? []) revoked.set(sid, now() + ttlMs);
+      byUser.delete(name);
       prune();
+      persist();
       return n;
     },
   };
@@ -209,46 +288,90 @@ export function clearCookieHeader({ secure = false } = {}) {
 }
 
 /**
- * 登录失败限速：同一个 IP 连续失败 maxFails 次 → 锁 lockMs。
- * 第 maxFails 次失败直接返回 locked=true（调用方回 429）。
+ * 登录失败限速。
+ *
+ * 反代（openresty）后面**所有**请求的 remoteAddress 都是代理地址，早先按 socket 地址
+ * 分桶 = 全公网共用一个桶：任意匿名者发 5 次错密码就能把管理员锁在门外（F14）。
+ *
+ * 现在的口径：
+ *  - **只有「用户名」维度会锁定**：针对某个账号的连续失败只锁那个账号；
+ *    其它用户名（含不存在的）失败再多也不会锁住真实管理员；
+ *  - 锁定时间指数退避：lockMs * 2^(连续锁定轮次-1)，上限 maxLockMs；
+ *  - 来源（socket 地址）只做统计与日志，**不参与锁定** —— 否则反代后的单一 socket
+ *    桶又能被匿名者用来把全体管理员锁死，等于没修；
+ *  - 仍然**不信任 X-Forwarded-For**（调用方只传 socket 地址），伪造头无法绕过限速。
+ *
+ * 锁定的用户名在锁定期内直接 429（连 scrypt 都不跑），所以刷锁定名不会吃 CPU。
  */
-export function createLoginLimiter({ maxFails = 5, lockMs = 5 * 60 * 1000, now = () => Date.now() } = {}) {
-  const hits = new Map(); // ip → { count, lockedUntil }
+export function createLoginLimiter({
+  maxFails = 5,
+  lockMs = 5 * 60 * 1000,
+  maxLockMs = 60 * 60 * 1000,
+  now = () => Date.now(),
+  maxEntries = 2048,
+} = {}) {
+  const users = new Map();     // username → { count, lockedUntil, at, round }
+  const sources = new Map();   // source   → { failures, at }（只统计，不锁定）
 
+  /** 硬上限：表永远不会无界增长（locked 条目也要能淘汰）。 */
   function prune() {
-    if (hits.size <= 512) return;
     const t = now();
-    for (const [k, s] of hits) {
-      if (!s.lockedUntil && t - (s.at ?? 0) > lockMs) hits.delete(k);
+    for (const [k, s] of users) {
+      const lockExpired = !s.lockedUntil || s.lockedUntil <= t;
+      if (lockExpired && t - (s.at ?? 0) > lockMs) users.delete(k);
     }
+    while (users.size > maxEntries) users.delete(users.keys().next().value);
+    for (const [k, s] of sources) {
+      if (t - (s.at ?? 0) > lockMs) sources.delete(k);
+    }
+    while (sources.size > maxEntries) sources.delete(sources.keys().next().value);
+  }
+
+  function backoffMs(round) {
+    return Math.min(maxLockMs, lockMs * 2 ** Math.max(0, round - 1));
   }
 
   return {
-    /** 是否处于锁定状态；返回 retryAfterMs 供 Retry-After 用 */
-    check(ip) {
-      const s = hits.get(ip);
+    maxFails,
+    /** 是否处于锁定状态；返回 retryAfterMs 供 Retry-After 用。 */
+    check(_source, username = null) {
+      if (!username) return { locked: false };
+      const s = users.get(String(username));
       if (!s) return { locked: false };
-      if (s.lockedUntil && s.lockedUntil > now()) return { locked: true, retryAfterMs: s.lockedUntil - now() };
-      if (s.lockedUntil) hits.delete(ip);
+      if (s.lockedUntil && s.lockedUntil > now()) return { locked: true, retryAfterMs: s.lockedUntil - now(), scope: 'user' };
+      if (s.lockedUntil) { s.lockedUntil = 0; s.count = 0; s.at = now(); }
       return { locked: false };
     },
-    /** 记一次失败；达到阈值则上锁并返回 locked=true */
-    fail(ip) {
-      const prev = hits.get(ip) ?? { count: 0, lockedUntil: 0, at: now() };
-      const s = { count: prev.count + 1, lockedUntil: 0, at: now() };
+    /** 记一次失败（按用户名计锁；来源只计数）。 */
+    fail(source = '-', username = null) {
+      const t = now();
+      const src = sources.get(source) ?? { failures: 0, at: t };
+      sources.set(source, { failures: src.failures + 1, at: t });
+      if (!username) { prune(); return { locked: false, remaining: maxFails }; }
+
+      const key = String(username);
+      const prev = users.get(key) ?? { count: 0, lockedUntil: 0, at: t, round: 0 };
+      const s = { count: prev.count + 1, lockedUntil: 0, at: t, round: prev.round ?? 0 };
       if (s.count >= maxFails) {
-        s.lockedUntil = now() + lockMs;
+        s.round += 1;
+        s.lockedUntil = t + backoffMs(s.round);
         s.count = 0;
-        hits.set(ip, s);
-        return { locked: true, retryAfterMs: lockMs };
+        users.set(key, s);
+        prune();
+        return { locked: true, retryAfterMs: s.lockedUntil - t, scope: 'user' };
       }
-      hits.set(ip, s);
+      users.set(key, s);
       prune();
       return { locked: false, remaining: maxFails - s.count };
     },
-    /** 登录成功 → 清零 */
-    reset(ip) {
-      hits.delete(ip);
+    /** 登录成功 → 只清掉该用户名的失败计数（来源统计保留，供排查）。 */
+    reset(_source, username = null) {
+      if (username) users.delete(String(username));
+      return undefined;
+    },
+    /** 诊断用：表大小（测试断言内存不会无界增长）。 */
+    size() {
+      return { users: users.size, sources: sources.size };
     },
   };
 }

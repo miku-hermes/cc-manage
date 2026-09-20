@@ -36,15 +36,21 @@ const SESSION_HEADER = 'x-session-id';
 // 后台事件缓冲上限（环形，超出丢最旧的）
 const EVENTS_MAX = 200;
 const ADMIN_BODY_LIMIT = 64 * 1024;
-// 后台登录失败限速：同 IP 连续 5 次失败 → 锁 5 分钟（contract: 429）
+// 后台登录失败限速：同**用户名**连续 5 次失败 → 锁定（首次 5 分钟，之后指数退避）。
+// 只按用户名锁：反代后按来源（socket）分桶会让匿名者把全体管理员锁死（F14）。
 const LOGIN_MAX_FAILS = 5;
 const LOGIN_LOCK_MS = 5 * 60 * 1000;
+const LOGIN_MAX_LOCK_MS = 60 * 60 * 1000;
 const PASSWORD_MIN = 8;
 const PASSWORD_MAX = 200;
 // 连通性测试结果只做展示，不必持久化太多次
 const TEST_HISTORY_MAX = 20;
-// 公开面板匿名触发的额度刷新最小间隔（毫秒）
+// 公开面板匿名触发的额度刷新最小间隔（毫秒）：按来源分桶
 const PUBLIC_REFRESH_MIN_MS = 5000;
+// 全局兜底间隔（毫秒）：任何匿名来源加起来也不能更频繁地打上游
+const PUBLIC_REFRESH_GLOBAL_MIN_MS = 2000;
+// 来源分桶表上限
+const PUBLIC_REFRESH_MAX_SOURCES = 512;
 
 /** 带 HTTP 状态码的错误，后台接口统一用它转成响应。 */
 class HttpError extends Error {
@@ -54,7 +60,13 @@ class HttpError extends Error {
   }
 }
 
-const BODY_PEEK_BYTES = 65536;
+// 取 session id 只需 body 首块（F11）：读满这么多或 body 结束就立刻开始转发，
+// 不再等整个 body 收完才建立上游连接（SPEC §7 要求流式透传）。
+const BODY_PEEK_BYTES = 8192;
+// 收到首块后最多再等这么久找 session id（毫秒），到点就放行开始转发。
+const BODY_PEEK_IDLE_MS = 150;
+// docker stop 默认宽限期 10s，这里留一半余量给在途请求自然结束（F3）
+const GRACEFUL_SHUTDOWN_MS = 5000;
 
 /** 从下游 key 里取 session 标识：优先 x-session-id，其次 body 里的 conversation_id / user。 */
 function peekSessionFromBody(chunks) {
@@ -99,8 +111,18 @@ export async function startGateway(overrides = {}) {
   // 与客户端 sk-cg- key 彻底分开：key 只用于 /v1/* API 调用，session 只用于后台页面。
   const secretFile = store.secretFile;
   const sessionSecret = loadOrCreateSecret(secretFile, { log });
-  const sessions = createSessionSigner({ secret: sessionSecret });
-  const loginLimiter = createLoginLimiter({ maxFails: LOGIN_MAX_FAILS, lockMs: LOGIN_LOCK_MS, now: () => Date.now() });
+  // 吊销记录落盘（F15）：否则重启后「已登出 / 已改密码」的 cookie 会复活（自包含 7 天 TTL）
+  const sessions = createSessionSigner({
+    secret: sessionSecret,
+    storePath: path.join(store.configDir, 'revoked.json'),
+    log,
+  });
+  const loginLimiter = createLoginLimiter({
+    maxFails: LOGIN_MAX_FAILS,
+    lockMs: LOGIN_LOCK_MS,
+    maxLockMs: LOGIN_MAX_LOCK_MS,
+    now: () => Date.now(),
+  });
   let users = [];
   let setupInProgress = false;
   // 用户不存在时也做一次等价开销的哈希校验，避免用响应时间探测出「哪些用户名存在」
@@ -152,6 +174,39 @@ export async function startGateway(overrides = {}) {
    */
   function clientIp(req) {
     return req.socket?.remoteAddress ?? '-';
+  }
+
+  /**
+   * 安全响应头（F13）。两个页面的脚本与样式都是**内联**的单文件（无外部资源、
+   * 无内联事件处理器），所以 CSP 里必须放行内联 script/style（'unsafe-inline'），
+   * 否则 default-src 'self' 会把它们全禁掉 → 面板白屏。
+   * 这里仍然收紧其余面：默认只允许同源、禁止被 iframe 嵌套、禁止插件对象、
+   * 禁止 base 标签被改、表单只提交到同源。
+   */
+  const CONTENT_SECURITY_POLICY = [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "connect-src 'self'",
+    "font-src 'self'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+  ].join('; ');
+
+  /** 统一的响应头。在请求最前面挂上，HTML / JSON / 代理响应都覆盖到。 */
+  function applySecurityHeaders(req, res) {
+    res.setHeader('content-security-policy', CONTENT_SECURITY_POLICY);
+    res.setHeader('x-frame-options', 'DENY');
+    res.setHeader('x-content-type-options', 'nosniff');
+    res.setHeader('referrer-policy', 'no-referrer');
+    // 只有真的走 HTTPS 才发 HSTS（否则明文访问会被浏览器记成必须 HTTPS，把服务锁死）
+    if (isSecureRequest(req)) {
+      res.setHeader('strict-transport-security', 'max-age=31536000; includeSubDomains');
+    }
+    return res;
   }
 
   /** HTTPS 判断：前面是 1Panel openresty 反代，看 x-forwarded-proto。 */
@@ -245,25 +300,28 @@ export async function startGateway(overrides = {}) {
     }
 
     if (req.method === 'POST' && p === '/api/auth/login') {
-      const gate = loginLimiter.check(ip);
-      if (gate.locked) return rateLimited(res, gate.retryAfterMs);
-
       const body = await readJSONBody(req);
       const username = String(body.username ?? '').trim();
       const password = typeof body.password === 'string' ? body.password : '';
+
+      // 锁定只按「用户名」判定：针对某个账号的连错只锁那个账号，
+      // 反代后也不再有「匿名者锁死全体管理员」的单桶问题（来源只做统计/日志）。
+      const gate = loginLimiter.check(ip, username);
+      if (gate.locked) return rateLimited(res, gate.retryAfterMs);
+
       const user = findUser(username);
       const passwordOk = verifyPassword(password, user ? user.passwordHash : dummyPasswordHash());
 
       if (!user || !passwordOk) {
-        const r = loginLimiter.fail(ip);
+        const r = loginLimiter.fail(ip, username || null);
         note('warn', r.locked
-          ? `后台登录失败（连续 ${LOGIN_MAX_FAILS} 次，已锁定 ${Math.round(LOGIN_LOCK_MS / 60000)} 分钟）：来自 ${ip}`
-          : `后台登录失败：来自 ${ip}（剩余 ${r.remaining} 次机会）`);
+          ? `后台登录失败（针对「${username || '-'}」，已锁定 ${Math.round((r.retryAfterMs ?? LOGIN_LOCK_MS) / 60000)} 分钟）：来自 ${ip}`
+          : `后台登录失败：来自 ${ip}（用户名「${username || '-'}」剩余 ${r.remaining} 次机会）`);
         if (r.locked) return rateLimited(res, r.retryAfterMs);
         return sendJSON(res, 401, { error: { message: '用户名或密码错误', type: 'auth_error' } });
       }
 
-      loginLimiter.reset(ip);
+      loginLimiter.reset(ip, user.username);
       setSession(res, user.username, secure);
       note('info', `管理员「${user.username}」登录成功（${ip}）`);
       return sendJSON(res, 200, { ok: true, user: { username: user.username } });
@@ -334,14 +392,22 @@ export async function startGateway(overrides = {}) {
 
   // ── 后台定时器 ─────────────────────────────────────────
   let recheckTimer = null;
+  // 暂停复查互斥（F8）：单轮要串行查 N 个账号的上游额度，慢时远超间隔；
+  // setInterval 不等待，前一轮没跑完就要跳过本轮，否则同一账号被重复查询、放大 CC API 压力。
+  let recheckRunning = false;
+  function runPausedRecheck() {
+    if (recheckRunning) return false;
+    recheckRunning = true;
+    scheduler.recheckPaused({ fetchQuota: (a) => fetchQuota(a.key, { baseUrl: config.ccApiBase, timeoutMs: config.quotaTimeoutMs, fetchImpl: overrides.fetchImpl, log }) })
+      .then(() => store.saveState())
+      .catch((e) => log.error(`暂停复查异常: ${e.message}`))
+      .finally(() => { recheckRunning = false; });
+    return true;
+  }
   if (!overrides.noTimers) {
     poller.start();
     if (config.pausedRecheckIntervalMs > 0) {
-      recheckTimer = setInterval(() => {
-        scheduler.recheckPaused({ fetchQuota: (a) => fetchQuota(a.key, { baseUrl: config.ccApiBase, timeoutMs: config.quotaTimeoutMs, fetchImpl: overrides.fetchImpl, log }) })
-          .then(() => store.saveState())
-          .catch((e) => log.error(`暂停复查异常: ${e.message}`));
-      }, config.pausedRecheckIntervalMs);
+      recheckTimer = setInterval(runPausedRecheck, config.pausedRecheckIntervalMs);
       recheckTimer.unref?.();
     }
   }
@@ -369,6 +435,8 @@ export async function startGateway(overrides = {}) {
   function sendJSON(res, status, obj) {
     if (res.writableEnded || res.headersSent) return;
     const body = JSON.stringify(obj);
+    // no-store：鉴权/后台/面板接口的响应都不该被任何缓存留存（F13）
+    res.setHeader('cache-control', 'no-store');
     res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body) });
     res.end(body);
   }
@@ -472,6 +540,8 @@ export async function startGateway(overrides = {}) {
       stats: {
         total: stats.total,
         errors: stats.errors,
+        // 客户端主动中止（Ctrl-C 长回答）：单独口径，不计入 errors（F10）
+        aborted: stats.aborted ?? 0,
         totalTokens: stats.totalTokens,
         byAccount: Object.fromEntries(Object.entries(stats.byAccount).map(([id, s]) => [id, { ...s }])),
       },
@@ -618,8 +688,10 @@ export async function startGateway(overrides = {}) {
     let parsed;
     try {
       parsed = JSON.parse(text);
-    } catch (e) {
-      throw new HttpError(400, `请求体不是合法 JSON: ${e.message}`);
+    } catch {
+      // 只回通用文案（F19）：JSON.parse 的 e.message 会把用户提交的原文回显出去
+      // （实测 `SECRETBODY{{{` → `Unexpected token 'S', "SECRETBODY{{{"`）。
+      throw new HttpError(400, '请求体不是合法 JSON');
     }
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new HttpError(400, '请求体必须是 JSON 对象');
     return parsed;
@@ -632,6 +704,9 @@ export async function startGateway(overrides = {}) {
 
   // 连通性测试历史（内存环形，只用于后台展示）
   const testHistory = [];
+  // 匿名刷新节流（F20）：按来源分桶 + 全局硬限，避免单变量被一个来源长期占住、
+  // 也避免攻击者稳定每 5 秒触发一轮全账号上游查询。
+  const lastPublicRefreshBySource = new Map();
   let lastPublicRefreshAt = 0;
 
   function eventsView(url) {
@@ -702,10 +777,23 @@ export async function startGateway(overrides = {}) {
 
     if (method === 'PATCH' && userMatch) {
       requireWritable();
+      const actor = currentUser(req);
       const username = decodeURIComponent(userMatch[1]);
       const target = findUser(username);
       if (!target) throw new HttpError(404, '管理员不存在');
       const body = await readJSONBody(req);
+      // 改**他人**密码必须先证明自己是当前这个管理员（F21）：
+      // 否则任何一个被盗/低权限的管理员会话都能直接改掉别人的密码并顶替其身份。
+      // 改自己的密码走原流程（能登录说明身份成立），保持向后兼容。
+      if (actor && !safeEqualText(actor, username)) {
+        const actorUser = findUser(actor);
+        const confirm = typeof body.currentPassword === 'string' ? body.currentPassword : '';
+        const ok = !!actorUser && confirm.length > 0
+          && verifyPassword(confirm, actorUser.passwordHash);
+        if (!ok) {
+          throw new HttpError(403, `修改他人（「${username}」）的密码需要提供当前管理员「${actor}」的密码`);
+        }
+      }
       const password = validatePassword(body.password);
       users = store.saveUsers(users.map((u) => (safeEqualText(u.username, username)
         ? { ...u, passwordHash: hashPassword(password) }
@@ -871,6 +959,7 @@ export async function startGateway(overrides = {}) {
   });
 
   async function handleRequest(req, res) {
+    applySecurityHeaders(req, res);
     const url = parseUrl(req);
     if (!url) {
       return sendJSON(res, 400, { error: { message: '非法请求 URL', type: 'bad_request' } });
@@ -894,6 +983,7 @@ export async function startGateway(overrides = {}) {
     // 面板
     if (req.method === 'GET' && url.pathname === '/') {
       const html = readPanel();
+      res.setHeader('cache-control', 'no-store');
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'x-content-type-options': 'nosniff' });
       return res.end(html);
     }
@@ -901,6 +991,7 @@ export async function startGateway(overrides = {}) {
     // 后台管理页（静态 HTML；数据接口在 /api/admin/*）
     if (req.method === 'GET' && (url.pathname === '/admin' || url.pathname === '/admin/')) {
       const html = readAdmin();
+      res.setHeader('cache-control', 'no-store');
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'x-content-type-options': 'nosniff' });
       return res.end(html);
     }
@@ -935,7 +1026,8 @@ export async function startGateway(overrides = {}) {
       let sessionId = typeof headerSession === 'string' && headerSession ? headerSession : null;
 
       if (!sessionId && req.method !== 'GET' && req.method !== 'HEAD') {
-        const peeked = await peekBody(req, BODY_PEEK_BYTES).catch(() => ({ chunks: [], ended: false }));
+        const peeked = await peekBody(req, BODY_PEEK_BYTES, { match: (cs) => peekSessionFromBody(cs) !== null })
+          .catch(() => ({ chunks: [], ended: false }));
         initialChunks = peeked.chunks;
         bodyEnded = peeked.ended;
         sessionId = peekSessionFromBody(initialChunks);
@@ -948,7 +1040,7 @@ export async function startGateway(overrides = {}) {
       }
       log.info(`路由 ${url.pathname} → 账号「${account.name}」${sessionId ? `(session ${sessionId})` : ''}`);
 
-      return proxy.forward({ req, res, account, pathname: url.pathname, search: url.search, initialChunks, bodyEnded });
+      return proxy.forward({ req, res, account, pathname: url.pathname, search: url.search, initialChunks, bodyEnded, sessionId });
     }
 
     // 只读面板数据：默认公开（PUBLIC_DASHBOARD=1）；PUBLIC_DASHBOARD=0 时要求后台登录
@@ -968,8 +1060,18 @@ export async function startGateway(overrides = {}) {
       // 公开面板上的「刷新额度」按钮会走到这里：匿名调用做节流，避免被拿来当打 CC 的放大器
       if (!currentUser(req) && !legacyKeyAllowed(req)) {
         const now = Date.now();
-        if (now - lastPublicRefreshAt < PUBLIC_REFRESH_MIN_MS) {
+        const src = clientIp(req);
+        const lastForSrc = lastPublicRefreshBySource.get(src) ?? 0;
+        const throttled = now - lastForSrc < PUBLIC_REFRESH_MIN_MS
+          || now - lastPublicRefreshAt < PUBLIC_REFRESH_GLOBAL_MIN_MS;
+        if (throttled) {
           return sendJSON(res, 200, { ok: true, throttled: true, ...statusView() });
+        }
+        lastPublicRefreshBySource.set(src, now);
+        // 简单的表上限，防止伪造来源把 Map 撑爆
+        if (lastPublicRefreshBySource.size > PUBLIC_REFRESH_MAX_SOURCES) {
+          const oldest = lastPublicRefreshBySource.keys().next().value;
+          lastPublicRefreshBySource.delete(oldest);
         }
         lastPublicRefreshAt = now;
       }
@@ -1016,44 +1118,78 @@ export async function startGateway(overrides = {}) {
       .catch((e) => log.warn(`首次额度刷新失败: ${e.message}`));
   }
 
-  async function stop() {
+  /**
+   * 优雅关闭（F3）：
+   *   1. 停止收新连接（server.close），等在途请求自然跑完 —— 流式 LLM 响应不该被拦腰掐断；
+   *   2. 最多等 GRACEFUL_SHUTDOWN_MS（5s，远小于 docker stop 的 10s 宽限期），
+   *      超时才 closeAllConnections() 强制收尾。
+   * 历史 bug：第一步就 closeAllConnections()，docker stop 的宽限期形同虚设。
+   */
+  async function stop({ graceMs = GRACEFUL_SHUTDOWN_MS } = {}) {
     poller.stop();
     if (recheckTimer) clearInterval(recheckTimer);
     store.saveState();
+    const closed = new Promise((r) => server.close(() => r()));
+    const allClosed = new Promise((r) => server.once('close', () => r()));
+    await Promise.race([allClosed, new Promise((r) => setTimeout(r, graceMs).unref?.())]);
     try { server.closeAllConnections?.(); } catch { /* 忽略 */ }
-    await new Promise((r) => server.close(r));
+    await Promise.race([closed, new Promise((r) => setTimeout(r, 1000))]);
   }
 
   return {
     server, config, log, accounts, localKeys, store, scheduler, stats, refreshAll, statusView, stop, proxy,
     events, note, reloadNow, syncPool, handleAdmin, handleAuth, sessions, loginLimiter, currentUser,
-    poller, touchActivity,
+    poller, touchActivity, runPausedRecheck,
     sessionTokenOf,
     get users() { return users; }, get testHistory() { return testHistory; }, usersView, isSetupRequired,
   };
 }
 
-/** 预读请求体头部若干字节，并把已读片段原样返回（后续转发时先写出去）。 */
-function peekBody(req, limit) {
+/**
+ * 预读请求体头部若干字节，并把已读片段原样返回（后续转发时先写出去）。
+ *
+ * F11：这里只为「取 session id」而 peek，绝不能等整个 body 收完才转发 ——
+ * 历史实现读满 64KB 或等 body 结束才 resolve，慢速/大 body 客户端下上游连接与
+ * 首字节被推迟到 body 发完之后（实测 800ms 一片时上游到 t≈2.4s 才收到数据）。
+ *
+ * 现在的结束条件（满足其一即放行）：
+ *   1. 已读片段里找到 session id（最常见：JSON 头里就有 conversation_id）
+ *   2. 读满 limit（8KB，够放 session id，也不至于驻留太多内存）
+ *   3. body 结束
+ *   4. 收到首块后 idleMs 内没有新的 session id 线索（兜底，不无限等）
+ * 放行时总是先 pause()，由 pipingBody 接手并 resume()，保证不丢字节。
+ */
+function peekBody(req, limit, { idleMs = BODY_PEEK_IDLE_MS, match = null } = {}) {
   return new Promise((resolve) => {
     const chunks = [];
     let size = 0;
     let done = false;
+    let idleTimer = null;
+    const cleanup = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = null;
+    };
     const finish = (ended) => {
       if (done) return;
       done = true;
+      cleanup();
+      req.pause();
       resolve({ chunks, ended });
+    };
+    const armIdle = () => {
+      if (idleTimer || done) return;
+      idleTimer = setTimeout(() => finish(false), idleMs);
+      idleTimer.unref?.();
     };
     const onData = (chunk) => {
       // 整块收下（不做 subarray 截断），保证 peek 出去的字节能被原样重放给上游。
       // 代价是最多多读一个 chunk，超出 limit 的部分无关紧要。
       chunks.push(chunk);
       size += chunk.length;
-      if (size >= limit) {
-        req.pause();
-        return finish(false);
-      }
+      if (match && match(chunks)) return finish(false);
+      if (size >= limit) return finish(false);
       if (req.readableEnded) return finish(true);
+      armIdle();
     };
     req.on('data', onData);
     req.once('end', () => finish(true));

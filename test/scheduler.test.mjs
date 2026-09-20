@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createScheduler, isQuotaError, remainingRatio, ratioWindow } from '../src/scheduler.mjs';
+import { createLoginLimiter } from '../src/auth.mjs';
 import { normalizeAccounts } from '../src/store.mjs';
 
 function makeAccounts(list) {
@@ -256,4 +257,118 @@ test('暂停没有 resetAt 时默认 now + 5 小时', () => {
   const now = Date.now();
   s.recordQuota(accounts[0], quotaWith({ used: 100, cap: 100 }));
   assert.equal(s.pauseForQuota(accounts[0], now), now + 5 * 3600 * 1000);
+});
+
+// ── F4：429 普通限流 ≠ 额度耗尽（线上账号被莫名停用 5 小时的根因）──────
+test('F4：isQuotaError 只在明确额度语义时成立，普通限流一律不算', () => {
+  // 额度语义 → 算
+  assert.equal(isQuotaError(402, ''), true);
+  assert.equal(isQuotaError(429, '{"error":{"message":"quota exceeded","type":"quota_exceeded"}}'), true);
+  assert.equal(isQuotaError(429, '{"error":{"message":"You have exhausted your weekly limit"}}'), true);
+  assert.equal(isQuotaError(429, '{"error":{"message":"windowLimits exceeded"}}'), true);
+  assert.equal(isQuotaError(429, '{"error":{"message":"monthly quota reached"}}'), true);
+  assert.equal(isQuotaError(429, '{"error":{"message":"insufficient credits"}}'), true);
+
+  // 普通限流 → 不算（历史 bug：这些全被当成额度耗尽，账号被停 5 小时）
+  assert.equal(isQuotaError(429, '{"error":{"message":"Rate limit exceeded, retry later","type":"rate_limit"}}'), false,
+    '「Rate limit exceeded」是普通限流，绝不能被判成额度耗尽');
+  assert.equal(isQuotaError(429, '{"error":{"message":"too many requests"}}'), false);
+  assert.equal(isQuotaError(429, '{"error":{"type":"rate_limit"}}'), false,
+    '只有 type 字段名含 limit 时也不算额度耗尽');
+  assert.equal(isQuotaError(429, '{"error":{"message":"request limit exceeded, slow down"}}'), false);
+  assert.equal(isQuotaError(429, ''), false);
+  assert.equal(isQuotaError(429, '{"error":{"message":"Concurrency limit reached"}}'), false);
+  assert.equal(isQuotaError(500, 'quota'), false);
+});
+
+test('F4：普通限流只做短冷却，绝不产生 5 小时暂停；额度耗尽才暂停', () => {
+  const accounts = makeAccounts([
+    { name: 'A', key: 'user_rl_a_aaaaaaaa' },
+    { name: 'B', key: 'user_rl_b_bbbbbbbb' },
+  ]);
+  const s = createScheduler({ accounts, state: makeState() });
+  const now = Date.now();
+
+  // 普通限流：冷却 60s，且**不得**写 pausedUntil
+  const until = s.markRateLimited(accounts[0], now);
+  assert.equal(until, now + 60_000, '普通限流只冷却 60 秒');
+  const rt = s.runtime(accounts[0]);
+  assert.equal(rt.pausedUntil, null, '普通限流绝不能写 pausedUntil（那就是 5 小时停用）');
+  assert.equal(s.isAvailable(accounts[0], now), false, '冷却期内不可调度');
+  assert.equal(s.isAvailable(accounts[0], until + 1), true, '60 秒后立刻恢复可调度');
+
+  // 冷却期内会被跳过 → 换到另一个账号
+  assert.equal(s.select({ now }).account.name, 'B');
+  // 冷却结束后又能被选中（额度更好）
+  s.recordQuota(accounts[0], quotaWith({ used: 1, cap: 100 }));
+  s.recordQuota(accounts[1], quotaWith({ used: 90, cap: 100 }));
+  assert.equal(s.select({ now: until + 1 }).account.name, 'A');
+
+  // 对照：额度耗尽才允许 5 小时停用
+  const paused = s.pauseForQuota(accounts[1], now);
+  assert.equal(paused, now + 5 * 3600 * 1000);
+  assert.equal(s.runtime(accounts[1]).pausedUntil, paused);
+});
+
+test('F4：额度快照成功后清掉限流冷却（不必干等 60 秒）', () => {
+  const accounts = makeAccounts([{ name: 'A', key: 'user_rl_clear_xxxx' }]);
+  const s = createScheduler({ accounts, state: makeState() });
+  const now = Date.now();
+  s.markRateLimited(accounts[0], now);
+  assert.equal(s.isAvailable(accounts[0], now), false);
+  s.recordQuota(accounts[0], quotaWith({ used: 1, cap: 100 }));
+  assert.equal(s.runtime(accounts[0]).rateLimitedUntil, null);
+  assert.equal(s.isAvailable(accounts[0], now), true);
+});
+
+// ── F7：sessionAffinity 命中要刷新 TTL，淘汰必须是 LRU ───────────────
+test('F7：连续命中的会话在 30 分钟后仍保持粘性（TTL 从最后一次命中起算）', () => {
+  const accounts = makeAccounts([
+    { name: 'A', key: 'user_lru_a_aaaaaaaa' },
+    { name: 'B', key: 'user_lru_b_bbbbbbbb' },
+  ]);
+  const ttl = 1800_000;
+  const s = createScheduler({ accounts, state: makeState(), ttlMs: ttl });
+  for (const a of accounts) s.recordQuota(a, quotaWith({ used: 10, cap: 100 }));
+
+  s.setAffinity('sess', accounts[0].keyId, 0);
+  // 每 400ms 命中一次，持续到 4000ms（远超 TTL=1800）
+  for (let t = 400; t <= 4000; t += 400) {
+    assert.equal(s.getAffinity('sess', t), accounts[0].keyId, `t=${t} 仍应命中（持续活跃不掉粘性）`);
+  }
+  // 真正闲置超过 TTL 才过期
+  assert.equal(s.getAffinity('sess', 4000 + ttl + 1), null);
+});
+
+test('F7：上限淘汰按 LRU —— 刚被命中的最热条目必须留下', () => {
+  const accounts = makeAccounts([
+    { name: 'A', key: 'user_lru2_a_aaaaaaa' },
+    { name: 'B', key: 'user_lru2_b_bbbbbbb' },
+  ]);
+  const s = createScheduler({ accounts, state: makeState(), ttlMs: 1_000_000, maxAffinity: 3 });
+  const k = accounts[0].keyId;
+  s.setAffinity('s1', k, 0);
+  s.setAffinity('s2', k, 0);
+  s.setAffinity('s3', k, 0);
+  // 命中 s1 → 它变成最热（移到末尾），此时插入 s4 应淘汰 s2
+  assert.equal(s.getAffinity('s1', 1), k);
+  s.setAffinity('s4', k, 1);
+  assert.equal(s.affinitySize(), 3);
+  assert.equal(s.getAffinity('s1', 2), k, '刚被命中的 s1 绝不能被淘汰');
+  assert.equal(s.getAffinity('s4', 2), k);
+  assert.equal(s.getAffinity('s2', 2), null, '最冷的 s2 才是该被淘汰的那个');
+});
+
+// ── F17：限速表内存清理 ─────────────────────────────────────────────
+test('F17：限速表给 locked 项也做清理，且硬上限兜底', () => {
+  let t = 1_000_000;
+  const lim = createLoginLimiter({ maxFails: 1, lockMs: 1000, now: () => t, maxEntries: 50 });
+  for (let i = 0; i < 600; i++) lim.fail(`10.0.0.${i}`, `user-${i}`);
+  // 硬上限兜底：绝不无界增长
+  assert.ok(lim.size().users <= 50, `users 表必须受硬上限约束，实际 ${lim.size().users}`);
+  assert.ok(lim.size().sources <= 50, `sources 表必须受硬上限约束，实际 ${lim.size().sources}`);
+  // 时间推进后 locked 项也要被清掉（历史 bug：prune 跳过 locked 项 → 全表留存）
+  t += 10 * 60 * 1000;
+  lim.fail('fresh-source', 'fresh-user');
+  assert.ok(lim.size().users <= 50, '过期（含 locked）条目必须被清理');
 });

@@ -12,4 +12,9 @@ DOCKER.md
 .env
 accounts.json
 keys.json
+users.json
+session-secret
+revoked.json
+config/
 config.local.json
+docker-compose*.yml

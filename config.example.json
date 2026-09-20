@@ -13,5 +13,6 @@
   "publicDashboard": true,
   "logLevel": "info",
   "logFile": "",
-  "maxBodyBytes": 20971520
+  "maxBodyBytes": 8388608,
+  "maxInflight": 8
 }

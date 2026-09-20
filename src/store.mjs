@@ -15,8 +15,21 @@ const CREDENTIAL_DIR = 'config';
 // data/ 不可写（只读挂载 / SELinux / 宿主权限不对）时降级：打一条 warn 后转纯内存，不刷屏、不阻塞。
 let persistenceDisabled = false;
 
+/** 打开目录并 fsync（Linux 上 rename 的持久性依赖父目录 fsync）。失败不致命。 */
+function fsyncDir(dir) {
+  let fd = -1;
+  try {
+    fd = fs.openSync(dir, 'r');
+    fs.fsyncSync(fd);
+  } catch { /* 某些文件系统/平台不支持目录 fsync，忽略 */ } finally {
+    if (fd >= 0) { try { fs.closeSync(fd); } catch { /* 忽略 */ } }
+  }
+}
+
 /**
- * 原子写：临时文件 + rename。
+ * 原子写：临时文件 + fsync + rename + fsync 目录。
+ * 全程 fsync 是必须的：ext4 默认延迟分配，掉电时只 rename 不 fsync 会留下 0 字节文件
+ * （历史上正是这种文件让 loadState 抛错、网关 crash-loop）。
  * mode > 0 视为凭据文件：写前 chmod 临时文件、rename 后再 chmod 目标文件，
  * 且失败直接抛错（不静默降级），由调用方转成明确的 HTTP 错误。
  */
@@ -25,9 +38,17 @@ function atomicWrite(file, data, { log = null, mode = 0 } = {}) {
   const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
   try {
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(tmp, data, 'utf8');
+    let fd = -1;
+    try {
+      fd = fs.openSync(tmp, 'w', mode || 0o600);
+      fs.writeFileSync(fd, data, 'utf8');
+      fs.fsyncSync(fd);   // 先把数据落到盘，再 rename
+    } finally {
+      if (fd >= 0) fs.closeSync(fd);
+    }
     if (mode) fs.chmodSync(tmp, mode);
     fs.renameSync(tmp, file);
+    fsyncDir(dir);
     // 显式再 chmod 一次：不同文件系统/实现可能把权限冲成 644。
     if (mode) fs.chmodSync(file, mode);
   } catch (e) {
@@ -47,6 +68,36 @@ function readJSON(file, fallback = null) {
   } catch (e) {
     throw new Error(`${path.basename(file)} 解析失败: ${e.message}`);
   }
+}
+
+/**
+ * 读「可丢弃」的缓存文件（state.json）：损坏 / 不存在 → 返回 fallback 且不抛错。
+ * state.json 只是额度快照与统计缓存，丢一行都必须能照常启动。
+ */
+function readJSONSafe(file, fallback = null) {
+  try {
+    if (!fs.existsSync(file)) return { value: fallback, corrupt: false };
+    const text = fs.readFileSync(file, 'utf8');
+    return { value: JSON.parse(text), corrupt: false };
+  } catch {
+    return { value: fallback, corrupt: true };
+  }
+}
+
+/** 清理崩溃残留的 `<file>.tmp-<pid>-<ts>` 临时文件（同目录、同前缀）。 */
+function cleanupStaleTmp(dir, baseName) {
+  let names;
+  try { names = fs.readdirSync(dir); } catch { return []; }
+  const removed = [];
+  const prefix = `${baseName}.tmp-`;
+  for (const name of names) {
+    if (!name.startsWith(prefix)) continue;
+    try {
+      fs.rmSync(path.join(dir, name), { force: true });
+      removed.push(name);
+    } catch { /* 忽略：删不掉不影响启动 */ }
+  }
+  return removed;
 }
 
 function isDir(p) {
@@ -169,6 +220,8 @@ export function createStore({ rootDir = process.cwd(), env = process.env, log = 
   }
 
   const state = { accounts: {}, stats: { total: 0, errors: 0, totalTokens: 0, byAccount: {} } };
+  // loadState 里是否已经落过盘（损坏重建 / 残留清理）—— 供测试断言用，不进任何响应体
+  let persistAfterLoad = false;
 
   function loadAccounts() {
     if (env.CC_ACCOUNTS) {
@@ -235,9 +288,13 @@ export function createStore({ rootDir = process.cwd(), env = process.env, log = 
     return { accounts: loadAccounts(), keys: loadKeys() };
   }
 
-  // 运行期状态：账号 keyId → { concurrency, pausedUntil, lastQuota, lastError, lastErrorAt }
+  // 运行期状态：账号 keyId → { concurrency, pausedUntil, lastQuota, lastError, lastErrorAt, rateLimitedUntil }
   function blankRuntime() {
-    return { concurrency: 0, pausedUntil: null, lastQuota: null, lastError: null, lastErrorAt: null };
+    return {
+      concurrency: 0, pausedUntil: null, lastQuota: null, lastError: null, lastErrorAt: null,
+      // 普通限流的短冷却（F4）。旧 state.json 没有这个字段 → undefined，按「未限流」处理。
+      rateLimitedUntil: null,
+    };
   }
 
   /**
@@ -261,6 +318,8 @@ export function createStore({ rootDir = process.cwd(), env = process.env, log = 
       state.stats.total = Math.max(0, (state.stats.total ?? 0) - (s.requests ?? 0));
       state.stats.errors = Math.max(0, (state.stats.errors ?? 0) - (s.errors ?? 0));
       state.stats.totalTokens = Math.max(0, (state.stats.totalTokens ?? 0) - (s.tokens ?? 0));
+      // 中止计数（F10）同样要扣掉，否则删账号后 byAccount 之和与全局 aborted 对不上
+      state.stats.aborted = Math.max(0, (state.stats.aborted ?? 0) - (s.aborted ?? 0));
       delete byAccount[id];
       removed.stats.push(id);
     }
@@ -272,7 +331,18 @@ export function createStore({ rootDir = process.cwd(), env = process.env, log = 
    * @param {Array<{keyId: string}>|null} accounts 当前账号池（可选）
    */
   function loadState(accounts = null) {
-    const raw = readJSON(stateFile, null);
+    const dataDir = path.dirname(stateFile);
+    // 崩溃残留的临时文件（atomicWrite 只在 catch 里删）在启动时顺手清掉，避免 data/ 越积越多。
+    const staleTmp = cleanupStaleTmp(dataDir, path.basename(stateFile));
+    if (staleTmp.length > 0) log?.warn?.(`清理了 ${staleTmp.length} 个残留的临时状态文件（${staleTmp.join(', ')}）`);
+    const { value: raw, corrupt } = readJSONSafe(stateFile, null);
+    // 缓存损坏（0 字节 / 截断 / 垃圾字节）绝不能阻塞启动：丢弃 + warn + 立刻写回默认值。
+    if (corrupt) {
+      log?.warn?.(`state.json 已损坏（${path.basename(stateFile)}），已丢弃并重建为默认值，不影响启动`);
+      try { saveState(); } catch { /* 落盘失败也不能阻塞启动 */ }
+      persistAfterLoad = true;
+      return state;
+    }
     if (raw && typeof raw === 'object') {
       if (raw.accounts && typeof raw.accounts === 'object') {
         for (const [id, rt] of Object.entries(raw.accounts)) state.accounts[id] = { ...blankRuntime(), ...rt, concurrency: 0 };
@@ -286,6 +356,7 @@ export function createStore({ rootDir = process.cwd(), env = process.env, log = 
       if (removed.accounts.length > 0 || removed.stats.length > 0) {
         log?.info?.(`清理已删除账号的残留状态: ${[...new Set([...removed.accounts, ...removed.stats])].join(', ')}`);
         saveState();
+        persistAfterLoad = true;
       }
     }
     return state;
@@ -310,6 +381,8 @@ export function createStore({ rootDir = process.cwd(), env = process.env, log = 
     stateFile,
     state,
     writable,
+    /** 上次 loadState 是否已把状态写回磁盘（损坏重建 / 清理残留）。 */
+    get persistedAfterLoad() { return persistAfterLoad; },
     reload,
     saveAccounts,
     saveKeys,

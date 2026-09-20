@@ -12,6 +12,18 @@ services:
     # 刻意不映射宿主端口：core 只允许网关容器访问
     mem_limit: 512m
     restart: unless-stopped
+    # F24：vendor 的 Dockerfile 没有 USER，这里不改 vendor，改在编排层收紧权限。
+    # 与 gateway 一致用 node 镜像自带的 uid/gid 1000。
+    user: "1000:1000"
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    # F25：日志轮转，避免 json-file 无上限把宿主磁盘写满
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3050/health"]
       interval: 30s
@@ -42,6 +54,16 @@ services:
       - cc-manage-data:/app/data                       # 命名卷，避免宿主目录权限坑
     mem_limit: 256m
     restart: unless-stopped
+    # F24：同样收紧权限（镜像本身已经是 USER node）
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    # F25：日志轮转
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3051/health"]
       interval: 30s

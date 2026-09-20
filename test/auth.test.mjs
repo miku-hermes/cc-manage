@@ -581,12 +581,29 @@ test('管理员管理：新增 / 改密码 / 删除，且不能删掉最后一�
   });
   assert.equal(login.status, 200);
 
-  // 改密码后旧密码失效
-  const patched = await request(`${ctx.baseUrl}/api/admin/users/ops`, {
+  // 改**他人**密码必须由当前管理员重新输入自己的口令（F21）
+  const noConfirm = await request(`${ctx.baseUrl}/api/admin/users/ops`, {
     method: 'PATCH', headers: { 'content-type': 'application/json', cookie },
     body: JSON.stringify({ password: 'brand-new-password' }),
   });
-  assert.equal(patched.status, 200);
+  assert.equal(noConfirm.status, 403, '不提当前管理员口令就改他人密码必须 403');
+  assert.equal((await request(`${ctx.baseUrl}/api/auth/login`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username: 'ops', password: 'brand-new-password' }),
+  })).status, 401, '被拒的改密绝不能生效');
+
+  const wrongConfirm = await request(`${ctx.baseUrl}/api/admin/users/ops`, {
+    method: 'PATCH', headers: { 'content-type': 'application/json', cookie },
+    body: JSON.stringify({ password: 'brand-new-password', currentPassword: 'not-my-password' }),
+  });
+  assert.equal(wrongConfirm.status, 403, '口令不对同样 403');
+
+  // 改密码后旧密码失效
+  const patched = await request(`${ctx.baseUrl}/api/admin/users/ops`, {
+    method: 'PATCH', headers: { 'content-type': 'application/json', cookie },
+    body: JSON.stringify({ password: 'brand-new-password', currentPassword: USER.pass }),
+  });
+  assert.equal(patched.status, 200, patched.body);
   assert.equal((await request(`${ctx.baseUrl}/api/auth/login`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ username: 'ops', password: 'ops-password-123' }),
