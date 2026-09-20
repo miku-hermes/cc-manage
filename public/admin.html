@@ -420,10 +420,38 @@
   @media (max-width: 820px) {
     :root { --gutter: 16px; --card-pad: 16px; }
     .header { padding: 12px var(--gutter); }
-    .tools { width: 100%; }
-    .who { flex: 1 1 100%; }
-    th, td { padding: 0 12px; }
-    td.actions .btn { margin-left: 4px; }
+    .tools { width: 100%; row-gap: 8px; }
+    /* 「已登录 admin / 退出登录」：允许用户名省略，避免整块掉到第三行 */
+    .who { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* 触控目标：手机断点下按钮统一抬到 34px */
+    .panel-tools .btn { height: 34px; }
+
+    /* ── 表格转卡片：不再横向滚动，「操作」列按钮直接可见可点 ──
+       表头隐藏，每个 <tr> 变一张卡，<td> 用 data-label 在内容上方显示列名。 */
+    .table-wrap { padding: 12px var(--card-pad) 2px; }
+    thead { display: none; }
+    table, tbody, tr, td { display: block; width: 100%; }
+    tr {
+      min-width: 0; padding: 12px 14px; margin-bottom: 10px;
+      border: 1px solid var(--border); border-radius: var(--radius-sm);
+      background: var(--surface-1);
+    }
+    tbody tr:hover td { background: transparent; }
+    td { border: 0; height: auto; padding: 0; overflow-wrap: anywhere; }
+    td::before {
+      content: attr(data-label); display: block; margin-bottom: 2px;
+      font-size: var(--fs-xs); color: var(--text-secondary);
+    }
+    td.empty::before { display: none; }
+    td + td { margin-top: 10px; }
+    /* 操作列：按钮左对齐横排、可换行，不用列名标签 */
+    td.actions {
+      display: flex; flex-wrap: wrap; gap: 6px;
+      margin-top: 12px; white-space: normal; text-align: left;
+    }
+    td.actions::before { display: none; }
+    td.actions .btn { height: 34px; margin-left: 0; }
+    .cell-quota { min-width: 0; }     /* 关键：解除 220px 最小宽度 */
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -879,11 +907,11 @@ function renderAccounts() {
         + ' · ' + esc(timeText(test.at)) + '</div>'
       : '';
     return '<tr>'
-      + '<td><div class="cell-name">' + esc(a.name) + '</div>' + testNote + '</td>'
-      + '<td class="mono cell-sub">' + id + '<br>' + esc(a.keyPrefix) + '…</td>'
-      + '<td class="cell-quota">' + quota + '</td>'
-      + '<td>' + statusTag(a) + '</td>'
-      + '<td class="actions">'
+      + '<td data-label="备注名"><div class="cell-name">' + esc(a.name) + '</div>' + testNote + '</td>'
+      + '<td data-label="keyId / keyPrefix" class="mono cell-sub">' + id + '<br>' + esc(a.keyPrefix) + '…</td>'
+      + '<td data-label="额度" class="cell-quota">' + quota + '</td>'
+      + '<td data-label="状态">' + statusTag(a) + '</td>'
+      + '<td data-label="操作" class="actions">'
       + '<button class="btn" type="button" data-act="test" data-id="' + id + '">测试连通性</button>'
       + '<button class="btn" type="button" data-act="toggle" data-id="' + id + '">' + (a.enabled ? '停用' : '启用') + '</button>'
       + '<button class="btn" type="button" data-act="rename" data-id="' + id + '">改备注</button>'
@@ -904,11 +932,11 @@ function renderKeys() {
   $('keys').innerHTML = list.map((k) => {
     const id = esc(k.keyId);
     return '<tr>'
-      + '<td><div class="cell-name">' + esc(k.name) + '</div></td>'
-      + '<td class="mono cell-sub">' + id + '</td>'
-      + '<td class="mono cell-sub">' + esc(k.keyPrefix) + '…</td>'
-      + '<td class="cell-sub">' + esc(k.createdAt ? timeText(k.createdAt) : '—') + '</td>'
-      + '<td class="actions"><button class="btn danger" type="button" data-act="delkey" data-id="' + id + '">删除</button></td>'
+      + '<td data-label="名称"><div class="cell-name">' + esc(k.name) + '</div></td>'
+      + '<td data-label="keyId" class="mono cell-sub">' + id + '</td>'
+      + '<td data-label="keyPrefix" class="mono cell-sub">' + esc(k.keyPrefix) + '…</td>'
+      + '<td data-label="创建时间" class="cell-sub">' + esc(k.createdAt ? timeText(k.createdAt) : '—') + '</td>'
+      + '<td data-label="操作" class="actions"><button class="btn danger" type="button" data-act="delkey" data-id="' + id + '">删除</button></td>'
       + '</tr>';
   }).join('');
   applyWritable(state.writable, state.readonlyReason);
@@ -925,9 +953,9 @@ function renderUsers() {
     const name = esc(u.username);
     const isSelf = state.auth && state.auth.user && state.auth.user.username === u.username;
     return '<tr>'
-      + '<td><div class="cell-name">' + name + (isSelf ? ' <span class="tag info">当前登录</span>' : '') + '</div></td>'
-      + '<td class="cell-sub">' + esc(u.createdAt ? timeText(u.createdAt) : '—') + '</td>'
-      + '<td class="actions">'
+      + '<td data-label="用户名"><div class="cell-name">' + name + (isSelf ? ' <span class="tag info">当前登录</span>' : '') + '</div></td>'
+      + '<td data-label="创建时间" class="cell-sub">' + esc(u.createdAt ? timeText(u.createdAt) : '—') + '</td>'
+      + '<td data-label="操作" class="actions">'
       + '<button class="btn" type="button" data-act="pass" data-name="' + name + '">改密码</button>'
       + (list.length > 1
         ? '<button class="btn danger" type="button" data-act="deluser" data-name="' + name + '">删除</button>'
