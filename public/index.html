@@ -288,6 +288,9 @@
     display: flex; gap: 12px; flex-wrap: wrap;
   }
   .hero-meta span { overflow-wrap: anywhere; }
+  /* 空的 span 不占位，否则 flex 的 gap 会多出一段空白 */
+  .hero-meta span:empty { display: none; }
+  .hero-cadence { color: var(--text-tertiary); }
   .hero-aside {
     display: flex; flex-direction: column; align-items: flex-end; gap: 4px; text-align: right;
     min-width: 0;
@@ -493,7 +496,7 @@
         <span class="bal-label">剩余额度（USD）</span>
       </div>
       <p class="hero-sub">网关运行中 <span id="health" class="pill">加载中…</span></p>
-      <p class="hero-meta"><span id="upstream"></span><span id="updated"></span></p>
+      <p class="hero-meta"><span id="upstream"></span><span id="updated"></span><span id="cadence" class="hero-cadence"></span></p>
     </div>
     <div class="hero-aside">
       <div class="hero-clock">
@@ -570,6 +573,33 @@ function relText(ts, at = Date.now()) {
   if (hour < 24) return hour + ' 小时前';
   return Math.floor(hour / 24) + ' 天前';
 }
+/** 把毫秒写成「1 分钟」这种话。 */
+function fmtEvery(ms) {
+  const s = Math.round(Number(ms) / 1000);
+  if (!Number.isFinite(s) || s <= 0) return '';
+  if (s < 60) return s + ' 秒';
+  const m = s / 60;
+  if (m < 60) return (Number.isInteger(m) ? m : m.toFixed(1)) + ' 分钟';
+  const h = m / 60;
+  return (Number.isInteger(h) ? h : h.toFixed(1)) + ' 小时';
+}
+
+/**
+ * 额度刷新频率文案。由后端 /api/status 的 quotaPoll 驱动，不在页面里写死 ——
+ * 有请求时用活跃间隔（更快），闲着时用空闲间隔。
+ */
+function cadenceText(p) {
+  const idle = Number(p && p.idleIntervalMs);
+  const active = Number(p && p.activeIntervalMs);
+  const idleTxt = idle > 0 ? fmtEvery(idle) : '';
+  const activeTxt = active > 0 ? fmtEvery(active) : '';
+  if (!idleTxt && !activeTxt) return '';
+  if (activeTxt && idleTxt && activeTxt !== idleTxt) {
+    return '额度自动刷新：有请求时每 ' + activeTxt + '、空闲时每 ' + idleTxt;
+  }
+  return '额度自动刷新：每 ' + (activeTxt || idleTxt);
+}
+
 /** 该账号额度快照的展示文案 + 是否过旧（> 2 倍空闲间隔）。 */
 function freshness(ts) {
   const t = Number(ts);
@@ -698,6 +728,7 @@ function render(d) {
   $('health').textContent = '可用 ' + num(s.available) + ' / ' + num(s.accounts) + ' · 在途 ' + num(s.concurrency);
   $('health').className = 'pill ' + (Number(s.available) > 0 ? 'ok' : 'bad');
   $('updated').textContent = '更新于 ' + timeText(d.now);
+  $('cadence').textContent = cadenceText(d.quotaPoll);
   $('upstream').textContent = '内核 ' + String(d.upstreamProxyUrl ?? '') + (d.allowPassthrough ? ' · 已开启直连透传' : '');
   $('tokens').textContent = num(st.totalTokens);
 
@@ -741,6 +772,7 @@ function showPrivate() {
   $('tokens').textContent = '0';
   $('upstream').textContent = '';
   $('updated').textContent = '';
+  $('cadence').textContent = '';
   clearKpis();
   $('cards').innerHTML = '<div class="card empty">当前实例已开启隐私模式（<span class="mono">PUBLIC_DASHBOARD=0</span>）：'
     + '请先<a href="/admin">登录后台</a>再查看面板数据。</div>';

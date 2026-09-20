@@ -886,3 +886,33 @@ test('users.json 损坏时必须 fail-closed，不得重开初始化接口', asy
   });
   assert.notEqual(atk.status, 201, '匿名者不得通过 setup 接管管理员');
 });
+
+// ── 前台必须把「额度多久刷一次」写出来，且文案跟随后端配置 ──────────
+// 用户要求：刷新频率要显示在页面上。频率必须由 /api/status 的 quotaPoll 驱动，
+// 不能在页面里写死 —— 否则改了后端间隔页面就说谎。
+test('前台显示额度刷新频率，且文案由后端 quotaPoll 决定（不写死）', async (t) => {
+  // 用一组「一眼能认出」的间隔，验证页面真的照它渲染
+  const ctx = await startTestGateway({
+    config: { quotaPollIntervalMs: 900000, quotaActivePollIntervalMs: 45000, quotaActiveWindowMs: 300000 },
+  });
+  t.after(() => ctx.close());
+
+  const html = (await request(`${ctx.baseUrl}/`)).body;
+  assert.match(html, /id="cadence"/, '前台必须有刷新频率的容器');
+
+  const d = JSON.parse((await request(`${ctx.baseUrl}/api/status`)).body);
+  assert.equal(d.quotaPoll.idleIntervalMs, 900000);
+  assert.equal(d.quotaPoll.activeIntervalMs, 45000);
+
+  // 页面脚本里必须从 quotaPoll 取，而不是写死数字
+  assert.match(html, /cadenceText\(d\.quotaPoll\)/, '频率文案必须取自后端 quotaPoll');
+  assert.match(html, /function cadenceText/, '必须有 cadenceText 实现');
+  assert.match(html, /function fmtEvery/, '必须有毫秒→人话的格式化函数');
+
+  // 换一组间隔，后端下发的值必须跟着变（证明不是硬编码）
+  const ctx2 = await startTestGateway({ config: { quotaPollIntervalMs: 120000, quotaActivePollIntervalMs: 30000 } });
+  t.after(() => ctx2.close());
+  const d2 = JSON.parse((await request(`${ctx2.baseUrl}/api/status`)).body);
+  assert.equal(d2.quotaPoll.idleIntervalMs, 120000, '间隔换了，下发值也要换');
+  assert.equal(d2.quotaPoll.activeIntervalMs, 30000);
+});
