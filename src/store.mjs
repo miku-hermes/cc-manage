@@ -1,5 +1,5 @@
 // 持久化：账号池(accounts.json) / 本地 key(keys.json) / 运行期状态(data/state.json)
-// 一切写入走「临时文件 + rename」原子写。
+// 凭据优先走 config/ 目录挂载（可写，原子写 + chmod 0640），并保留旧单文件只读回落。
 import fs from 'node:fs';
 import path from 'node:path';
 import { keyIdOf, keyPrefixOf, maskSecret } from './log.mjs';
@@ -7,18 +7,32 @@ import { keyIdOf, keyPrefixOf, maskSecret } from './log.mjs';
 const LOCAL_KEY_PREFIX = 'sk-cg-';
 // CC 上游 key 的固定前缀，用字面量拼接，避免在源码/镜像里出现完整形态的密钥样例串。
 const CC_KEY_PREFIX = ['user', '_'].join('');
+// 凭据文件权限：宿主侧要求 1000:1000 / 640（容器里是 uid 1000，宿主目录已 chown 1000:1000）。
+const CREDENTIAL_MODE = 0o640;
+// 凭据目录挂载点（相对 rootDir）
+const CREDENTIAL_DIR = 'config';
 
 // data/ 不可写（只读挂载 / SELinux / 宿主权限不对）时降级：打一条 warn 后转纯内存，不刷屏、不阻塞。
 let persistenceDisabled = false;
 
-function atomicWrite(file, data, log) {
+/**
+ * 原子写：临时文件 + rename。
+ * mode > 0 视为凭据文件：写前 chmod 临时文件、rename 后再 chmod 目标文件，
+ * 且失败直接抛错（不静默降级），由调用方转成明确的 HTTP 错误。
+ */
+function atomicWrite(file, data, { log = null, mode = 0 } = {}) {
   const dir = path.dirname(file);
+  const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
   try {
     fs.mkdirSync(dir, { recursive: true });
-    const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
     fs.writeFileSync(tmp, data, 'utf8');
+    if (mode) fs.chmodSync(tmp, mode);
     fs.renameSync(tmp, file);
+    // 显式再 chmod 一次：不同文件系统/实现可能把权限冲成 644。
+    if (mode) fs.chmodSync(file, mode);
   } catch (e) {
+    try { fs.rmSync(tmp, { force: true }); } catch { /* 忽略 */ }
+    if (mode) throw new Error(`${path.basename(file)} 写入失败: ${e.message}`);
     if (!persistenceDisabled) {
       persistenceDisabled = true;
       log?.warn?.(`运行期状态无法持久化（${path.basename(file)} 写入失败：${e.message}），已降级为纯内存模式继续运行`);
@@ -33,6 +47,29 @@ function readJSON(file, fallback = null) {
   } catch (e) {
     throw new Error(`${path.basename(file)} 解析失败: ${e.message}`);
   }
+}
+
+function isDir(p) {
+  try { return fs.statSync(p).isDirectory(); } catch { return false; }
+}
+
+function canWriteDir(dir) {
+  try { fs.accessSync(dir, fs.constants.W_OK | fs.constants.X_OK); return true; } catch { return false; }
+}
+
+/**
+ * 凭据文件路径优先级：
+ *   config/<name> 存在 → 用它（可写）
+ *   ./<name> 存在      → 旧的单文件方式（只读回落）
+ *   都不存在           → 有 config/ 目录就往里写，否则维持旧路径
+ */
+function resolveCredentialPath(rootDir, name) {
+  const configDir = path.join(rootDir, CREDENTIAL_DIR);
+  const configPath = path.join(configDir, name);
+  if (fs.existsSync(configPath)) return configPath;
+  const legacyPath = path.join(rootDir, name);
+  if (fs.existsSync(legacyPath)) return legacyPath;
+  return isDir(configDir) ? configPath : legacyPath;
 }
 
 /** 校验并规范化账号数组。key 必须以 CC 上游前缀开头。 */
@@ -71,15 +108,37 @@ export function normalizeKeys(list) {
     }
     if (seen.has(key)) throw new Error(`本地 key 重复: ${maskSecret(key)}`);
     seen.add(key);
-    out.push({ name: String(item.name ?? '').trim() || `客户端-${out.length + 1}`, key, keyId: keyIdOf(key), keyPrefix: keyPrefixOf(key) });
+    out.push({
+      name: String(item.name ?? '').trim() || `客户端-${out.length + 1}`,
+      key,
+      keyId: keyIdOf(key),
+      keyPrefix: keyPrefixOf(key),
+      createdAt: Number.isFinite(item.createdAt) ? item.createdAt : null,
+    });
   }
   return out;
 }
 
 export function createStore({ rootDir = process.cwd(), env = process.env, log = null } = {}) {
-  const accountsFile = path.join(rootDir, 'accounts.json');
-  const keysFile = path.join(rootDir, 'keys.json');
+  const configDir = path.join(rootDir, CREDENTIAL_DIR);
   const stateFile = path.join(rootDir, 'data', 'state.json');
+
+  /** 每次调用重新解析，保证迁移/重建 config/ 后无需重启即可生效。 */
+  function currentPaths() {
+    return {
+      accountsFile: resolveCredentialPath(rootDir, 'accounts.json'),
+      keysFile: resolveCredentialPath(rootDir, 'keys.json'),
+    };
+  }
+
+  /**
+   * 当前是否可写：凭据目录 config/ 必须存在且可写。
+   * 旧的单文件挂载（只读）恒为 false → 所有写接口 403。
+   */
+  function writable() {
+    if (env.CC_ACCOUNTS) return false;   // 账号池来自环境变量，落盘不会生效
+    return isDir(configDir) && canWriteDir(configDir);
+  }
 
   const state = { accounts: {}, stats: { total: 0, errors: 0, totalTokens: 0, byAccount: {} } };
 
@@ -94,13 +153,37 @@ export function createStore({ rootDir = process.cwd(), env = process.env, log = 
       const list = Array.isArray(parsed) ? parsed : parsed?.accounts;
       return normalizeAccounts(list ?? []);
     }
-    const raw = readJSON(accountsFile, { accounts: [] });
+    const raw = readJSON(currentPaths().accountsFile, { accounts: [] });
     return normalizeAccounts(raw?.accounts ?? raw ?? []);
   }
 
   function loadKeys() {
-    const raw = readJSON(keysFile, { keys: [] });
+    const raw = readJSON(currentPaths().keysFile, { keys: [] });
     return normalizeKeys(raw?.keys ?? raw ?? []);
+  }
+
+  /** 凭据落盘：只写规范字段（派生出来的 keyId / keyPrefix 不入盘）。 */
+  function saveAccounts(list) {
+    const normalized = normalizeAccounts(list);
+    const payload = { accounts: normalized.map((a) => ({ name: a.name, key: a.key, enabled: a.enabled })) };
+    atomicWrite(currentPaths().accountsFile, `${JSON.stringify(payload, null, 2)}\n`, { log, mode: CREDENTIAL_MODE });
+    return normalized;
+  }
+
+  function saveKeys(list) {
+    const normalized = normalizeKeys(list);
+    const payload = {
+      keys: normalized.map((k) => (k.createdAt === null
+        ? { name: k.name, key: k.key }
+        : { name: k.name, key: k.key, createdAt: k.createdAt })),
+    };
+    atomicWrite(currentPaths().keysFile, `${JSON.stringify(payload, null, 2)}\n`, { log, mode: CREDENTIAL_MODE });
+    return normalized;
+  }
+
+  /** 重新读盘（后台改完后热生效用）。返回规范化后的账号池与本地 key。 */
+  function reload() {
+    return { accounts: loadAccounts(), keys: loadKeys() };
   }
 
   // 运行期状态：账号 keyId → { concurrency, pausedUntil, lastQuota, lastError, lastErrorAt }
@@ -165,15 +248,20 @@ export function createStore({ rootDir = process.cwd(), env = process.env, log = 
     for (const [id, rt] of Object.entries(state.accounts)) {
       accounts[id] = { ...rt, concurrency: 0 };
     }
-    atomicWrite(stateFile, JSON.stringify({ accounts, stats: state.stats }, null, 2), log);
+    atomicWrite(stateFile, JSON.stringify({ accounts, stats: state.stats }, null, 2), { log });
   }
 
   return {
     rootDir,
-    accountsFile,
-    keysFile,
+    configDir,
+    get accountsFile() { return currentPaths().accountsFile; },
+    get keysFile() { return currentPaths().keysFile; },
     stateFile,
     state,
+    writable,
+    reload,
+    saveAccounts,
+    saveKeys,
     loadAccounts,
     loadKeys,
     loadState,
@@ -186,4 +274,4 @@ export function createStore({ rootDir = process.cwd(), env = process.env, log = 
   };
 }
 
-export { LOCAL_KEY_PREFIX, CC_KEY_PREFIX };
+export { LOCAL_KEY_PREFIX, CC_KEY_PREFIX, CREDENTIAL_MODE, CREDENTIAL_DIR };

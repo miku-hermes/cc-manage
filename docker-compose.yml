@@ -36,8 +36,7 @@ services:
       LOG_LEVEL: "${LOG_LEVEL:-info}"
       NODE_OPTIONS: "--max-old-space-size=192"
     volumes:
-      - ./accounts.json:/app/accounts.json:ro          # 只读挂载，密钥不进镜像
-      - ./keys.json:/app/keys.json:ro
+      - ./config:/app/config                           # 凭据目录（可写）：后台可增删账号/客户端 key
       - cc-manage-data:/app/data                       # 命名卷，避免宿主目录权限坑
     mem_limit: 256m
     restart: unless-stopped
