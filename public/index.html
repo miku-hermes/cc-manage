@@ -699,6 +699,8 @@ function statusText(a) {
   if (a.authInvalid) return { t: '鉴权失效', dot: 'invalid' };
   if (!a.enabled) return { t: '已停用', dot: 'paused' };
   if (a.paused) return { t: '暂停中', dot: 'paused' };
+  if (a.creditsExhausted) return { t: '余额不足', dot: 'invalid' };
+  if (a.authInvalid) return { t: '鉴权失效', dot: 'invalid' };
   if (!a.available) return { t: '不可调度', dot: 'invalid' };
   return { t: '可用', dot: '' };
 }
@@ -727,6 +729,8 @@ function card(a) {
   tags.push(schedulable ? '<span class="tag ok">可调度</span>' : '<span class="tag bad">不可用</span>');
   if (a.paused) tags.push('<span class="tag warn">暂停至 ' + esc(timeText(a.pausedUntil)) + '</span>');
   if (a.authInvalid) tags.push('<span class="tag bad">鉴权失效</span>');
+  // 余额不足和「额度打满」不一样：5h 窗口等了会自己回来，钱不会 —— 说清楚要充值
+  if (a.creditsExhausted) tags.push('<span class="tag bad">余额不足 · 需充值</span>');
   tags.push('<span class="tag info">在途 ' + esc(num(a.concurrency)) + '</span>');
   if (q && q.plan) tags.push('<span class="tag">套餐 ' + esc(q.plan.planId ?? '-') + '</span>');
 

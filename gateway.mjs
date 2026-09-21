@@ -497,6 +497,9 @@ export async function startGateway(overrides = {}) {
       pausedUntil: rt.pausedUntil,
       paused: !!(rt.pausedUntil && rt.pausedUntil > Date.now()),
       authInvalid: !!rt.authInvalid,
+      // 上游明确说余额不足：面板要能和「暂停到 X」区分开（充值或周期刷新才恢复）
+      creditsExhausted: !!rt.creditsExhausted,
+      creditsExhaustedAt: rt.creditsExhausted?.at ?? null,
       lastError: rt.lastError ? redact(rt.lastError, secrets) : null,
       lastErrorAt: rt.lastErrorAt,
       lastQuota: q
@@ -649,6 +652,8 @@ export async function startGateway(overrides = {}) {
       available: scheduler.isAvailable(a),
       paused: !!(rt.pausedUntil && rt.pausedUntil > Date.now()),
       authInvalid: !!rt.authInvalid,
+      creditsExhausted: !!rt.creditsExhausted,
+      creditsExhaustedAt: rt.creditsExhausted?.at ?? null,
     };
   }
 
@@ -867,6 +872,11 @@ export async function startGateway(overrides = {}) {
       const next = credentialAccounts().map((a) => (a.key === target.key ? { ...a, name, enabled } : a));
       store.saveAccounts(next);
       reloadNow();
+      // 手动启用 = 运维明确要求再用它：清掉「余额不足」标记，否则用户会困惑
+      // 「我明明启用了，怎么还是不可用」。真没钱的话下一个请求会再标一次（无害）。
+      if (body.enabled === true) {
+        scheduler.clearCreditsExhausted(accounts.find((a) => a.keyId === id) ?? target);
+      }
       const changed = [body.name !== undefined ? `名称→「${name}」` : null, body.enabled !== undefined ? `状态→${enabled ? '启用' : '停用'}` : null].filter(Boolean);
       note('info', `修改账号 keyId=${id}：${changed.join('、')}（${actorOf(req)}）`);
       return sendJSON(res, 200, { ok: true, account: pubAccount(accounts.find((a) => a.keyId === id)) });

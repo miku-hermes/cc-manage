@@ -1018,3 +1018,104 @@ test('重置时间文案：未来 / 空闲 / 已过期 / 没有数据，四种�
   assert.equal(page.resetText(null), '');
   assert.equal(page.resetText({ resetAt: 'not-a-date' }), '');
 });
+
+// ── 回归：账号「余额不足」不得让客户端吃 400 ──────────────────────────
+// 实测线上：主号（月 99%、余额 $0.098）对任何推理请求回 HTTP 400
+// "You have insufficient credits"。网关原来把 400 当普通 4xx 原样透传，且账号
+// 仍被标「可用」——用户看到的就是「这个号莫名其妙不能用，面板却写着可用」。
+// 正确行为：标记该账号退出调度 + 未写出字节时换号重试。
+test('余额不足的账号：换号重试给客户端正常响应，且它自己退出调度', async (t) => {
+  const ctx = await startTestGateway({
+    plans: { user_test_alpha: { creditsExhausted: true } },   // 账号A 穷了
+  });
+  t.after(() => ctx.close());
+
+  const res = await request(`${ctx.baseUrl}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${ctx.localKey}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ model: 'mock-model', stream: false, messages: [{ role: 'user', content: 'hi' }] }),
+  });
+  assert.equal(res.status, 200, `应换号重试成 200，实际 ${res.status}: ${res.body.slice(0, 200)}`);
+
+  // 真的换号了：两次 /v1 请求，第二次用的是账号B 的 key
+  const v1 = ctx.upstream.seen.filter((s) => s.url.startsWith('/v1/'));
+  assert.equal(v1.length, 2, `应发出 2 次上游请求（先撞穷号再换），实际 ${v1.length}`);
+  assert.match(v1[0].headers.authorization, /user_test_alpha$/, '第一次应打穷号');
+  assert.match(v1[1].headers.authorization, /user_test_beta$/, '第二次应换健康号');
+  assert.ok(!res.body.includes('insufficient credits'), '客户端不该看到上游的余额不足报错');
+
+  // 面板视角：穷号要显示不可用 + 原因，且不是「暂停到 X」
+  const d = JSON.parse((await request(`${ctx.baseUrl}/api/status`)).body);
+  const alpha = d.accounts.find((a) => a.name === '账号A');
+  const beta = d.accounts.find((a) => a.name === '账号B');
+  assert.equal(alpha.creditsExhausted, true, '穷号要带 creditsExhausted 标记');
+  assert.equal(alpha.available, false, '穷号必须不可调度');
+  assert.match(alpha.lastError, /余额不足/, `面板要给出原因，实际: ${alpha.lastError}`);
+  assert.equal(alpha.paused, false, '余额不足不是 5h 暂停，不能显示「暂停至 X」');
+  assert.equal(beta.available, true, '健康号不受影响');
+  assert.equal(beta.creditsExhausted, false);
+
+  // 穷号不再被选中：再发一次，只打健康号
+  ctx.upstream.seen.length = 0;
+  const res2 = await request(`${ctx.baseUrl}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${ctx.localKey}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ model: 'mock-model', stream: false, messages: [{ role: 'user', content: 'hi' }] }),
+  });
+  assert.equal(res2.status, 200);
+  const v1b = ctx.upstream.seen.filter((s) => s.url.startsWith('/v1/'));
+  assert.equal(v1b.length, 1, '被标记后应直接命中健康号，不再撞穷号');
+  assert.match(v1b[0].headers.authorization, /user_test_beta$/);
+});
+
+test('全部账号都余额不足：如实把上游错误回给客户端，不伪装成功', async (t) => {
+  const ctx = await startTestGateway({
+    plans: {
+      user_test_alpha: { creditsExhausted: true },
+      user_test_beta: { creditsExhausted: true },
+    },
+  });
+  t.after(() => ctx.close());
+
+  const res = await request(`${ctx.baseUrl}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${ctx.localKey}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ model: 'mock-model', stream: false, messages: [{ role: 'user', content: 'hi' }] }),
+  });
+  // 第一次 400 → 标记 A 并重试 → B 也 400 → attempt 用尽，如实回传
+  assert.ok(res.status >= 400, `都穷时应回错误，实际 ${res.status}`);
+  assert.match(res.body, /insufficient credits|no_available_account|No available account/i,
+    `错误要说明原因，实际: ${res.body.slice(0, 200)}`);
+
+  const d = JSON.parse((await request(`${ctx.baseUrl}/api/status`)).body);
+  assert.ok(d.accounts.every((a) => a.creditsExhausted === true), '两个号都该被标记');
+  assert.equal(d.summary.available, 0, '/health 与面板口径应显示可用 0');
+});
+
+test('面板：余额不足的账号必须渲染成「余额不足 · 需充值」，不能显示「可调度」', async (t) => {
+  const ctx = await startTestGateway();
+  t.after(() => ctx.close());
+  const html = (await request(`${ctx.baseUrl}/`)).body;
+  const shim = createDomShim({ html, fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({}) }) });
+  const page = await runInlineScript(html, shim);
+  assert.equal(typeof page.card, 'function', '页面里应能取到 card()');
+
+  const quota = (remaining) => ({ ok: true, displayName: 'x', plan: null, remaining, credits: {},
+    fiveHour: { used: 0, cap: 3, percent: 0, usedRatio: 0, resetAt: 0 }, weekly: null, monthly: null,
+    usage: {}, percent: { fiveHour: 0, weekly: null, monthly: null }, fetchedAt: Date.now() });
+
+  const broke = page.card({ name: '穷号', keyId: 'aaaaaaaa', enabled: true, available: false,
+    creditsExhausted: true, creditsExhaustedAt: Date.now(), concurrency: 0, paused: false,
+    pausedUntil: null, authInvalid: false, lastError: '余额不足（上游：insufficient credits）',
+    lastQuota: quota(0.098) });
+  assert.match(broke, /余额不足 · 需充值/, '穷号要有明确的充值提示');
+  assert.match(broke, />余额不足</, '状态词要写原因，不能笼统写「不可调度」');
+  assert.doesNotMatch(broke, /可调度/, '绝不能再显示「可调度」');
+  assert.doesNotMatch(broke, /暂停至/, '余额不足不是 5h 暂停，不该出现「暂停至 X」');
+
+  const healthy = page.card({ name: '健康', keyId: 'bbbbbbbb', enabled: true, available: true,
+    creditsExhausted: false, creditsExhaustedAt: null, concurrency: 0, paused: false,
+    pausedUntil: null, authInvalid: false, lastError: null, lastQuota: quota(9.9) });
+  assert.match(healthy, /可调度/);
+  assert.doesNotMatch(healthy, /余额不足/, '健康账号不该被误标');
+});

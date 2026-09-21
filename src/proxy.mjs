@@ -3,7 +3,7 @@ import http from 'node:http';
 import https from 'node:https';
 import { URL } from 'node:url';
 import { redact } from './log.mjs';
-import { isQuotaError } from './scheduler.mjs';
+import { isQuotaError, isCreditsExhausted } from './scheduler.mjs';
 
 // 只把这些下游请求头转给上游；authorization / x-api-key 一律替换，绝不透传
 const PASSTHROUGH_HEADERS = ['content-type', 'accept', 'x-session-id'];
@@ -450,7 +450,21 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
           clientGone.signal.removeEventListener('abort', abortEarly);
           const buf = await readBody(upstreamRes);
           const text = buf.toString('utf8');
-          if (isQuotaError(status, text)) {
+          if (isCreditsExhausted(status, text)) {
+            // 余额不足是账号级状态（与 5h 窗口无关，钱不会自己回来）：
+            // ① 标记后该账号立刻退出调度，面板显示「余额不足」而不是「可用」；
+            // ② 未写出任何字节时换号重试 —— 否则轮到这种号就白给客户端一个 400。
+            // 实测：主号 HTTP 400 insufficient credits，网关原来把它当普通 4xx 透传。
+            scheduler.markCreditsExhausted(current);
+            log?.warn?.(`账号「${current.name}」余额不足，已停止调度（充值或周期刷新后自动恢复）`);
+            if (attempt === 0 && !res.headersSent && !current.__passthrough) {
+              release();
+              bodyState?.stop?.();
+              if (hasBody && !bodyState?.complete) await drainRemaining(req, bodyState, maxBodyBytes).catch(() => {});
+              attempt++;
+              continue;
+            }
+          } else if (isQuotaError(status, text)) {
             // 只有明确额度语义（quota / windowLimits / 周期额度）才暂停到 5h resetAt
             const until = scheduler.pauseForQuota(current);
             log?.warn?.(`账号「${current.name}」额度耗尽，暂停到 ${new Date(until).toISOString()}`);

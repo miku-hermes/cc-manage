@@ -65,6 +65,27 @@ export function isQuotaError(status, bodyText = '') {
   return QUOTA_HINT_RE.test(String(bodyText));
 }
 
+/**
+ * 上游报「余额不足」的判别。实测真实措辞（HTTP **400**，不是 402）：
+ * `{"error":{"message":"You have insufficient credits to make this request.
+ *   Please purchase more credits to continue using the service.","code":"BAD_REQUEST"}}`
+ *
+ * 为什么必须单独判：这是**账号级**状态 —— 和 5 小时窗口无关，暂停到 resetAt
+ * 毫无用处（钱不会自己回来），只有充值或周期刷新才可能恢复。
+ * 历史 bug：isQuotaError 只认 402 和 429+关键词，400 的余额不足被当成普通
+ * 4xx，账号继续被标「可用」并参与调度，每次轮到它就给客户端一个 400 ——
+ * 用户看到的现象是「某个号莫名其妙不能用」，面板上却写着「可用」。
+ *
+ * 只认余额语义的关键词，不认 rate limit：`insufficient credits` /
+ * `not enough credits` / `insufficient_balance` / 「余额不足」。
+ */
+const CREDITS_HINT_RE = /insufficient[\s_-]*credits?|not enough credits?|insufficient[\s_-]*(?:balance|funds)|credit balance|余额不足/i;
+
+export function isCreditsExhausted(status, bodyText = '') {
+  if (!(status >= 400 && status < 500)) return false;
+  return CREDITS_HINT_RE.test(String(bodyText));
+}
+
 export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffinity = 2000, log } = {}) {
   // 运行期状态：state.accounts[keyId]
   const runtime = (account) => {
@@ -73,6 +94,8 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
         concurrency: 0, pausedUntil: null, lastQuota: null, lastError: null, lastErrorAt: null,
         // 普通限流（429 但非额度耗尽）的短冷却，绝不变成 5 小时停用
         rateLimitedUntil: null,
+        // 上游明确说「余额不足」：账号级状态，{ at, remaining }
+        creditsExhausted: null,
       };
     }
     return state.accounts[account.keyId];
@@ -138,6 +161,7 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
     if (rt.pausedUntil && rt.pausedUntil > now) return false;
     if (rt.rateLimitedUntil && rt.rateLimitedUntil > now) return false;
     if (rt.authInvalid) return false;
+    if (rt.creditsExhausted) return false;
     const q = rt.lastQuota;
     // 任一窗口打满即不可用：只看 5h 会让「周额度已打满」的账号被继续调度
     for (const w of quotaWindows(q)) {
@@ -199,6 +223,21 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
       rt.lastErrorAt = null;
       rt.authInvalid = false;
       rt.rateLimitedUntil = null;
+      // 余额不足的自动解除：只看「剩余额度**变多**了」= 充值到账或周期刷新。
+      // 不能只看 remaining > 0 —— 实测主号 remaining=$0.098 仍然付不起最小请求，
+      // 那样会立刻解除标记再撞一次 400。额度只降不升就说明还没充值，继续停用。
+      const flag = rt.creditsExhausted;
+      if (flag) {
+        const now = Number(snapshot.remaining);
+        const before = flag.remaining;
+        const recovered = before === null || before === undefined
+          ? Number.isFinite(now) && now > 0        // 之前没数据可对比：只能看有没有余额
+          : Number.isFinite(now) && now > Number(before);
+        if (recovered) {
+          rt.creditsExhausted = null;
+          log?.info?.(`账号「${account.name}」余额已到账（剩余 ${now}），恢复调度`);
+        }
+      }
     } else if (snapshot) {
       rt.authInvalid = !!snapshot.authInvalid;
       rt.lastError = snapshot.error ?? '额度查询失败';
@@ -223,6 +262,30 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
     rt.authInvalid = true;
     if (message !== null) recordError(account, message, now);
     return rt.authInvalid;
+  }
+
+  /**
+   * 上游明确「余额不足」：标记账号级停用（不写 pausedUntil）。
+   * 记下当时的 remaining 作为对比基线，充值后 recordQuota 会自动解除。
+   */
+  function markCreditsExhausted(account, message = '余额不足（上游：insufficient credits）', now = Date.now()) {
+    const rt = runtime(account);
+    rt.creditsExhausted = { at: now, remaining: rt.lastQuota?.remaining ?? null };
+    recordError(account, message, now);
+    return rt.creditsExhausted;
+  }
+
+  /** 手动/外部解除余额不足标记（运维干预用）。 */
+  function clearCreditsExhausted(account) {
+    const rt = runtime(account);
+    const had = rt.creditsExhausted;
+    rt.creditsExhausted = null;
+    return had;
+  }
+
+  /** 面板用：{ at, remaining } 或 null。 */
+  function creditsExhaustedState(account) {
+    return runtime(account).creditsExhausted ?? null;
   }
 
   /** 额度耗尽 → 暂停到 5h resetAt（无则 now+5h）。 */
@@ -289,6 +352,9 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
     recordQuota,
     markRateLimited,
     markAuthInvalid,
+    markCreditsExhausted,
+    clearCreditsExhausted,
+    creditsExhaustedState,
     pauseForQuota,
     availableCount,
     activeCount,

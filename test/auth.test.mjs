@@ -636,3 +636,36 @@ test('后台登录后 /admin 仍返回同一页（登录态靠 cookie，页面�
   assert.doesNotMatch(page.body, /sessionStorage/, '后台不再把凭证放进 sessionStorage');
   assert.doesNotMatch(page.body, /localStorage\.setItem\('cc-manage-key/, '后台不再存 sk-cg- key');
 });
+
+// ── 回归：手动重新启用账号要清掉「余额不足」标记 ─────────────────────
+// 用户视角：「我明明点了启用，面板还写着不可用」= 看不懂。运维动作优先于自动标记；
+// 若账号真的还没钱，下一个请求会立刻再标回来（自愈，不会造成误用）。
+test('后台：余额不足的账号停用再启用后，标记被清除、重新可调度', async (t) => {
+  const { ctx, cookie } = await setupGateway({ plans: { user_test_alpha: { creditsExhausted: true } } });
+  t.after(() => ctx.close());
+
+  // 先让账号A 真撞一次上游的余额不足（网关自己发现的路径，不是直接塞状态）
+  const hit = await request(`${ctx.baseUrl}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${ctx.localKey}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ model: 'mock-model', stream: false, messages: [{ role: 'user', content: 'hi' }] }),
+  });
+  assert.equal(hit.status, 200, '应换号重试成功');
+
+  const list = JSON.parse((await request(`${ctx.baseUrl}/api/admin/accounts`, { headers: { cookie } })).body);
+  const alpha = list.accounts.find((a) => a.name === '账号A');
+  assert.equal(alpha.creditsExhausted, true, '撞过之后后台应看到余额不足标记');
+  assert.equal(alpha.available, false);
+
+  const patchOne = (body) => request(`${ctx.baseUrl}/api/admin/accounts/${alpha.keyId}`, {
+    method: 'PATCH', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify(body),
+  });
+  assert.equal((await patchOne({ enabled: false })).status, 200, '先停用');
+  const re = await patchOne({ enabled: true });
+  assert.equal(re.status, 200, '再启用');
+
+  const after = JSON.parse((await request(`${ctx.baseUrl}/api/admin/accounts`, { headers: { cookie } })).body)
+    .accounts.find((a) => a.keyId === alpha.keyId);
+  assert.equal(after.creditsExhausted, false, '手动启用后标记必须清除（运维意图优先）');
+  assert.equal(after.available, true, '清除后应恢复可调度');
+});

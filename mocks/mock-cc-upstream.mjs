@@ -148,6 +148,19 @@ export async function startMockUpstream(opts = {}) {
       // ── 转发接口 ─────────────────────────────────────────
       if (req.url.startsWith('/v1/')) {
         behavior.bodyBytesSeen.push(received);
+        // 按账号模拟「余额不足」：真实上游是 HTTP 400 + 这段措辞（不是 402、不是 429）
+        const v1Auth = req.headers.authorization ?? '';
+        const v1Key = v1Auth.startsWith('Bearer ') ? v1Auth.slice(7) : (req.headers['x-api-key'] ?? '');
+        const v1Plan = v1Key ? plans.get(v1Key) : null;
+        if (v1Plan?.creditsExhausted) {
+          return sendJSON(res, 400, {
+            error: {
+              message: 'You have insufficient credits to make this request. Please purchase more credits to continue using the service.',
+              type: 'invalid_request_error',
+              code: 'BAD_REQUEST',
+            },
+          });
+        }
         if (behavior.authErrorStatus) {
           return sendJSON(res, behavior.authErrorStatus, { error: { message: 'invalid api key', type: 'authentication_error' } });
         }

@@ -1,7 +1,7 @@
 // §8-2 调度：打分 / 粘性 / 冷却 / 自动暂停恢复
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createScheduler, isQuotaError, remainingRatio, ratioWindow } from '../src/scheduler.mjs';
+import { createScheduler, isQuotaError, isCreditsExhausted, remainingRatio, ratioWindow } from '../src/scheduler.mjs';
 import { createLoginLimiter } from '../src/auth.mjs';
 import { normalizeAccounts } from '../src/store.mjs';
 
@@ -371,4 +371,52 @@ test('F17：限速表给 locked 项也做清理，且硬上限兜底', () => {
   t += 10 * 60 * 1000;
   lim.fail('fresh-source', 'fresh-user');
   assert.ok(lim.size().users <= 50, '过期（含 locked）条目必须被清理');
+});
+
+// ── 回归：「余额不足」必须被识别成账号级状态 ──────────────────────────
+// 实测真实上游措辞：HTTP **400**（不是 402/429）+
+// "You have insufficient credits to make this request. Please purchase more credits…"
+// 历史 bug：isQuotaError 只认 402 与 429+额度关键词 → 余额不足被当普通 4xx 透传，
+// 账号继续显示「可用」并参与调度，轮到它就白给客户端一个 400。
+test('isCreditsExhausted：认 400 余额不足，不认限流/普通 400', () => {
+  const real = '{"error":{"message":"You have insufficient credits to make this request. Please purchase more credits to continue using the service.","type":"invalid_request_error","code":"BAD_REQUEST"}}';
+  assert.equal(isCreditsExhausted(400, real), true, '真实上游措辞必须被识别');
+  assert.equal(isCreditsExhausted(402, 'insufficient credits'), true);
+  assert.equal(isCreditsExhausted(403, 'Insufficient balance'), true);
+  assert.equal(isCreditsExhausted(400, '{"error":{"message":"余额不足"}}'), true);
+
+  // 不能误伤：普通 400 / 限流 / 额度窗口 / 5xx
+  assert.equal(isCreditsExhausted(400, '{"error":{"message":"invalid request"}}'), false);
+  assert.equal(isCreditsExhausted(429, '{"error":{"message":"Rate limit exceeded, retry later"}}'), false);
+  assert.equal(isCreditsExhausted(402, 'quota exceeded'), false, '额度耗尽走 isQuotaError，不是余额不足');
+  assert.equal(isCreditsExhausted(500, 'insufficient credits'), false, '5xx 不算（那是上游故障）');
+  assert.equal(isCreditsExhausted(200, 'insufficient credits'), false);
+});
+
+test('余额不足的账号不可被选中；额度变多（充值）后自动恢复', () => {
+  const accounts = makeAccounts([
+    { name: '穷号', key: 'user_broke_aaaaaaaaa' },
+    { name: '健康号', key: 'user_healthy_bbbbbb' },
+  ]);
+  const s = createScheduler({ accounts, state: makeState() });
+  // 穷号：剩余 $0.098，5h 空着（这正是线上主号的样子）
+  s.recordQuota(accounts[0], { ...quotaWith({ used: 0, cap: 3 }), remaining: 0.098 });
+  s.recordQuota(accounts[1], { ...quotaWith({ used: 0, cap: 3 }), remaining: 9.9 });
+  assert.equal(s.isAvailable(accounts[0]), true, '标之前它是「可用」的（历史 bug 的位置）');
+
+  s.markCreditsExhausted(accounts[0]);
+  assert.equal(s.isAvailable(accounts[0]), false, '余额不足必须立刻退出调度');
+  assert.equal(s.select().account.name, '健康号', '不能选中余额不足的账号');
+  assert.match(s.runtime(accounts[0]).lastError, /余额不足/, '面板要能看到原因');
+  assert.equal(s.runtime(accounts[0]).pausedUntil, null, '不得写成 5h 暂停（钱不会自己回来）');
+  assert.deepEqual(s.creditsExhaustedState(accounts[0]).remaining, 0.098, '要记下基线用于判断充值');
+
+  // 额度只降不升（只是又花了点钱）→ 不许解除
+  s.recordQuota(accounts[0], { ...quotaWith({ used: 0, cap: 3 }), remaining: 0.05 });
+  assert.equal(s.isAvailable(accounts[0]), false, 'remaining 变小说明没充值，仍应停用');
+
+  // 充值到账 → 自动解除
+  s.recordQuota(accounts[0], { ...quotaWith({ used: 0, cap: 3 }), remaining: 20 });
+  assert.equal(s.creditsExhaustedState(accounts[0]), null, '充值后标记应清除');
+  assert.equal(s.isAvailable(accounts[0]), true, '充值后重新可用');
 });
