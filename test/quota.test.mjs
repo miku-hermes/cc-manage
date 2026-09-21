@@ -73,6 +73,39 @@ test('正确解析 whoami / 余额 / 5h 与周百分比', async () => {
   assert.match(usageCall.search, /orgId=org-42/);
 });
 
+test('官方窗口超限标记：exceeded（逐窗口布尔）+ exceeded（顶层窗口名）如实解析', async () => {
+  // 线上原样：副号 weekly 6.003/6 → 顶层 exceeded="weekly"、weekly.exceeded=true；
+  // 主号什么都正常时顶层是 null。这是上游的**权威**判据，比我们反推更可信。
+  const ff = fakeFetch({
+    ...HAPPY,
+    '/alpha/billing/credits': {
+      credits: { monthlyCredits: 4, purchasedCredits: 0, freeCredits: 0, belowThreshold: false, creditThreshold: 0 },
+      windowLimits: {
+        limited: true, exceeded: 'weekly',
+        fiveHour: { used: 0, cap: 3, resetAt: 0, exceeded: false },
+        weekly: { used: 6.0031816596, cap: 6, resetAt: 1700000000000, exceeded: true },
+      },
+    },
+  });
+  const snap = await fetchQuota('user_exceeded_xxxxx', { fetchImpl: ff });
+  assert.equal(snap.exceededWindow, 'weekly', '顶层 exceeded 是窗口名');
+  assert.equal(snap.weekly.exceeded, true);
+  assert.equal(snap.fiveHour.exceeded, false);
+  assert.equal(snap.weekly.resetAt, 1700000000, '毫秒 resetAt 仍要归一到秒');
+
+  // 上游没有窗口超限时：exceededWindow 必须是 null，不能把 null 当成某个窗口名
+  const ff2 = fakeFetch({
+    ...HAPPY,
+    '/alpha/billing/credits': {
+      credits: { monthlyCredits: 9, purchasedCredits: 0, freeCredits: 0 },
+      windowLimits: { limited: true, exceeded: null, fiveHour: { used: 0, cap: 3 }, weekly: { used: 1, cap: 6 } },
+    },
+  });
+  const snap2 = await fetchQuota('user_ok_yyyyyyyyy', { fetchImpl: ff2 });
+  assert.equal(snap2.exceededWindow, null);
+  assert.equal(snap2.weekly.exceeded, false, '缺字段时按未超限处理');
+});
+
 test('官方低余额字段：belowThreshold / creditThreshold 如实解析（社区实现用它判「能不能用」）', async () => {
   // 形状来自线上真实报文：credits:{belowThreshold, creditThreshold, monthlyCredits, ...}
   // codex-router（3.8k★）直接拿 belowThreshold 当可用性判据：

@@ -54,6 +54,9 @@ export function parseWindow(w) {
     percent: ratio === null ? null : Math.max(0, Math.min(100, ratio * 100)),
     usedRatio: ratio === null ? null : ratio,
     resetAt: normalizeResetAt(w.resetAt),
+    // 上游自带的「这个窗口超了」标记 —— 比我们自己用 used>=cap 反推更权威
+    // （实测副号 weekly used=6.003>cap=6 时上游给 exceeded=true）。
+    exceeded: w.exceeded === true,
   };
 }
 
@@ -77,6 +80,11 @@ export function parseSnapshot({ whoami, credits, subscriptions, usage }) {
 
   const fiveHour = parseWindow(credits?.windowLimits?.fiveHour);
   const weekly = parseWindow(credits?.windowLimits?.weekly);
+  // 顶层的 exceeded 是**窗口名**（实测副号 = "weekly"），null 表示上游没有窗口超限。
+  // 注意：它不覆盖「钱不够」——主号余额 $0.098 时这里仍是 null。
+  const exceededWindow = typeof credits?.windowLimits?.exceeded === 'string' && credits.windowLimits.exceeded
+    ? credits.windowLimits.exceeded
+    : null;
 
   const sub = subscriptions?.data ?? null;
   const totalCost = num(usage?.totalCost, 0);
@@ -101,6 +109,7 @@ export function parseSnapshot({ whoami, credits, subscriptions, usage }) {
     remaining,
     fiveHour,
     weekly,
+    exceededWindow,
     monthly,
     plan: sub ? { planId: sub.planId ?? null, status: sub.status ?? null } : null,
     periodStart: sub?.currentPeriodStart ?? null,

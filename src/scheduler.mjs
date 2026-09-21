@@ -163,8 +163,11 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
     if (rt.authInvalid) return false;
     if (rt.creditsExhausted) return false;
     const q = rt.lastQuota;
-    // 任一窗口打满即不可用：只看 5h 会让「周额度已打满」的账号被继续调度
+    // 任一窗口超限即不可用：只看 5h 会让「周额度已打满」的账号被继续调度。
+    // 两个条件都要：上游的 exceeded 是权威标记（实测副号 weekly = true），
+    // used>=cap 是它的兜底（老数据/上游漏标时不至于放行）。
     for (const w of quotaWindows(q)) {
+      if (w.exceeded === true) return false;
       if (w.cap > 0 && w.used >= w.cap) return false;
     }
     return true;
@@ -236,6 +239,12 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
         if (recovered) {
           rt.creditsExhausted = null;
           log?.info?.(`账号「${account.name}」余额已到账（剩余 ${now}），恢复调度`);
+        } else {
+          // 仍被标记：把原因和**原始**时间还原（不是现在 —— 面板要显示的是
+          // 「什么时候发现它没钱的」，不是「上次刷新时刻」）。
+          // 老版本的持久化标记没有 message 字段，用兜底文案，别让面板说不出话。
+          rt.lastError = flag.message || '余额不足（需充值或等周期刷新）';
+          rt.lastErrorAt = flag.at ?? null;
         }
       }
     } else if (snapshot) {
@@ -270,7 +279,9 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
    */
   function markCreditsExhausted(account, message = '余额不足（上游：insufficient credits）', now = Date.now()) {
     const rt = runtime(account);
-    rt.creditsExhausted = { at: now, remaining: rt.lastQuota?.remaining ?? null };
+    // 原因存进标记里：运行时状态会持久化到 state.json，重启后 recordQuota 会把
+    // lastError 清掉，若不还原，面板就会只剩「余额不足」而说不出为什么。
+    rt.creditsExhausted = { at: now, remaining: rt.lastQuota?.remaining ?? null, message: String(message).slice(0, 300) };
     recordError(account, message, now);
     return rt.creditsExhausted;
   }

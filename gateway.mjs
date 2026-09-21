@@ -555,6 +555,7 @@ export async function startGateway(overrides = {}) {
             credits: q.credits,
             fiveHour: q.fiveHour,
             weekly: q.weekly,
+            exceededWindow: q.exceededWindow ?? null,
             monthly: q.monthly,
             usage: q.usage,
             percent: { fiveHour: pct(q.fiveHour), weekly: pct(q.weekly), monthly: pct(q.monthly) },

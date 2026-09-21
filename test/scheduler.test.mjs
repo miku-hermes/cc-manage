@@ -197,6 +197,32 @@ test('全部不可用时返回 null 且带原因', () => {
   assert.equal(r.reason, 'no_available_account');
 });
 
+test('上游自带的 exceeded 标记：即使 used < cap 也必须判为不可用（权威标记优先）', () => {
+  // 实测：副号 weekly used=6.003/cap=6 → 上游 windowLimits.exceeded="weekly"、
+  // weekly.exceeded=true。这里覆盖「used 看着没满、但上游说超了」的情形 ——
+  // 只信自己算的 used>=cap 会漏判（上游可能按别的口径判定超限）。
+  const accounts = makeAccounts([{ name: '被点名', key: 'user_exceeded_aaaaaa' }]);
+  const s = createScheduler({ accounts, state: makeState() });
+  s.recordQuota(accounts[0], {
+    ok: true,
+    fiveHour: { used: 0, cap: 3, percent: 0, usedRatio: 0, resetAt: 0, exceeded: false },
+    weekly: { used: 5.5, cap: 6, percent: 91.7, usedRatio: 0.917, resetAt: null, exceeded: true },
+    exceededWindow: 'weekly',
+  });
+  assert.equal(s.isAvailable(accounts[0]), false, '上游点名超了就必须停用（不能只看 used>=cap）');
+  assert.equal(s.select().account, null);
+
+  // 反向：used 打满但上游没给 exceeded（老数据）→ 仍然要判不可用（兜底不能丢）
+  const accounts2 = makeAccounts([{ name: '兜底', key: 'user_exceeded_bbbbbb' }]);
+  const s2 = createScheduler({ accounts: accounts2, state: makeState() });
+  s2.recordQuota(accounts2[0], {
+    ok: true,
+    fiveHour: { used: 0, cap: 3, percent: 0, usedRatio: 0, resetAt: 0 },
+    weekly: { used: 6, cap: 6, percent: 100, usedRatio: 1, resetAt: null },
+  });
+  assert.equal(s2.isAvailable(accounts2[0]), false, 'used>=cap 的兜底必须保留');
+});
+
 test('isQuotaError / remainingRatio / pauseForQuota 行为', () => {
   assert.equal(isQuotaError(402, ''), true);
   assert.equal(isQuotaError(429, '{"error":{"message":"quota exceeded"}}'), true);
@@ -404,7 +430,8 @@ test('余额不足的账号不可被选中；额度变多（充值）后自动�
   s.recordQuota(accounts[1], { ...quotaWith({ used: 0, cap: 3 }), remaining: 9.9 });
   assert.equal(s.isAvailable(accounts[0]), true, '标之前它是「可用」的（历史 bug 的位置）');
 
-  s.markCreditsExhausted(accounts[0]);
+  const flagAt = Date.now();
+  s.markCreditsExhausted(accounts[0], '余额不足（上游：insufficient credits）', flagAt);  // 时间固定，便于断言
   assert.equal(s.isAvailable(accounts[0]), false, '余额不足必须立刻退出调度');
   assert.equal(s.select().account.name, '健康号', '不能选中余额不足的账号');
   assert.match(s.runtime(accounts[0]).lastError, /余额不足/, '面板要能看到原因');
@@ -414,6 +441,19 @@ test('余额不足的账号不可被选中；额度变多（充值）后自动�
   // 额度只降不升（只是又花了点钱）→ 不许解除
   s.recordQuota(accounts[0], { ...quotaWith({ used: 0, cap: 3 }), remaining: 0.05 });
   assert.equal(s.isAvailable(accounts[0]), false, 'remaining 变小说明没充值，仍应停用');
+
+  // 刷新成功也不能把原因刷掉（运行时状态会持久化，重启后面板要还能说出原因）
+  s.recordQuota(accounts[0], { ...quotaWith({ used: 0, cap: 3 }), remaining: 0.05 });
+  assert.match(s.runtime(accounts[0]).lastError, /余额不足/, '刷新后原因必须还在');
+  assert.equal(s.runtime(accounts[0]).lastErrorAt, flagAt, '原因时间应是「发现没钱」的时刻，不是刷新时刻');
+
+  // 老版本持久化下来的标记没有 message（升级路径）：也要能给出一句话原因
+  const legacy = makeAccounts([{ name: '老标记', key: 'user_legacy_aaaaaaa' }]);
+  const s3 = createScheduler({ accounts: legacy, state: makeState() });
+  s3.recordQuota(legacy[0], { ...quotaWith({ used: 0, cap: 3 }), remaining: 0.05 });
+  s3.runtime(legacy[0]).creditsExhausted = { at: flagAt, remaining: 0.05 };   // 模拟老数据
+  s3.recordQuota(legacy[0], { ...quotaWith({ used: 0, cap: 3 }), remaining: 0.05 });
+  assert.match(s3.runtime(legacy[0]).lastError, /余额不足/, '老标记也要能说明原因');
 
   // 充值到账 → 自动解除
   s.recordQuota(accounts[0], { ...quotaWith({ used: 0, cap: 3 }), remaining: 20 });
