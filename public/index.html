@@ -280,7 +280,6 @@
     font-variant-numeric: tabular-nums; letter-spacing: -.01em; color: var(--text-primary);
   }
   .hero-balance .bal-label { font-size: var(--fs-sm); color: var(--text-secondary); }
-  .hero-balance .bal-note { font-size: var(--fs-2xs); color: var(--text-tertiary); }
   .hero-sub {
     margin: 2px 0 0; font-size: var(--fs-sm); color: var(--text-secondary);
     display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
@@ -392,13 +391,6 @@
   .card-money { margin: 14px 0 2px; display: flex; align-items: baseline; gap: 8px; }
   .card-money b { font-size: var(--fs-xl); font-weight: 700; font-variant-numeric: tabular-nums; }
   .card-money small { font-size: var(--fs-sm); color: var(--text-secondary); }
-  /* 账上还剩零头、但周期额度已用完 → 这点钱付不起任何请求（上游实测拒付）。
-     标出来，免得「剩余 0.10」和「额度已用完」两个数字互相打脸。 */
-  .card-money .money-note {
-    align-self: center; margin-left: 2px; padding: 1px 7px; border-radius: var(--pill);
-    font-size: var(--fs-2xs); color: var(--danger);
-    border: 1px solid var(--danger); background: var(--danger-light);
-  }
   .card-credits { font-size: var(--fs-xs); color: var(--text-secondary); }
 
   /* 进度条 */
@@ -505,7 +497,7 @@
       <h1 id="greeting" class="greeting">下午好</h1>
       <div class="hero-balance">
         <b id="balance">—</b>
-        <span class="bal-label">剩余额度（USD）</span><span class="bal-note" id="bal-dead" hidden></span>
+        <span class="bal-label">剩余额度（USD）</span>
       </div>
       <p class="hero-sub">网关运行中 <span id="health" class="pill">加载中…</span></p>
       <p class="hero-meta"><span id="upstream"></span><span id="updated"></span><span id="cadence" class="hero-cadence"></span></p>
@@ -733,17 +725,18 @@ function freshHTML(fetchedAt) {
     + '>' + esc(f.text) + '</div>';
 }
 
-/* 账上还有没有钱（拿不到快照就当没有，避免误标） */
-function q0Remaining(a) {
+/* 能用多少钱：额度已经用尽的账号（kind = monthly / balance）一律算 0 —— 规则见
+   用户要求"他用不了的就是0"；window 只是排队，钱没死，照常返回真实余额。 */
+function usableRemaining(a) {
   const q = a && a.lastQuota;
-  return q && Number.isFinite(q.remaining) ? q.remaining : 0;
+  if (!q || !Number.isFinite(q.remaining)) return 0;      // 拿不到快照就当 0，避免 NaN
+  const k = a.exhausted && a.exhausted.kind;
+  if (k === 'monthly' || k === 'balance') return 0;       // 钱已经死了，上游实测付不了
+  return q.remaining;                                     // 含 window：只是排队，钱没死
 }
 
 function card(a) {
   const ex = a.exhausted || null;   // 统一口径的「额度已用完」（含恢复时间）
-  // 已证明「钱」用完（月度额度 / 余额）、账上却还有零头：那点钱付不起任何请求，必须标出来。
-  // 只限钱的原因 —— 周窗口超限只是排队，等窗口重置钱照用，说成"不可支付"是错的。
-  const staleMoney = !!ex && (ex.kind === 'monthly' || ex.kind === 'balance') && Number(q0Remaining(a)) > 0;
   const q = a.lastQuota;
   const c = q && q.credits ? q.credits : null;
   const st = statusText(a);
@@ -774,12 +767,9 @@ function card(a) {
     + (q && q.displayName ? '<span class="card-display">' + esc(q.displayName) + '</span>' : '') + '</h2>'
     + '<span class="status"><span class="dot" aria-hidden="true"></span>' + st.t + '</span></div>'
     // 前台只显示备注名（h2 里）+ 上游显示名，不下发也不渲染 key 的任何片段
-    + '<div class="card-money"' + (staleMoney ? ' title="周期额度已用完，账上零头无法支付任何请求（上游实测拒付）"' : '') + '>'
-    + '<b>' + money(q ? q.remaining : null) + '</b><small>剩余额度</small>'
-    + (staleMoney ? '<span class="money-note">不可支付</span>' : '')
-    + '</div>'
+    + '<div class="card-money"><b>' + money(usableRemaining(a)) + '</b><small>剩余额度</small></div>'
     + (c
-      ? '<div class="card-credits">月度 ' + money(c.monthlyCredits) + ' · 购买 ' + money(c.purchasedCredits) + ' · 赠送 ' + money(c.freeCredits) + '</div>'
+      ? '<div class="card-credits">月度 ' + money(usableRemaining(a) && c.monthlyCredits) + ' · 购买 ' + money(usableRemaining(a) && c.purchasedCredits) + ' · 赠送 ' + money(usableRemaining(a) && c.freeCredits) + '</div>'
       : '<div class="card-credits">尚未获取额度快照</div>')
     + (q ? freshHTML(q.fetchedAt) : '')
     + '</div>';
@@ -831,22 +821,9 @@ function render(d) {
   $('upstream').textContent = '内核 ' + String(d.upstreamProxyUrl ?? '') + (d.allowPassthrough ? ' · 已开启直连透传' : '');
   $('tokens').textContent = num(st.totalTokens);
 
-  // 余额：全页最大字号的主角
-  const remaining = accounts.reduce((sum, a) => (a.lastQuota && Number.isFinite(a.lastQuota.remaining) ? sum + a.lastQuota.remaining : sum), 0);
-  const deadRemaining = accounts.reduce((sum, a) => (
-    a.exhausted && (a.exhausted.kind === 'monthly' || a.exhausted.kind === 'balance')
-      && a.lastQuota && Number.isFinite(a.lastQuota.remaining)
-    ? sum + a.lastQuota.remaining : sum), 0);
-  const usable = accounts.length ? remaining - deadRemaining : NaN;
-  $('balance').textContent = accounts.length ? money(usable) : '—';
-  const deadEl = $('bal-dead');
-  if (deadRemaining >= 0.005) {
-    deadEl.textContent = '已扣除 ' + money(deadRemaining) + ' 死余额';
-    deadEl.hidden = false;
-  } else {
-    deadEl.textContent = '';
-    deadEl.hidden = true;
-  }
+  // 余额：全页最大字号的主角（用不了的钱算 0，见 usableRemaining）
+  const remaining = accounts.reduce((sum, a) => sum + usableRemaining(a), 0);
+  $('balance').textContent = accounts.length ? money(remaining) : '—';
 
   paintKpi('kpi-box-accounts', 'kpi-accounts', s.accounts, {});
   paintKpi('kpi-box-available', 'kpi-available', s.available, { kind: 'warning', warnWhen: (v) => Number(s.accounts) > v });

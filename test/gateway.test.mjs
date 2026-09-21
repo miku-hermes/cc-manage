@@ -1246,8 +1246,8 @@ test('进度条只报百分比（金额收进 title），被证明用完的窗�
   assert.match(ok, /可调度/);
 });
 
-// ── 账上还剩零头、但已证明付不起 → 必须标「不可支付」 ─────────────────
-test('额度已用完却还显示剩余 0.10：要标「不可支付」，不能与「已用完」互相打脸', async (t) => {
+// ── 用不了的钱就是 0（usableRemaining 唯一口径）─────────────────────
+test('额度已用完的账号卡片显示 0.00，window 卡住的钱照常显示', async (t) => {
   const ctx = await startTestGateway();
   t.after(() => ctx.close());
   const html = (await request(`${ctx.baseUrl}/`)).body;
@@ -1261,31 +1261,66 @@ test('额度已用完却还显示剩余 0.10：要标「不可支付」，不能
     usage: {}, percent: {}, fetchedAt: Date.now() });
   const base = { enabled: true, concurrency: 0, paused: false, pausedUntil: null, authInvalid: false, lastError: null };
 
-  // ① 主号：周期额度用完 + 账上还剩 0.098 → 标「不可支付」，并解释得出来
+  // ① 主号：周期额度用完 + 账上还剩 0.098 → 用不了的钱算 0，卡片显示 0.00
   const spent = page.card({ ...base, name: '主号', keyId: 'aaaaaaaa', available: false, creditsExhausted: true,
     exhausted: { kind: 'monthly', label: '月额度已用完', resetAt: 0 }, lastQuota: q(0.098) });
-  assert.match(spent, /<b>0\.10<\/b><small>剩余额度<\/small><span class="money-note">不可支付<\/span>/,
-    '剩下的零头要标成不可支付，否则「剩余 0.10」和「月额度已用完」互相打脸');
-  assert.match(spent, /title="周期额度已用完，账上零头无法支付任何请求（上游实测拒付）"/, '悬停要能问出为什么');
+  assert.match(spent, /<b>0\.00<\/b><small>剩余额度<\/small>/,
+    '用不了的钱就是 0：卡片必须显示 0.00，不能与「月额度已用完」打脸');
+  assert.doesNotMatch(spent, /0\.10/, '死账号的零头不许再出现在卡片上');
+  assert.doesNotMatch(spent, /不可支付|money-note/, '不再需要「不可支付」标签');
+  assert.doesNotMatch(spent, /title="周期额度已用完/, '不再需要悬停解释');
 
-  // ② 账上真的没钱（0）→ 没有"零头"可标，不该出现这个标签
-  const zero = page.card({ ...base, name: '空号', keyId: 'bbbbbbbb', available: false, creditsExhausted: true,
-    exhausted: { kind: 'monthly', label: '月额度已用完', resetAt: 0 }, lastQuota: q(0) });
-  assert.doesNotMatch(zero, /money-note/, '本来就没钱，别画蛇添足');
-
-  // ③ 健康账号（余额充足）→ 当然不标
-  const ok = page.card({ ...base, name: '副号2', keyId: 'cccccccc', available: true, creditsExhausted: false,
-    exhausted: null, lastQuota: q(9.68) });
-  assert.doesNotMatch(ok, /money-note/);
-
-  // ④ 窗口超限但钱还能用（副号）→ 也不该说"不可支付"：等窗口重置钱照用
+  // ② 窗口超限但钱还能用（副号）→ 照常显示真实余额，不许算成 0
   const weekly = page.card({ ...base, name: '副号', keyId: 'dddddddd', available: false, creditsExhausted: false,
     exhausted: { kind: 'window', window: 'weekly', label: '周额度已用完', resetAt: 0 }, lastQuota: q(4) });
-  assert.doesNotMatch(weekly, /money-note/, '周窗口超限只是排队，钱没坏');
+  assert.match(weekly, /<b>4\.00<\/b><small>剩余额度<\/small>/,
+    '周窗口超限只是排队，钱没坏，必须显示 4.00');
 });
 
-// ── 顶部「剩余额度」：死余额（完全用不了）要扣掉，窗口卡住的照常计入 ─────
-test('顶部余额：月额度用完的死余额要扣（13.66），周窗口卡住的钱照常算', async (t) => {
+test('usableRemaining 规则：monthly/balance 算 0，window 照常，无快照算 0', async (t) => {
+  const ctx = await startTestGateway();
+  t.after(() => ctx.close());
+  const html = (await request(`${ctx.baseUrl}/`)).body;
+  const shim = createDomShim({ html, fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({}) }) });
+  const page = await runInlineScript(html, shim);
+
+  const acc = (remaining, exhausted) => ({ lastQuota: { ok: true, remaining }, exhausted });
+  assert.equal(page.usableRemaining(acc(0.098, { kind: 'monthly' })), 0, 'monthly 死账号 → 0');
+  assert.equal(page.usableRemaining(acc(0.5, { kind: 'balance' })), 0, 'balance 死账号 → 0');
+  assert.equal(page.usableRemaining(acc(4.00, { kind: 'window', window: 'weekly' })), 4.00, 'window 只是排队 → 真实余额');
+  assert.equal(page.usableRemaining(acc(9.62, null)), 9.62, '没 exhausted → 真实余额');
+  assert.equal(page.usableRemaining({ lastQuota: null, exhausted: null }), 0, '拿不到快照 → 0，不产生 NaN');
+});
+
+test('顶部与卡片用同一个 usableRemaining：死账号两处都体现为 0', async (t) => {
+  const ctx = await startTestGateway();
+  t.after(() => ctx.close());
+  const html = (await request(`${ctx.baseUrl}/`)).body;
+  const shim = createDomShim({ html, fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({}) }) });
+  const page = await runInlineScript(html, shim);
+
+  const dead = {
+    enabled: true, concurrency: 0, paused: false, pausedUntil: null, authInvalid: false, lastError: null,
+    name: '主号', keyId: 'aaaaaaaa', available: false, creditsExhausted: true,
+    exhausted: { kind: 'monthly', label: '月额度已用完', resetAt: 0 },
+    lastQuota: { ok: true, remaining: 0.098 },
+  };
+  const cardOut = page.card(dead);
+  assert.match(cardOut, /<b>0\.00<\/b><small>剩余额度<\/small>/, '卡片用 usableRemaining：dead → 0.00');
+
+  const d = {
+    summary: { accounts: 1, available: 0, paused: 0, concurrency: 0 },
+    stats: { total: 0, errors: 0, totalTokens: 0 },
+    accounts: [dead],
+    now: Date.now(),
+  };
+  page.render(d);
+  assert.equal(page.document.getElementById('balance').textContent, '0.00',
+    '顶部也走 usableRemaining：同一个 dead 账号在顶部体现为 0');
+});
+
+// ── 顶部「剩余额度」：用不了的钱就是 0，window 卡住的钱照常计入 ─────
+test('顶部余额：主号死余额算 0，周窗口卡住的钱照常算（13.62）', async (t) => {
   const ctx = await startTestGateway();
   t.after(() => ctx.close());
   const html = (await request(`${ctx.baseUrl}/`)).body;
@@ -1300,7 +1335,7 @@ test('顶部余额：月额度用完的死余额要扣（13.66），周窗口卡
     summary: { accounts: 3, available: 1, paused: 0, concurrency: 0 },
     stats: { total: 0, errors: 0, totalTokens: 0 },
     accounts: [
-      acc(9.66, null),
+      acc(9.62, null),
       acc(0.098, { kind: 'monthly', label: '月额度已用完', resetAt: 0 }),
       acc(4.00, { kind: 'window', window: 'weekly', label: '周额度已用完', resetAt: 0 }),
     ],
@@ -1308,11 +1343,11 @@ test('顶部余额：月额度用完的死余额要扣（13.66），周窗口卡
   };
 
   page.render(d);
-  assert.equal(page.document.getElementById('balance').textContent, '13.66',
-    '9.66 + 0.098(死) + 4.00(窗口) → 13.75 − 0.10 = 13.66');
-  const note = page.document.getElementById('bal-dead');
-  assert.equal(note.textContent, '已扣除 0.10 死余额');
-  assert.equal(note.hidden, false);
+  assert.equal(page.document.getElementById('balance').textContent, '13.62',
+    '9.62 + 0.098(死→0) + 4.00(窗口) = 13.62');
+  const htmlOut = page.document.getElementById('cards').innerHTML;
+  assert.doesNotMatch(htmlOut, /已扣除|死余额/, '页面里不再出现「已扣除」「死余额」');
+  assert.doesNotMatch(html, /id="bal-dead"/, 'bal-dead 节点已删除');
 });
 
 test('顶部余额：周窗口卡住的账号不许扣（available=false 也不扣）', async (t) => {
@@ -1338,12 +1373,10 @@ test('顶部余额：周窗口卡住的账号不许扣（available=false 也不�
   page.render(d);
   assert.equal(page.document.getElementById('balance').textContent, '4.00',
     '窗口卡住只是排队，钱要全额计入，不能因为 available=false 就扣');
-  const note = page.document.getElementById('bal-dead');
-  assert.equal(note.textContent, '');
-  assert.equal(note.hidden, true);
+  assert.doesNotMatch(html, /id="bal-dead"/, 'bal-dead 节点已删除');
 });
 
-test('顶部余额：多个 balance 死账号的余额全扣，正常账号照常计入', async (t) => {
+test('顶部余额：多个 balance 死账号的余额全算 0，正常账号照常计入', async (t) => {
   const ctx = await startTestGateway();
   t.after(() => ctx.close());
   const html = (await request(`${ctx.baseUrl}/`)).body;
@@ -1367,13 +1400,11 @@ test('顶部余额：多个 balance 死账号的余额全扣，正常账号照�
 
   page.render(d);
   assert.equal(page.document.getElementById('balance').textContent, '2.00',
-    '2.0 + 1.5(死) + 0.5(死) = 4.0 − 2.0 = 2.00');
-  const note = page.document.getElementById('bal-dead');
-  assert.equal(note.textContent, '已扣除 2.00 死余额');
-  assert.equal(note.hidden, false);
+    '2.0 + 1.5(死→0) + 0.5(死→0) = 2.00');
+  assert.doesNotMatch(html, /id="bal-dead"/, 'bal-dead 节点已删除');
 });
 
-test('顶部余额：没有死余额时全额计入，不显示「已扣除 0.00」', async (t) => {
+test('顶部余额：没有死账号时全额计入', async (t) => {
   const ctx = await startTestGateway();
   t.after(() => ctx.close());
   const html = (await request(`${ctx.baseUrl}/`)).body;
@@ -1387,15 +1418,13 @@ test('顶部余额：没有死余额时全额计入，不显示「已扣除 0.00
   const d = {
     summary: { accounts: 2, available: 2, paused: 0, concurrency: 0 },
     stats: { total: 0, errors: 0, totalTokens: 0 },
-    accounts: [acc(9.66, null), acc(4.00, null)],
+    accounts: [acc(9.62, null), acc(4.00, null)],
     now: Date.now(),
   };
 
   page.render(d);
-  assert.equal(page.document.getElementById('balance').textContent, '13.66', '全正常 → 全额');
-  const note = page.document.getElementById('bal-dead');
-  assert.equal(note.textContent, '', '不该出现「已扣除 0.00」');
-  assert.equal(note.hidden, true);
+  assert.equal(page.document.getElementById('balance').textContent, '13.62', '全正常 → 全额');
+  assert.doesNotMatch(html, /id="bal-dead"/, 'bal-dead 节点已删除');
 });
 
 test('顶部余额：拿不到快照的账号当 0，不产生 NaN', async (t) => {
@@ -1420,7 +1449,5 @@ test('顶部余额：拿不到快照的账号当 0，不产生 NaN', async (t) =
   page.render(d);
   assert.equal(page.document.getElementById('balance').textContent, '0.00',
     '没有快照当 0，不能出现 NaN/—');
-  const note = page.document.getElementById('bal-dead');
-  assert.equal(note.textContent, '');
-  assert.equal(note.hidden, true);
+  assert.doesNotMatch(html, /id="bal-dead"/, 'bal-dead 节点已删除');
 });
