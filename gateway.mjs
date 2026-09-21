@@ -7,7 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { loadConfig } from './src/config.mjs';
 import { createStore, CC_KEY_PREFIX, LOCAL_KEY_PREFIX } from './src/store.mjs';
 import { createLogger, keyIdOf, keyPrefixOf, redact } from './src/log.mjs';
-import { fetchQuota, fetchWhoami } from './src/quota.mjs';
+import { fetchWhoami, fetchQuota } from './src/quota.mjs';
+import { probeAccountCredits, shouldProbeCredits } from './src/credits-probe.mjs';
 import {
   SESSION_COOKIE,
   clearCookieHeader,
@@ -338,6 +339,45 @@ export async function startGateway(overrides = {}) {
   }
 
   // ── 额度查询与刷新 ──────────────────────────────────────
+  /**
+   * 余额见底时的主动探针。
+   *
+   * 必要性：对「余额不足」的识别原本是被动的 —— 只有真实请求撞上去才发现，
+   * 于是账号明明已经不能用（实测主号余额 $0.098，任何模型都回 400
+   * insufficient credits），面板却还写着「可用」，因为还没有请求轮到它。
+   *
+   * 只对「余额快见底」的账号探（内部记 probeState，正常账号一次都不打），
+   * 命中即记标记并停止再探 —— 开销可忽略（每次 1 个输出 token）。
+   */
+  const probeState = new Map();   // keyId → { at, verdict }
+
+  async function maybeProbeCredits(account, snapshot) {
+    if (!config.creditsProbeEnabled) return null;
+    // 已经标记过的不再探：等余额变多（充值/周期刷新）由 recordQuota 自动解除
+    if (scheduler.creditsExhaustedState(account)) return null;
+    // 已经因为窗口打满/暂停/鉴权失效而不可调度的账号不必探 —— 反正不会选它，
+    // 探针是「我要用它之前的最后一道确认」，不是巡检。
+    if (!scheduler.isAvailable(account)) return null;
+    if (!shouldProbeCredits(snapshot, config.creditsProbeBelowUsd)) return null;
+    const result = await probeAccountCredits(account.key, {
+      baseUrl: config.upstreamProxyUrl,
+      model: config.creditsProbeModel,
+      timeoutMs: config.creditsProbeTimeoutMs,
+      fetchImpl: overrides.fetchImpl,
+    });
+    probeState.set(account.keyId, { at: Date.now(), verdict: result.insufficientCredits ? 'no-credits' : (result.ok ? 'ok' : 'unknown') });
+    if (result.insufficientCredits) {
+      scheduler.markCreditsExhausted(account, '余额不足（探针实测：上游拒付）');
+      log.warn(`账号「${account.name}」探针实测余额不足（剩余 ${snapshot.remaining}），已停止调度`);
+    } else if (result.ok) {
+      probeState.set(account.keyId, { at: Date.now(), verdict: 'ok' });
+    } else {
+      // 探针本身失败（超时/套餐不含该模型/5xx）：不据此改判定，只记一笔
+      log.debug?.(`账号「${account.name}」余额探针无结论: ${redact(result.error ?? '', secrets)}`);
+    }
+    return result;
+  }
+
   async function refreshAccount(account) {
     const snapshot = await fetchQuota(account.key, {
       baseUrl: config.ccApiBase,
@@ -349,6 +389,10 @@ export async function startGateway(overrides = {}) {
     if (!snapshot.ok) {
       const msg = redact(snapshot.error ?? '额度查询失败', secrets);
       log.warn(`账号「${account.name}」额度查询失败: ${msg}`);
+    } else {
+      await maybeProbeCredits(account, snapshot).catch((e) => {
+        log.debug?.(`余额探针异常: ${e?.message ?? String(e)}`);
+      });
     }
     return { account, snapshot };
   }

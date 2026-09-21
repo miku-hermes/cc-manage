@@ -15,6 +15,14 @@ export const DEFAULTS = {
   quotaActiveWindowMs: 300000,
   pausedRecheckIntervalMs: 60000,
   quotaTimeoutMs: 15000,
+  // 余额见底时的主动探针：余额低于 creditsProbeBelowUsd（或上游 belowThreshold=true）
+  // 就打一发 max_tokens=1 的最小推理，用上游的回答判定账号还能不能用。
+  // 阈值只决定「什么时候去问」，不决定结论 —— 上游的余额规则不公开，自己拍阈值会误判。
+  // 不满足条件时一次都不打，命中后立刻记标记，因此开销可忽略。
+  creditsProbeEnabled: true,
+  creditsProbeBelowUsd: 1.0,
+  creditsProbeModel: 'deepseek/deepseek-v4-flash',
+  creditsProbeTimeoutMs: 20000,
   sessionAffinityTtlMs: 1800000,
   allowPassthrough: false,
   // 请求体上限（F18）：每个在途请求都会把 body tee 进内存供换号重放，
@@ -42,6 +50,10 @@ const ENV_MAP = {
   QUOTA_ACTIVE_WINDOW_MS: ['quotaActiveWindowMs', 'number'],
   PAUSED_RECHECK_INTERVAL_MS: ['pausedRecheckIntervalMs', 'number'],
   QUOTA_TIMEOUT_MS: ['quotaTimeoutMs', 'number'],
+  CREDITS_PROBE_ENABLED: ['creditsProbeEnabled', 'boolean'],
+  CREDITS_PROBE_BELOW_USD: ['creditsProbeBelowUsd', 'number'],
+  CREDITS_PROBE_MODEL: ['creditsProbeModel', 'string'],
+  CREDITS_PROBE_TIMEOUT_MS: ['creditsProbeTimeoutMs', 'number'],
   SESSION_AFFINITY_TTL_MS: ['sessionAffinityTtlMs', 'number'],
   MAX_BODY_BYTES: ['maxBodyBytes', 'number'],
   MAX_INFLIGHT: ['maxInflight', 'number'],

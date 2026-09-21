@@ -64,6 +64,13 @@ export function parseSnapshot({ whoami, credits, subscriptions, usage }) {
 
   const c = credits?.credits ?? {};
   const monthlyCredits = num(c.monthlyCredits, 0);
+  // 官方字段：低余额标记。creditThreshold 是账号上配置的阈值（0 = 未配置/关闭），
+  // belowThreshold 是上游据此算出的「已低于阈值」。社区实现（codex-router）直接用它
+  // 当「这个账号还能不能用」的判据（available: credits?.belowThreshold !== true）。
+  // 实测本机两个账号 creditThreshold=0 → belowThreshold=false，即默认不启用；
+  // 所以它只能作为**加分信号**，不能当唯一依据（主号余额 $0.098 时它仍然是 false）。
+  const belowThreshold = c.belowThreshold === true;
+  const creditThreshold = Number.isFinite(Number(c.creditThreshold)) ? Number(c.creditThreshold) : null;
   const purchasedCredits = num(c.purchasedCredits, 0);
   const freeCredits = num(c.freeCredits, 0);
   const remaining = monthlyCredits + purchasedCredits + freeCredits;
@@ -90,7 +97,7 @@ export function parseSnapshot({ whoami, credits, subscriptions, usage }) {
     orgId,
     displayName,
     keyName,
-    credits: { monthlyCredits, purchasedCredits, freeCredits, remaining },
+    credits: { monthlyCredits, purchasedCredits, freeCredits, remaining, belowThreshold, creditThreshold },
     remaining,
     fiveHour,
     weekly,

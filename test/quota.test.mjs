@@ -51,7 +51,11 @@ test('正确解析 whoami / 余额 / 5h 与周百分比', async () => {
   assert.equal(snap.displayName, 'acme');       // org.login 优先
   assert.equal(snap.keyName, 'my-key');
   assert.equal(snap.remaining, 50);             // 30 + 12.5 + 7.5
-  assert.deepEqual(snap.credits, { monthlyCredits: 30, purchasedCredits: 12.5, freeCredits: 7.5, remaining: 50 });
+  assert.deepEqual(snap.credits, {
+    monthlyCredits: 30, purchasedCredits: 12.5, freeCredits: 7.5, remaining: 50,
+    // 官方低余额字段：没配阈值时 threshold=0、belowThreshold=false
+    belowThreshold: false, creditThreshold: null,
+  });
   assert.equal(snap.fiveHour.percent, 25);
   assert.equal(snap.weekly.percent, 30);
   assert.equal(snap.fiveHour.resetAt, 1700000000);
@@ -67,6 +71,34 @@ test('正确解析 whoami / 余额 / 5h 与周百分比', async () => {
   const usageCall = ff.calls.find((c) => c.path === '/alpha/usage/summary');
   assert.match(usageCall.search, /since=/);
   assert.match(usageCall.search, /orgId=org-42/);
+});
+
+test('官方低余额字段：belowThreshold / creditThreshold 如实解析（社区实现用它判「能不能用」）', async () => {
+  // 形状来自线上真实报文：credits:{belowThreshold, creditThreshold, monthlyCredits, ...}
+  // codex-router（3.8k★）直接拿 belowThreshold 当可用性判据：
+  //   available: credits?.belowThreshold !== true
+  // 实测本机两个账号 creditThreshold=0（未配置）→ belowThreshold=false，
+  // 所以网关只把它当**加分信号**：为真时必定主动探一次余额。
+  const ff = fakeFetch({
+    ...HAPPY,
+    '/alpha/billing/credits': {
+      credits: { belowThreshold: true, creditThreshold: 0.5, monthlyCredits: 0.3, purchasedCredits: 0, freeCredits: 0 },
+      windowLimits: { fiveHour: { used: 0, cap: 3 }, weekly: { used: 0, cap: 6 } },
+    },
+  });
+  const snap = await fetchQuota('user_lowbal_xxxxx', { fetchImpl: ff });
+  assert.equal(snap.credits.belowThreshold, true, '官方标记必须原样带出');
+  assert.equal(snap.credits.creditThreshold, 0.5);
+  assert.equal(snap.remaining, 0.3);
+
+  // 只有字符串 'true' / 非布尔值等垃圾输入时不得误判为真
+  const ff2 = fakeFetch({
+    ...HAPPY,
+    '/alpha/billing/credits': { credits: { belowThreshold: 'yes', creditThreshold: 'nope', monthlyCredits: 5 } },
+  });
+  const snap2 = await fetchQuota('user_lowbal_yyyyy', { fetchImpl: ff2 });
+  assert.equal(snap2.credits.belowThreshold, false, "只认严格的布尔 true");
+  assert.equal(snap2.credits.creditThreshold, null, '非数字阈值置 null');
 });
 
 test('缺字段不炸，仍然返回可用快照', async () => {
