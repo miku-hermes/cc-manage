@@ -1203,3 +1203,45 @@ test('健康账号：exhausted 必须是 null（不能凭空标一个「用完�
   for (const a of d.accounts) assert.equal(a.exhausted, null, `${a.name} 不该被标额度用完`);
   assert.equal(d.accounts.find((x) => x.name === '账号A').available, true);
 });
+
+// ── 进度条口径：只报百分比 + 被证明「用完」就画满 ─────────────────────
+test('进度条只报百分比（金额收进 title），被证明用完的窗口直接画满', async (t) => {
+  // 页面要从真实服务上取（runInlineScript 需要内联 <script>）
+  const ctx = await startTestGateway();
+  t.after(() => ctx.close());
+  const html = (await request(`${ctx.baseUrl}/`)).body;
+  const shim = createDomShim({ html, fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({}) }) });
+  const page = await runInlineScript(html, shim);
+
+  const w = (used, cap, percent) => ({ used, cap, percent, usedRatio: percent / 100, resetAt: 0 });
+  const q = {
+    ok: true, displayName: 'x', plan: null, remaining: 0.098, credits: {},
+    fiveHour: w(0, 3, 0), weekly: w(3.9, 6, 65), monthly: w(9.936, 10, 99.4),
+    usage: {}, percent: {}, fetchedAt: Date.now(),
+  };
+  const base = { enabled: true, concurrency: 0, paused: false, pausedUntil: null, authInvalid: false, lastError: null, lastQuota: q };
+
+  // ① 主号：探针证明月额度用完 → 分母是整数 10，进度条画满 100%
+  const spent = page.card({ ...base, name: '主号', keyId: 'aaaaaaaa', available: false,
+    creditsExhausted: true, exhausted: { kind: 'monthly', label: '月额度已用完', resetAt: 0 } });
+  assert.match(spent, /title="本月周期：已用 9\.94 \/ 10\.00"/, '金额收进 title，且分母是整数 10 而不是 10.03');
+  assert.doesNotMatch(spent, /bar-num/, '进度条行不再摆具体金额');
+  assert.match(spent, /本月周期<\/span><span class="bar-pct">100\.0%<\/span>/, '用完就该显示 100%');
+  assert.match(spent, /<div class="bar s-bad"><i style="width:100%"><\/i><\/div>/, '用完要画满，不能停在 99.4% 像还剩一点');
+  assert.match(spent, /本周窗口<\/span><span class="bar-pct">65\.0%<\/span>/, '别的窗口不受影响');
+  assert.ok(!/10\.03/.test(spent), '页面上不该再出现 10.03 这种推算分母');
+
+  // ② 副号：上游点名周窗口超限 → 周窗口画满，月度按推算显示
+  const weekly = page.card({ ...base, name: '副号', keyId: 'bbbbbbbb', available: false,
+    creditsExhausted: false, exhausted: { kind: 'window', window: 'weekly', label: '周额度已用完', resetAt: 0 } });
+  assert.match(weekly, /本周窗口<\/span><span class="bar-pct">100\.0%<\/span>/);
+  assert.match(weekly, /本月周期<\/span><span class="bar-pct">99\.4%<\/span>/, '没被证明用完的窗口老实显示推算值');
+
+  // ③ 健康账号：只有百分比，没有金额行
+  const ok = page.card({ ...base, name: '副号2', keyId: 'cccccccc', available: true,
+    creditsExhausted: false, exhausted: null,
+    lastQuota: { ...q, remaining: 9.73, monthly: w(0.2, 10, 2) } });
+  assert.doesNotMatch(ok, /bar-num/);
+  assert.match(ok, /本月周期<\/span><span class="bar-pct">2\.0%<\/span>/);
+  assert.match(ok, /可调度/);
+});

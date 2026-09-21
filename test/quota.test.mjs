@@ -261,3 +261,21 @@ test('超时（AbortError）被归一成查询失败', async () => {
   assert.equal(snap.authInvalid, false);
   assert.match(snap.error, /超时/);
 });
+
+test('月度分母取整：推算出的 10.034 要变成整数 10（假精度会让人以为还剩钱能用）', async () => {
+  // 主号线上真值：花 9.936、剩 0.098 → 推算分母 10.034。面板写「9.94 / 10.03」
+  // 看着像还剩 0.09 可用，而实测那点余额连一次请求都付不起。
+  const ff = fakeFetch({
+    ...HAPPY,
+    '/alpha/billing/credits': { credits: { monthlyCredits: 0.098, purchasedCredits: 0, freeCredits: 0 } },
+    '/alpha/billing/subscriptions': { data: { planId: 'individual-go', status: 'active', currentPeriodEnd: '2026-10-11T11:41:14Z' } },
+    '/alpha/usage/summary': { totalCost: 9.936, totalCount: 6000, totalTokens: 737095478 },
+  });
+  const snap = await fetchQuota('user_abcdefghijkl', { baseUrl: 'https://api.commandcode.ai', fetchImpl: ff });
+
+  assert.equal(snap.monthly.cap, 10, `分母该是整数 10，实际 ${snap.monthly.cap}`);
+  assert.equal(Number.isInteger(snap.monthly.cap), true, '分母必须是整数（官方额度口径）');
+  assert.ok(snap.monthly.percent > 99, `取整后仍要 >= 99，否则「月额度已用完」判据失效: ${snap.monthly.percent}`);
+  assert.equal(snap.monthly.used, 9.936, '花了多少是事实，不许改');
+  assert.equal(snap.monthly.resetAt, Math.floor(Date.parse('2026-10-11T11:41:14Z') / 1000));
+});

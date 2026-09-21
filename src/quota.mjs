@@ -94,7 +94,11 @@ export function parseSnapshot({ whoami, credits, subscriptions, usage }) {
   // 月窗口：CC 未提供月度 windowLimits。以「本周期花费 totalCost / (花费 + 剩余额度)」
   // 作为月度占用率 —— 契约里没有月度 cap 字段，此处为推算。TODO(问作者): 若 CC 后续
   // 提供 /alpha/billing/... 的月度 cap，应改用官方字段。
-  const monthlyCap = totalCost + remaining;
+  // 月窗口：上游不提供月度 windowLimits，只能用「本周期花费 totalCost / (花费 + 剩余额度)」推算。
+  // 分母四舍五入到整数：官方额度本身就是整数（Go $10、GOAT $70、Max $300…），推算出的
+  // 10.034 属于假精度 —— 面板写「9.94 / 10.03」会让人以为还剩 0.09 能用，而实测那点余额
+  // 连一次请求都付不起。取整后与官方口径一致；不影响调度判定（调度只看 5h/周窗口）。
+  const monthlyCap = Math.max(1, Math.round(totalCost + remaining));
   const monthly = monthlyCap > 0
     ? { used: totalCost, cap: monthlyCap, percent: Math.max(0, Math.min(100, (totalCost / monthlyCap) * 100)), usedRatio: totalCost / monthlyCap, resetAt: normalizeResetAt(sub?.currentPeriodEnd) }
     : null;

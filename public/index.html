@@ -400,8 +400,9 @@
   .bar-reset { margin-top: 4px; color: var(--text-tertiary); font-size: var(--fs-2xs); font-variant-numeric: tabular-nums; }
   .bar-head { display: flex; align-items: baseline; gap: 10px; font-size: var(--fs-xs); margin-bottom: 5px; }
   .bar-label { color: var(--text-secondary); }
-  .bar-num { margin-left: auto; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+  /* 百分比独占右端（金额已收进 title，不再占行） */
   .bar-pct {
+    margin-left: auto;
     color: var(--text-secondary); font-family: var(--font-mono);
     font-variant-numeric: tabular-nums; min-width: 52px; text-align: right;
   }
@@ -680,15 +681,20 @@ function paintKpi(boxId, numId, value, opts) {
   b.textContent = known ? num(v) : '—';
 }
 
-function bar(label, w) {
+/* 进度条只报百分比，金额挪进 title —— 用户要求：上面显示"用了百分之多少"就够了，
+   不要把具体数额（9.94 / 10.03）摆在脸上。
+   opts.spent=true：上游/探针已证明这个窗口「用完」时直接画满。百分比是推算值，
+   99.4% 这种"差一点"会让人以为还能用（实测剩 $0.098 连一次请求都付不起），
+   所以满不满由证据说了算，不由这个数字说了算。 */
+function bar(label, w, opts) {
   const has = w && typeof w === 'object';
-  const pct = has && typeof w.percent === 'number' ? w.percent : null;
-  const used = has && typeof w.used === 'number' ? money(w.used) : '—';
-  const cap = has && typeof w.cap === 'number' ? money(w.cap) : '—';
+  const spent = !!opts && opts.spent === true;
+  const pct = spent ? 100 : (has && typeof w.percent === 'number' ? w.percent : null);
+  const amounts = has && typeof w.used === 'number' && typeof w.cap === 'number'
+    ? money(w.used) + ' / ' + money(w.cap) : null;
   const reset = has ? resetText(w, { zeroMeansIdle: label.indexOf('5 小时') === 0 }) : '';
-  return '<div class="bar-group">'
+  return '<div class="bar-group"' + (amounts ? ' title="' + esc(label + '：已用 ' + amounts) + '"' : '') + '>'
     + '<div class="bar-head"><span class="bar-label">' + label + '</span>'
-    + '<span class="bar-num">' + used + ' / ' + cap + '</span>'
     + '<span class="bar-pct">' + pctText(pct) + '</span></div>'
     + '<div class="bar ' + cls(pct) + '"><i style="width:' + (pct === null ? 0 : Math.max(0, Math.min(100, pct))) + '%"></i></div>'
     + (reset ? '<div class="bar-reset">' + esc(reset) + '</div>' : '')
@@ -720,6 +726,7 @@ function freshHTML(fetchedAt) {
 }
 
 function card(a) {
+  const ex = a.exhausted || null;   // 统一口径的「额度已用完」（含恢复时间）
   const q = a.lastQuota;
   const c = q && q.credits ? q.credits : null;
   const st = statusText(a);
@@ -759,9 +766,9 @@ function card(a) {
 
   const right = '<div class="card-col-right">'
     + '<div class="bars">'
-    + bar('5 小时窗口', q && q.fiveHour)
-    + bar('本周窗口', q && q.weekly)
-    + bar('本月周期', q && q.monthly)
+    + bar('5 小时窗口', q && q.fiveHour, { spent: ex && ex.kind === 'window' && ex.window === 'fiveHour' })
+    + bar('本周窗口', q && q.weekly, { spent: ex && ex.kind === 'window' && ex.window === 'weekly' })
+    + bar('本月周期', q && q.monthly, { spent: ex && ex.kind === 'monthly' })
     + '</div>'
     + (q && q.usage ? '<div class="card-usage">本周期 token ' + esc(num(q.usage.totalTokens))
       + (q.usage.totalCost === undefined ? '' : ' · 花费 ' + money(q.usage.totalCost)) + '</div>' : '')
