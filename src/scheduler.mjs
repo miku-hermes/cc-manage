@@ -277,7 +277,7 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
    * 上游明确「余额不足」：标记账号级停用（不写 pausedUntil）。
    * 记下当时的 remaining 作为对比基线，充值后 recordQuota 会自动解除。
    */
-  function markCreditsExhausted(account, message = '余额不足（上游：insufficient credits）', now = Date.now()) {
+  function markCreditsExhausted(account, message = '余额不足：上游拒付。加购额度不受 5h/周窗口限制，或等月度周期刷新', now = Date.now()) {
     const rt = runtime(account);
     // 原因存进标记里：运行时状态会持久化到 state.json，重启后 recordQuota 会把
     // lastError 清掉，若不还原，面板就会只剩「余额不足」而说不出为什么。

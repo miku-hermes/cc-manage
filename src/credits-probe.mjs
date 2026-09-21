@@ -13,6 +13,9 @@ import { isCreditsExhausted } from './scheduler.mjs';
 
 export const DEFAULT_PROBE_MODEL = 'deepseek/deepseek-v4-flash';
 
+/** 默认「低于本周期额度的 2%」也算见底（官方套餐额度差 30 倍，固定金额不够用）。 */
+export const DEFAULT_FLOOR_RATIO = 0.02;
+
 /**
  * 探一发最小推理，判断账号还有没有钱。
  * 永不抛错。只有收到上游明确的余额不足才算「没钱」；其它错误（套餐不含该模型、
@@ -60,14 +63,28 @@ export async function probeAccountCredits(key, opts = {}) {
 
 /**
  * 该不该给这个账号做探针？—— 只看「余额是不是快见底了」。
- * belowThreshold（官方标记）为真时一定探；否则余额低于 floor 时探。
- * 注意：这里判的是「要不要去问」，不是「能不能用」。
+ * 三个触发条件（任一命中就探）：
+ *   1) 官方 belowThreshold（账号上配了阈值时上游自己算的）
+ *   2) 绝对金额低于 floorUsd（默认 $1）
+ *   3) 低于**本周期额度**的比例 floorRatio（默认 2%）
+ * 加条件 3 是因为套餐额度差 30 倍：官方 Go 是 $10/月、Max 20× 是 $300/月
+ * （见官方 Usage Limits 表），固定 $1 对大套餐等于只到剩 0.3% 才探，
+ * 对钱包厚的账号就太晚了。本周期额度 = 已花 + 剩余（官方未提供 granted 字段）。
+ * 注意：这里判的始终是「要不要去问」，不是「能不能用」。
  */
-export function shouldProbeCredits(snapshot, floorUsd) {
+export function shouldProbeCredits(snapshot, floorUsd, floorRatio = DEFAULT_FLOOR_RATIO) {
   if (!snapshot?.ok) return false;
   if (snapshot.belowThreshold === true) return true;
   const remaining = Number(snapshot.remaining);
+  if (!Number.isFinite(remaining)) return false;
+
   const floor = Number(floorUsd);
-  if (!Number.isFinite(remaining) || !Number.isFinite(floor) || floor <= 0) return false;
-  return remaining < floor;
+  if (Number.isFinite(floor) && floor > 0 && remaining < floor) return true;
+
+  const ratio = Number(floorRatio);
+  const grant = Number(snapshot.monthly?.cap);        // 本周期额度（推算值，与面板同源）
+  if (Number.isFinite(ratio) && ratio > 0 && Number.isFinite(grant) && grant > 0) {
+    return remaining / grant < ratio;
+  }
+  return false;
 }

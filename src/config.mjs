@@ -21,6 +21,8 @@ export const DEFAULTS = {
   // 不满足条件时一次都不打，命中后立刻记标记，因此开销可忽略。
   creditsProbeEnabled: true,
   creditsProbeBelowUsd: 1.0,
+  // 或低于「本周期额度」的这个比例（官方 Go $10 / Max 20× $300，固定金额不够用）
+  creditsProbeBelowRatio: 0.02,
   creditsProbeModel: 'deepseek/deepseek-v4-flash',
   creditsProbeTimeoutMs: 20000,
   sessionAffinityTtlMs: 1800000,
@@ -52,6 +54,7 @@ const ENV_MAP = {
   QUOTA_TIMEOUT_MS: ['quotaTimeoutMs', 'number'],
   CREDITS_PROBE_ENABLED: ['creditsProbeEnabled', 'boolean'],
   CREDITS_PROBE_BELOW_USD: ['creditsProbeBelowUsd', 'number'],
+  CREDITS_PROBE_BELOW_RATIO: ['creditsProbeBelowRatio', 'number'],
   CREDITS_PROBE_MODEL: ['creditsProbeModel', 'string'],
   CREDITS_PROBE_TIMEOUT_MS: ['creditsProbeTimeoutMs', 'number'],
   SESSION_AFFINITY_TTL_MS: ['sessionAffinityTtlMs', 'number'],

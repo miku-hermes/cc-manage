@@ -25,6 +25,26 @@ test('shouldProbeCredits：官方 belowThreshold 为真必探；余额低于阈�
   assert.equal(shouldProbeCredits({ ok: true, remaining: 0.01 }, -1), false);
 });
 
+test('shouldProbeCredits：固定金额之外，还要按「本周期额度的比例」兜（套餐额度差 30 倍）', () => {
+  const grant = (spend, remaining) => ({ ok: true, remaining, monthly: { used: spend, cap: spend + remaining } });
+
+  // Max 20× 那种大套餐：剩 $5 远高于 $1 的固定阈值，但相对 $300 额度只剩 1.7%
+  assert.equal(shouldProbeCredits(grant(295, 5), 1.0, 0.02), true, '大套餐要按比例兜住');
+  // 同一个 $5 放在 Go（$10 额度）上：剩 50%，不该打扰上游
+  assert.equal(shouldProbeCredits(grant(5, 5), 1.0, 0.02), false);
+
+  // 固定金额这条仍然管用（Go 剩 $0.5）
+  assert.equal(shouldProbeCredits(grant(9.5, 0.5), 1.0, 0.02), true);
+  // 主号线上原样：剩 $0.098 / 额度 $10
+  assert.equal(shouldProbeCredits(grant(9.936, 0.098), 1.0, 0.02), true);
+
+  // 没有月度额度可比（缺 monthly）→ 只用固定金额，不能因此漏探或乱探
+  assert.equal(shouldProbeCredits({ ok: true, remaining: 0.5 }, 1.0, 0.02), true);
+  assert.equal(shouldProbeCredits({ ok: true, remaining: 50 }, 1.0, 0.02), false);
+  // 比例阈值关掉（0）→ 退回固定金额
+  assert.equal(shouldProbeCredits(grant(295, 5), 1.0, 0), false);
+});
+
 // ── 单元：探针结论只能来自上游，不能瞎判 ──────────────────────────────
 test('probeAccountCredits：只有上游明确的余额不足才算没钱，其它错误一律不改判定', async (t) => {
   // 穷账号：mock 按账号返回真实的 400 insufficient credits 措辞
