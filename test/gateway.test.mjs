@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { startTestGateway, request, sleep } from './helpers.mjs';
+import { startTestGateway, request, sleep, createDomShim, runInlineScript } from './helpers.mjs';
 
 test('鉴权：无 key → 401，错的 sk-cg- key → 401，正确 key → 200', async (t) => {
   const ctx = await startTestGateway();
@@ -915,4 +915,106 @@ test('前台显示额度刷新频率，且文案由后端 quotaPoll 决定（不
   const d2 = JSON.parse((await request(`${ctx2.baseUrl}/api/status`)).body);
   assert.equal(d2.quotaPoll.idleIntervalMs, 120000, '间隔换了，下发值也要换');
   assert.equal(d2.quotaPoll.activeIntervalMs, 30000);
+});
+
+// ── 每个额度窗口「什么时候重置」（用户要求）─────────────────────────────
+// 用户问：「每 5 个小时是多久刷新？周的周期、每月的呢？」——页面要显示每个窗口
+// 还有多久重置。三个 resetAt 必须来自上游真实数据（5h/周来自 windowLimits，
+// 月来自 subscriptions.currentPeriodEnd），页面只做换算，不得编造时间。
+test('三个额度窗口的 resetAt 由上游原样透传，页面才有得显示', async (t) => {
+  const now = Date.now();
+  const fiveReset = Math.floor((now + 2 * 3600_000) / 1000);    // 2 小时后
+  const weekReset = Math.floor((now + 5 * 86400_000) / 1000);   // 5 天后
+  const monthReset = Math.floor((now + 20 * 86400_000) / 1000); // 20 天后
+
+  const ctx = await startTestGateway({
+    plans: {
+      user_test_alpha: {
+        fiveHour: { used: 1.5, cap: 3, resetAt: fiveReset },
+        weekly: { used: 3, cap: 6, resetAt: weekReset },
+        currentPeriodEnd: new Date(monthReset * 1000).toISOString(),
+      },
+    },
+  });
+  t.after(() => ctx.close());
+
+  await ctx.gateway.refreshAll();
+  const d = JSON.parse((await request(`${ctx.baseUrl}/api/status`)).body);
+  const q = d.accounts.find((a) => a.name === '账号A').lastQuota;
+  assert.ok(q && q.ok, '应有额度快照');
+  assert.equal(q.fiveHour.resetAt, fiveReset, '5h 窗口 resetAt 必须原样透传');
+  assert.equal(q.weekly.resetAt, weekReset, '周窗口 resetAt 必须原样透传');
+  assert.equal(q.monthly.resetAt, monthReset, '月窗口 resetAt 必须取自 currentPeriodEnd（ISO→秒）');
+
+  // 换一组数字，下发值必须跟着变（证明不是写死的）
+  ctx.upstream.setPlan('user_test_alpha', { fiveHour: { used: 2, cap: 3, resetAt: fiveReset + 60 } });
+  await ctx.gateway.refreshAll();
+  const d2 = JSON.parse((await request(`${ctx.baseUrl}/api/status`)).body);
+  assert.equal(d2.accounts.find((a) => a.name === '账号A').lastQuota.fiveHour.resetAt, fiveReset + 60,
+    '上游换了 resetAt，下发的也要换');
+
+  // 页面必须具备渲染能力（容器 + 两个换算函数）
+  const html = (await request(`${ctx.baseUrl}/`)).body;
+  assert.match(html, /function resetText/, '必须有「重置于 …」的渲染函数');
+  assert.match(html, /function untilText/, '必须有「还有多久」的换算');
+  assert.match(html, /class="bar-reset"/, '进度条下面要有重置时间的容器');
+  assert.match(html, /resetText\(w, \{ zeroMeansIdle/, '5h 窗口要按「空闲」语义特殊处理');
+});
+
+test('重置时间文案：未来 / 空闲 / 已过期 / 没有数据，四种边界都要说实话', async (t) => {
+  const ctx = await startTestGateway();
+  t.after(() => ctx.close());
+  const html = (await request(`${ctx.baseUrl}/`)).body;
+
+  // 真跑页面内联脚本（DOM 垫片 + 真接口），再直接调页面里的换算函数
+  const shim = createDomShim({
+    html,
+    fetchImpl: async (url, opts = {}) => {
+      const r = await request(`${ctx.baseUrl}${url}`, { method: opts?.method ?? 'GET', headers: opts?.headers ?? {}, body: opts?.body });
+      return { ok: r.status >= 200 && r.status < 300, status: r.status, json: async () => JSON.parse(r.body) };
+    },
+  });
+  const page = await runInlineScript(html, shim);
+  assert.equal(typeof page.resetText, 'function', '页面里应能取到 resetText');
+
+  const now = Date.now();
+  const at = (sec) => Math.floor((now + sec * 1000) / 1000);
+
+  // 5h：2 小时后 → 具体时间 + 还有多久，两个都要给
+  // 取值刻意避开整点（+30s）：页面脚本加载要几百毫秒，掐在整点上会算出
+  // 「1 小时 59 分」——那是测试的时间敏感，不是功能错。
+  const five = page.resetText({ resetAt: at(2 * 3600 + 30) }, { zeroMeansIdle: true });
+  assert.match(five, /^重置于 \d+\/\d+ \d{2}:\d{2}（还有 2 小时 0 分）$/, `5h 文案不对: ${five}`);
+
+  // 周：5 天后 → 用「天」，不要写成 120 小时
+  const week = page.resetText({ resetAt: at(5 * 86400 + 60) });
+  assert.match(week, /还有 5 天 0 小时/, `周文案不对: ${week}`);
+  assert.doesNotMatch(week, /120 小时/, '超过一天不要写成小时');
+
+  // 月：20 天后
+  assert.match(page.resetText({ resetAt: at(20 * 86400 + 60) }), /还有 20 天 0 小时/);
+
+  // resetAt=0 = 上游「还没开始用」，不是「马上重置」——这两种说法不能混
+  const idle = page.resetText({ resetAt: 0 }, { zeroMeansIdle: true });
+  assert.match(idle, /空闲中/, `空闲文案不对: ${idle}`);
+  assert.doesNotMatch(idle, /即将重置/, '空闲不等于即将重置');
+
+  // 文案里的绝对时间必须真的是未来（防止秒/毫秒换算又写错）
+  const abs = /重置于 (\d+)\/(\d+) (\d{2}):(\d{2})/.exec(five);
+  assert.ok(abs, `文案里应含具体时间: ${five}`);
+  const y = new Date().getFullYear();
+  let absMs = new Date(y, Number(abs[1]) - 1, Number(abs[2]), Number(abs[3]), Number(abs[4])).getTime();
+  // 跨年（12/31 加两小时就是次年）时上面按今年拼会差一年，先归一到最近的一次
+  const want = now + 2 * 3600_000 + 30_000;
+  if (Math.abs(absMs - want) > 180 * 86400_000) absMs += absMs > want ? -365 * 86400_000 : 365 * 86400_000;
+  assert.ok(Math.abs(absMs - want) < 600_000,
+    `文案里的时刻应≈2 小时后，实际 ${new Date(absMs).toISOString()}`);
+
+  // 已过期 → 即将重置
+  assert.match(page.resetText({ resetAt: at(-60) }), /即将重置/);
+
+  // 上游不给 resetAt（老数据）→ 宁可什么都不显示，也不编一个假时间
+  assert.equal(page.resetText({}), '', '没有 resetAt 时不得显示任何时间');
+  assert.equal(page.resetText(null), '');
+  assert.equal(page.resetText({ resetAt: 'not-a-date' }), '');
 });

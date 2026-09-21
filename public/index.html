@@ -49,6 +49,7 @@
     --info: #2f6ab3;
 
     /* 字阶 */
+    --fs-2xs: 10.5px;
     --fs-xs: 11px;
     --fs-sm: 13px;
     --fs-base: 14px;
@@ -395,6 +396,8 @@
   /* 进度条 */
   .bars { display: flex; flex-direction: column; gap: 14px; }
   .bar-group { display: block; }
+  /* 每个窗口什么时候重置 —— 和进度条同宽、比标签更弱 */
+  .bar-reset { margin-top: 4px; color: var(--text-tertiary); font-size: var(--fs-2xs); font-variant-numeric: tabular-nums; }
   .bar-head { display: flex; align-items: baseline; gap: 10px; font-size: var(--fs-xs); margin-bottom: 5px; }
   .bar-label { color: var(--text-secondary); }
   .bar-num { margin-left: auto; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
@@ -573,6 +576,58 @@ function relText(ts, at = Date.now()) {
   if (hour < 24) return hour + ' 小时前';
   return Math.floor(hour / 24) + ' 天前';
 }
+
+/**
+ * 上游的 resetAt 是**秒**（后端 normalizeResetAt 归一化成秒），而页面其他
+ * 时间戳（fetchedAt / pausedUntil）是**毫秒**。这里统一成毫秒再格式化：
+ * 不去后端改是因为「秒」是写进契约的单位，页面自己适配更安全。
+ * 小于 1e12 视为秒 —— 与后端 normalizeResetAt 同口径。
+ */
+function toMs(ts) {
+  const n = Number(ts);
+  if (!Number.isFinite(n) || n <= 0) return NaN;
+  return n < 1e12 ? n * 1000 : n;
+}
+
+/** 距今还有多久（向前看）。用于「还有 5 天 22 小时重置」。 */
+function untilText(ts, at = Date.now()) {
+  const t = Number(ts);
+  if (!Number.isFinite(t) || t <= 0) return null;
+  let sec = Math.round((t - at) / 1000);
+  if (sec <= 0) return '即将重置';
+  if (sec < 60) return sec + ' 秒';
+  const min = Math.floor(sec / 60);
+  if (min < 60) return min + ' 分钟';
+  const hour = Math.floor(min / 60);
+  if (hour < 24) return hour + ' 小时 ' + (min % 60) + ' 分';
+  const day = Math.floor(hour / 24);
+  return day + ' 天 ' + (hour % 24) + ' 小时';
+}
+
+/** 「9/26 23:21」这种短日期，用于和倒计时并列显示。 */
+function shortDate(ts) {
+  const d = new Date(toMs(ts));
+  if (Number.isNaN(d.getTime())) return '';
+  const p = (n) => String(n).padStart(2, '0');
+  return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
+/**
+ * 窗口重置文案。
+ * resetAt 是上游给的真实时间戳：5h/周来自 windowLimits，月来自 currentPeriodEnd。
+ * 5h 窗口在「还没开始用」时上游返回 0 —— 那不代表马上重置，而是首次调用后才起算，
+ * 所以这里要单独说清楚，不能显示成「即将重置」。
+ */
+function resetText(w, { zeroMeansIdle = false } = {}) {
+  const ts = toMs(w && w.resetAt);
+  if (!Number.isFinite(ts) || ts <= 0) {
+    return zeroMeansIdle ? '空闲中 · 首次使用后 5 小时重置' : '';
+  }
+  const until = untilText(ts);
+  if (!until) return '';
+  const abs = shortDate(ts);
+  return '重置于 ' + abs + '（还有 ' + until + '）';
+}
 /** 把毫秒写成「1 分钟」这种话。 */
 function fmtEvery(ms) {
   const s = Math.round(Number(ms) / 1000);
@@ -630,11 +685,13 @@ function bar(label, w) {
   const pct = has && typeof w.percent === 'number' ? w.percent : null;
   const used = has && typeof w.used === 'number' ? money(w.used) : '—';
   const cap = has && typeof w.cap === 'number' ? money(w.cap) : '—';
+  const reset = has ? resetText(w, { zeroMeansIdle: label.indexOf('5 小时') === 0 }) : '';
   return '<div class="bar-group">'
     + '<div class="bar-head"><span class="bar-label">' + label + '</span>'
     + '<span class="bar-num">' + used + ' / ' + cap + '</span>'
     + '<span class="bar-pct">' + pctText(pct) + '</span></div>'
     + '<div class="bar ' + cls(pct) + '"><i style="width:' + (pct === null ? 0 : Math.max(0, Math.min(100, pct))) + '%"></i></div>'
+    + (reset ? '<div class="bar-reset">' + esc(reset) + '</div>' : '')
     + '</div>';
 }
 

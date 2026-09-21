@@ -29,12 +29,28 @@ function sendJSON(res, status, obj) {
 }
 
 /**
+ * 把一个 plan 覆盖合并到基础设定上：顶层深合并一层，fiveHour / weekly 再合并一层。
+ * 必须是深合并 —— 浅合并下「只改 5h 窗口」的用例会把该账号的 monthlyCredits /
+ * totalCost 一并抹掉，而月窗口是 totalCost + remaining 推算的，会直接变 null。
+ */
+function mergePlan(base, override) {
+  const out = { ...base, ...override };
+  for (const w of ['fiveHour', 'weekly']) {
+    if (base[w] || override[w]) out[w] = { ...(base[w] ?? {}), ...(override[w] ?? {}) };
+  }
+  return out;
+}
+
+/**
  * 启动 mock 上游。
  * @returns {Promise<{server, port, url, seen, setPlan, setBehavior, close}>}
  */
 export async function startMockUpstream(opts = {}) {
   // 传入的 plans 覆盖默认设定（默认设定里含 §9 面板演示账号与测试账号）
-  const plans = new Map(Object.entries({ ...DEFAULT_PLANS, ...(opts.plans ?? {}) }));
+  const plans = new Map(Object.entries(DEFAULT_PLANS));
+  for (const [key, override] of Object.entries(opts.plans ?? {})) {
+    plans.set(key, mergePlan(plans.get(key) ?? {}, override));
+  }
   const seen = []; // 每个请求的 { method, url, headers, body }
   const behavior = {
     failNext5xx: 0, quotaError: false, delayMs: 0,
@@ -115,7 +131,12 @@ export async function startMockUpstream(opts = {}) {
         }
         if (path === '/alpha/billing/subscriptions') {
           return sendJSON(res, 200, {
-            data: { planId: plan.planId ?? 'mock-plan', status: 'active', currentPeriodStart: '2026-09-01T00:00:00Z', currentPeriodEnd: '2026-10-01T00:00:00Z' },
+            data: {
+              planId: plan.planId ?? 'mock-plan', status: 'active',
+              // 周期起止可由 plans 覆盖（默认值保持原样），供「月窗口重置时间」用例固定时间点
+              currentPeriodStart: plan.currentPeriodStart ?? '2026-09-01T00:00:00Z',
+              currentPeriodEnd: plan.currentPeriodEnd ?? '2026-10-01T00:00:00Z',
+            },
           });
         }
         if (path === '/alpha/usage/summary') {
@@ -195,7 +216,7 @@ export async function startMockUpstream(opts = {}) {
     seen,
     behavior,
     setPlan(key, plan) {
-      plans.set(key, { ...(plans.get(key) ?? {}), ...plan });
+      plans.set(key, mergePlan(plans.get(key) ?? {}, plan));
     },
     setBehavior(patch) {
       Object.assign(behavior, patch);
