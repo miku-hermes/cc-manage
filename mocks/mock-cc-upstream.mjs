@@ -124,8 +124,19 @@ export async function startMockUpstream(opts = {}) {
               freeCredits: plan.freeCredits ?? 0,
             },
             windowLimits: {
-              fiveHour: { used: plan.fiveHour?.used ?? 0, cap: plan.fiveHour?.cap ?? 100, resetAt: plan.fiveHour?.resetAt ?? nowSec + 3600 },
-              weekly: { used: plan.weekly?.used ?? 0, cap: plan.weekly?.cap ?? 500, resetAt: plan.weekly?.resetAt ?? nowSec + 86400 },
+              limited: true,
+              // 上游的权威「哪个窗口超了」标记（实测真实报文里是窗口名字符串）
+              exceeded: plan.exceeded ?? null,
+              fiveHour: {
+                used: plan.fiveHour?.used ?? 0, cap: plan.fiveHour?.cap ?? 100,
+                resetAt: plan.fiveHour?.resetAt ?? nowSec + 3600,
+                exceeded: plan.fiveHour?.exceeded === true,
+              },
+              weekly: {
+                used: plan.weekly?.used ?? 0, cap: plan.weekly?.cap ?? 500,
+                resetAt: plan.weekly?.resetAt ?? nowSec + 86400,
+                exceeded: plan.weekly?.exceeded === true,
+              },
             },
           });
         }

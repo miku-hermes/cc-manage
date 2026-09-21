@@ -453,7 +453,7 @@ test('余额不足的账号不可被选中；额度变多（充值）后自动�
   s3.recordQuota(legacy[0], { ...quotaWith({ used: 0, cap: 3 }), remaining: 0.05 });
   s3.runtime(legacy[0]).creditsExhausted = { at: flagAt, remaining: 0.05 };   // 模拟老数据
   s3.recordQuota(legacy[0], { ...quotaWith({ used: 0, cap: 3 }), remaining: 0.05 });
-  assert.match(s3.runtime(legacy[0]).lastError, /余额不足/, '老标记也要能说明原因');
+  assert.match(s3.runtime(legacy[0]).lastError, /额度已用完/, '老标记也要能说明原因');
 
   // 充值到账 → 自动解除
   s.recordQuota(accounts[0], { ...quotaWith({ used: 0, cap: 3 }), remaining: 20 });

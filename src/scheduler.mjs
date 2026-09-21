@@ -243,7 +243,7 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
           // 仍被标记：把原因和**原始**时间还原（不是现在 —— 面板要显示的是
           // 「什么时候发现它没钱的」，不是「上次刷新时刻」）。
           // 老版本的持久化标记没有 message 字段，用兜底文案，别让面板说不出话。
-          rt.lastError = flag.message || '余额不足（需充值或等周期刷新）';
+          rt.lastError = flag.message || '额度已用完（等周期刷新）';
           rt.lastErrorAt = flag.at ?? null;
         }
       }
@@ -277,7 +277,7 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
    * 上游明确「余额不足」：标记账号级停用（不写 pausedUntil）。
    * 记下当时的 remaining 作为对比基线，充值后 recordQuota 会自动解除。
    */
-  function markCreditsExhausted(account, message = '余额不足：上游拒付。加购额度不受 5h/周窗口限制，或等月度周期刷新', now = Date.now()) {
+  function markCreditsExhausted(account, message = '上游拒付：额度已用完（insufficient credits）', now = Date.now()) {
     const rt = runtime(account);
     // 原因存进标记里：运行时状态会持久化到 state.json，重启后 recordQuota 会把
     // lastError 清掉，若不还原，面板就会只剩「余额不足」而说不出为什么。

@@ -699,7 +699,10 @@ function statusText(a) {
   if (a.authInvalid) return { t: '鉴权失效', dot: 'invalid' };
   if (!a.enabled) return { t: '已停用', dot: 'paused' };
   if (a.paused) return { t: '暂停中', dot: 'paused' };
-  if (a.creditsExhausted) return { t: '余额不足', dot: 'invalid' };
+  // 额度耗尽统一口径：周/5 小时窗口用完、月额度用完，都说「已用完」而不是笼统的
+  // 「不可调度」——用户要的正是这种可读性（副号1 = 周用完，主号 = 月用完）。
+  if (a.exhausted && a.exhausted.label) return { t: a.exhausted.label, dot: 'invalid' };
+  if (a.creditsExhausted) return { t: '余额不足', dot: 'invalid' };   // 兼容旧后端
   if (a.authInvalid) return { t: '鉴权失效', dot: 'invalid' };
   if (!a.available) return { t: '不可调度', dot: 'invalid' };
   return { t: '可用', dot: '' };
@@ -730,7 +733,15 @@ function card(a) {
   if (a.paused) tags.push('<span class="tag warn">暂停至 ' + esc(timeText(a.pausedUntil)) + '</span>');
   if (a.authInvalid) tags.push('<span class="tag bad">鉴权失效</span>');
   // 余额不足和「额度打满」不一样：5h 窗口等了会自己回来，钱不会 —— 说清楚要充值
-  if (a.creditsExhausted) tags.push('<span class="tag bad">余额不足 · 需充值</span>');
+  if (a.exhausted && a.exhausted.label) {
+    // 带上恢复时间（窗口/月度都有）——比「需充值」有用得多，也不逼人花钱
+    const reset = Number(a.exhausted.resetAt) > 0
+      ? ' · ' + shortDate(Number(a.exhausted.resetAt)) + ' 重置'
+      : '';
+    tags.push('<span class="tag bad">' + esc(a.exhausted.label + reset) + '</span>');
+  } else if (a.creditsExhausted) {
+    tags.push('<span class="tag bad">余额不足</span>');   // 兼容旧后端
+  }
   tags.push('<span class="tag info">在途 ' + esc(num(a.concurrency)) + '</span>');
   if (q && q.plan) tags.push('<span class="tag">套餐 ' + esc(q.plan.planId ?? '-') + '</span>');
 

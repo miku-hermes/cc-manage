@@ -1050,7 +1050,7 @@ test('余额不足的账号：换号重试给客户端正常响应，且它自�
   const beta = d.accounts.find((a) => a.name === '账号B');
   assert.equal(alpha.creditsExhausted, true, '穷号要带 creditsExhausted 标记');
   assert.equal(alpha.available, false, '穷号必须不可调度');
-  assert.match(alpha.lastError, /余额不足/, `面板要给出原因，实际: ${alpha.lastError}`);
+  assert.match(alpha.lastError, /额度已用完/, `面板要给出原因，实际: ${alpha.lastError}`);
   assert.equal(alpha.paused, false, '余额不足不是 5h 暂停，不能显示「暂停至 X」');
   assert.equal(beta.available, true, '健康号不受影响');
   assert.equal(beta.creditsExhausted, false);
@@ -1092,7 +1092,7 @@ test('全部账号都余额不足：如实把上游错误回给客户端，不�
   assert.equal(d.summary.available, 0, '/health 与面板口径应显示可用 0');
 });
 
-test('面板：余额不足的账号必须渲染成「余额不足 · 需充值」，不能显示「可调度」', async (t) => {
+test('面板：额度用尽的账号必须渲染成「额度已用完 + 重置时间」，不能显示「可调度」', async (t) => {
   const ctx = await startTestGateway();
   t.after(() => ctx.close());
   const html = (await request(`${ctx.baseUrl}/`)).body;
@@ -1104,18 +1104,102 @@ test('面板：余额不足的账号必须渲染成「余额不足 · 需充值�
     fiveHour: { used: 0, cap: 3, percent: 0, usedRatio: 0, resetAt: 0 }, weekly: null, monthly: null,
     usage: {}, percent: { fiveHour: 0, weekly: null, monthly: null }, fetchedAt: Date.now() });
 
+  const periodEndSec = Math.floor(Date.parse('2026-10-11T11:41:14.000Z') / 1000);
   const broke = page.card({ name: '穷号', keyId: 'aaaaaaaa', enabled: true, available: false,
     creditsExhausted: true, creditsExhaustedAt: Date.now(), concurrency: 0, paused: false,
-    pausedUntil: null, authInvalid: false, lastError: '余额不足（上游：insufficient credits）',
+    pausedUntil: null, authInvalid: false, lastError: '上游拒付：额度已用完（insufficient credits）',
+    exhausted: { kind: 'monthly', label: '月额度已用完', resetAt: periodEndSec },
     lastQuota: quota(0.098) });
-  assert.match(broke, /余额不足 · 需充值/, '穷号要有明确的充值提示');
-  assert.match(broke, />余额不足</, '状态词要写原因，不能笼统写「不可调度」');
+  assert.match(broke, /月额度已用完/, '要说清是「月」额度用完（与副号1 的「周额度已用完」同一类说法）');
+  assert.match(broke, /重置/, '要给恢复时间');
+  assert.doesNotMatch(broke, /需充值/, '不往充值上引导');
   assert.doesNotMatch(broke, /可调度/, '绝不能再显示「可调度」');
-  assert.doesNotMatch(broke, /暂停至/, '余额不足不是 5h 暂停，不该出现「暂停至 X」');
+  assert.doesNotMatch(broke, /暂停至/, '额度用完不是 5h 暂停，不该出现「暂停至 X」');
 
   const healthy = page.card({ name: '健康', keyId: 'bbbbbbbb', enabled: true, available: true,
-    creditsExhausted: false, creditsExhaustedAt: null, concurrency: 0, paused: false,
+    creditsExhausted: false, creditsExhaustedAt: null, exhausted: null, concurrency: 0, paused: false,
     pausedUntil: null, authInvalid: false, lastError: null, lastQuota: quota(9.9) });
   assert.match(healthy, /可调度/);
-  assert.doesNotMatch(healthy, /余额不足/, '健康账号不该被误标');
+  assert.doesNotMatch(healthy, /余额不足|额度已用完/, '健康账号不该被误标');
+});
+
+// ── 面板口径：「额度已用完」要分得清种类 + 带上恢复时间 ────────────────
+// 用户要求：主号的状态要和副号1 归成同一类说法 —— 副号1 = 周额度用完，
+// 主号 = 月额度用完，都要能一眼看出「什么东西用完了、什么时候回来」，
+// 而不是笼统的「不可调度」或往充值上引导。
+test('额度已用完的三种口径：周窗口 / 月额度 / 其他余额不足，各自带恢复时间', async (t) => {
+  const periodEnd = '2026-10-11T11:41:14.000Z';               // 主号线上真实周期结束
+  const periodEndSec = Math.floor(Date.parse(periodEnd) / 1000);
+  const weekReset = Math.floor((Date.now() + 25 * 3600_000) / 1000);
+
+  // ① 主号那种：上游对推理拒付（探针）+ 月度确实花光
+  const ctx = await startTestGateway({
+    plans: {
+      user_test_alpha: {
+        creditsExhausted: true, monthlyCredits: 0.098, purchasedCredits: 0, freeCredits: 0,
+        totalCost: 9.936, currentPeriodEnd: periodEnd,
+      },
+      // ② 副号那种：上游点名周窗口超了
+      user_test_beta: { exceeded: 'weekly', weekly: { used: 6.003, cap: 6, resetAt: weekReset, exceeded: true } },
+    },
+  });
+  t.after(() => ctx.close());
+  await ctx.gateway.refreshAll();
+
+  const d = JSON.parse((await request(`${ctx.baseUrl}/api/status`)).body);
+  const alpha = d.accounts.find((a) => a.name === '账号A');
+  const beta = d.accounts.find((a) => a.name === '账号B');
+
+  // 主号 = 月额度已用完，恢复时间 = 订阅周期结束
+  assert.equal(alpha.exhausted?.kind, 'monthly', `主号应归为「月额度用完」，实际 ${JSON.stringify(alpha.exhausted)}`);
+  assert.equal(alpha.exhausted.label, '月额度已用完');
+  assert.equal(alpha.exhausted.resetAt, periodEndSec, '恢复时间必须取自 currentPeriodEnd');
+  assert.equal(alpha.available, false);
+
+  // 副号 = 周额度已用完，恢复时间 = 该窗口 resetAt
+  assert.equal(beta.exhausted?.kind, 'window');
+  assert.equal(beta.exhausted.window, 'weekly');
+  assert.equal(beta.exhausted.label, '周额度已用完');
+  assert.equal(beta.exhausted.resetAt, weekReset);
+  assert.equal(beta.available, false);
+
+  // 面板：状态词直接写「已用完」+ 标签带重置日期，且不再出现「需充值」这种引导
+  const shim = createDomShim({ html: (await request(`${ctx.baseUrl}/`)).body, fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({}) }) });
+  const page = await runInlineScript((await request(`${ctx.baseUrl}/`)).body, shim);
+  assert.equal(page.statusText(alpha).t, '月额度已用完');
+  assert.equal(page.statusText(beta).t, '周额度已用完');
+  const cardA = page.card(alpha);
+  const cardB = page.card(beta);
+  assert.match(cardA, /月额度已用完/, '卡片状态词要说清是「月」额度');
+  assert.match(cardA, /重置/, '要给恢复时间');
+  assert.match(cardB, /周额度已用完/);
+  assert.doesNotMatch(cardA, /需充值/, '不往充值上引导（用户明确要求）');
+  assert.doesNotMatch(cardA, /可调度/, '不能再显示可调度');
+});
+
+test('探针拒付但月度没花光：只能说「余额不足」，不许冒充「月额度已用完」', async (t) => {
+  const ctx = await startTestGateway({
+    plans: {
+      // 余额低到会触发探针（$0.5），但月度才用 88.9%（<99%）→ 不能说是「月度用完」
+      user_test_alpha: { creditsExhausted: true, monthlyCredits: 0.5, purchasedCredits: 0, freeCredits: 0, totalCost: 4 },
+    },
+  });
+  t.after(() => ctx.close());
+  await ctx.gateway.refreshAll();
+
+  const d = JSON.parse((await request(`${ctx.baseUrl}/api/status`)).body);
+  const alpha = d.accounts.find((a) => a.name === '账号A');
+  assert.equal(alpha.exhausted?.kind, 'balance', '没花光就不能说是月度用完');
+  assert.equal(alpha.exhausted.label, '余额不足');
+  assert.equal(alpha.exhausted.resetAt, null, '没有周期可等就不要编一个恢复时间');
+  assert.equal(alpha.available, false);
+});
+
+test('健康账号：exhausted 必须是 null（不能凭空标一个「用完」）', async (t) => {
+  const ctx = await startTestGateway();
+  t.after(() => ctx.close());
+  await ctx.gateway.refreshAll();
+  const d = JSON.parse((await request(`${ctx.baseUrl}/api/status`)).body);
+  for (const a of d.accounts) assert.equal(a.exhausted, null, `${a.name} 不该被标额度用完`);
+  assert.equal(d.accounts.find((x) => x.name === '账号A').available, true);
 });

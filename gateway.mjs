@@ -358,7 +358,7 @@ export async function startGateway(overrides = {}) {
     // 已经因为窗口打满/暂停/鉴权失效而不可调度的账号不必探 —— 反正不会选它，
     // 探针是「我要用它之前的最后一道确认」，不是巡检。
     if (!scheduler.isAvailable(account)) return null;
-    if (!shouldProbeCredits(snapshot, config.creditsProbeBelowUsd)) return null;
+    if (!shouldProbeCredits(snapshot, config.creditsProbeBelowUsd, config.creditsProbeBelowRatio)) return null;
     const result = await probeAccountCredits(account.key, {
       baseUrl: config.upstreamProxyUrl,
       model: config.creditsProbeModel,
@@ -527,6 +527,38 @@ export async function startGateway(overrides = {}) {
    * 公开面板（/api/status）不需要它，绝不该下发到浏览器。只有已登录的后台
    * （/api/admin/accounts）才带上，用于和上游站点对账。
    */
+  // 月额度「算用完」的百分比：**只影响文案**，不影响调度判定（调度只看
+  // 窗口打满 / 探针实测拒付）。官方 usage_exceeded 的首因就是「月度额度用完」。
+  const MONTHLY_SPENT_PCT = 99;
+
+  /**
+   * 面板口径的「额度已用完」——把不同来源的耗尽归纳成一句话 + 恢复时间：
+   *   ① 上游点名的滚动窗口（权威标记 exceeded）→ 周 / 5 小时额度已用完
+   *   ② 探针实测上游拒付 + 月度确实花光      → 月额度已用完
+   *   ③ 探针实测拒付但月度没花光            → 余额不足（不冒充额度用完）
+   * @returns {{kind: string, label: string, resetAt: number|null}|null}
+   */
+  function exhaustedView(rt, q) {
+    const win = q?.exceededWindow;
+    if (win === 'weekly' || win === 'fiveHour') {
+      const w = win === 'weekly' ? q.weekly : q.fiveHour;
+      return {
+        kind: 'window',
+        window: win,
+        label: win === 'weekly' ? '周额度已用完' : '5 小时额度已用完',
+        resetAt: w?.resetAt ?? null,
+      };
+    }
+    if (rt.creditsExhausted) {
+      const pct = Number(q?.monthly?.percent);
+      const spent = Number.isFinite(pct) && pct >= MONTHLY_SPENT_PCT;
+      return spent
+        ? { kind: 'monthly', label: '月额度已用完', resetAt: q?.monthly?.resetAt ?? null }
+        : { kind: 'balance', label: '余额不足', resetAt: null };
+    }
+    return null;
+  }
+
   function accountView(account, { withKeyPrefix = false } = {}) {
     const rt = scheduler.runtime(account);
     const q = rt.lastQuota;
@@ -541,9 +573,11 @@ export async function startGateway(overrides = {}) {
       pausedUntil: rt.pausedUntil,
       paused: !!(rt.pausedUntil && rt.pausedUntil > Date.now()),
       authInvalid: !!rt.authInvalid,
-      // 上游明确说余额不足：面板要能和「暂停到 X」区分开（充值或周期刷新才恢复）
+      // 上游明确说余额不足：面板要能把它和「暂停到 X」区分开（充值或周期刷新才恢复）
       creditsExhausted: !!rt.creditsExhausted,
       creditsExhaustedAt: rt.creditsExhausted?.at ?? null,
+      // 统一口径的「额度已用完」（含恢复时间），与窗口耗尽同一类说法
+      exhausted: exhaustedView(rt, q),
       lastError: rt.lastError ? redact(rt.lastError, secrets) : null,
       lastErrorAt: rt.lastErrorAt,
       lastQuota: q
@@ -699,6 +733,7 @@ export async function startGateway(overrides = {}) {
       authInvalid: !!rt.authInvalid,
       creditsExhausted: !!rt.creditsExhausted,
       creditsExhaustedAt: rt.creditsExhausted?.at ?? null,
+      exhausted: exhaustedView(rt, rt.lastQuota),
     };
   }
 
