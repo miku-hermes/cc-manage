@@ -1283,3 +1283,144 @@ test('额度已用完却还显示剩余 0.10：要标「不可支付」，不能
     exhausted: { kind: 'window', window: 'weekly', label: '周额度已用完', resetAt: 0 }, lastQuota: q(4) });
   assert.doesNotMatch(weekly, /money-note/, '周窗口超限只是排队，钱没坏');
 });
+
+// ── 顶部「剩余额度」：死余额（完全用不了）要扣掉，窗口卡住的照常计入 ─────
+test('顶部余额：月额度用完的死余额要扣（13.66），周窗口卡住的钱照常算', async (t) => {
+  const ctx = await startTestGateway();
+  t.after(() => ctx.close());
+  const html = (await request(`${ctx.baseUrl}/`)).body;
+  const shim = createDomShim({ html, fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({}) }) });
+  const page = await runInlineScript(html, shim);
+
+  const acc = (remaining, exhausted) => ({
+    enabled: true, concurrency: 0, paused: false, pausedUntil: null, authInvalid: false, lastError: null,
+    exhausted, lastQuota: { ok: true, remaining },
+  });
+  const d = {
+    summary: { accounts: 3, available: 1, paused: 0, concurrency: 0 },
+    stats: { total: 0, errors: 0, totalTokens: 0 },
+    accounts: [
+      acc(9.66, null),
+      acc(0.098, { kind: 'monthly', label: '月额度已用完', resetAt: 0 }),
+      acc(4.00, { kind: 'window', window: 'weekly', label: '周额度已用完', resetAt: 0 }),
+    ],
+    now: Date.now(),
+  };
+
+  page.render(d);
+  assert.equal(page.document.getElementById('balance').textContent, '13.66',
+    '9.66 + 0.098(死) + 4.00(窗口) → 13.75 − 0.10 = 13.66');
+  const note = page.document.getElementById('bal-dead');
+  assert.equal(note.textContent, '已扣除 0.10 死余额');
+  assert.equal(note.hidden, false);
+});
+
+test('顶部余额：周窗口卡住的账号不许扣（available=false 也不扣）', async (t) => {
+  const ctx = await startTestGateway();
+  t.after(() => ctx.close());
+  const html = (await request(`${ctx.baseUrl}/`)).body;
+  const shim = createDomShim({ html, fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({}) }) });
+  const page = await runInlineScript(html, shim);
+
+  const acc = (remaining, available, exhausted) => ({
+    enabled: true, concurrency: 0, paused: false, pausedUntil: null, authInvalid: false, lastError: null,
+    available, exhausted, lastQuota: { ok: true, remaining },
+  });
+  const d = {
+    summary: { accounts: 1, available: 0, paused: 0, concurrency: 0 },
+    stats: { total: 0, errors: 0, totalTokens: 0 },
+    accounts: [
+      acc(4.00, false, { kind: 'window', window: 'weekly', label: '周额度已用完', resetAt: 0 }),
+    ],
+    now: Date.now(),
+  };
+
+  page.render(d);
+  assert.equal(page.document.getElementById('balance').textContent, '4.00',
+    '窗口卡住只是排队，钱要全额计入，不能因为 available=false 就扣');
+  const note = page.document.getElementById('bal-dead');
+  assert.equal(note.textContent, '');
+  assert.equal(note.hidden, true);
+});
+
+test('顶部余额：多个 balance 死账号的余额全扣，正常账号照常计入', async (t) => {
+  const ctx = await startTestGateway();
+  t.after(() => ctx.close());
+  const html = (await request(`${ctx.baseUrl}/`)).body;
+  const shim = createDomShim({ html, fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({}) }) });
+  const page = await runInlineScript(html, shim);
+
+  const acc = (remaining, exhausted) => ({
+    enabled: true, concurrency: 0, paused: false, pausedUntil: null, authInvalid: false, lastError: null,
+    exhausted, lastQuota: { ok: true, remaining },
+  });
+  const d = {
+    summary: { accounts: 3, available: 1, paused: 0, concurrency: 0 },
+    stats: { total: 0, errors: 0, totalTokens: 0 },
+    accounts: [
+      acc(1.5, { kind: 'balance', label: '余额不足', resetAt: null }),
+      acc(0.5, { kind: 'balance', label: '余额不足', resetAt: null }),
+      acc(2.0, null),
+    ],
+    now: Date.now(),
+  };
+
+  page.render(d);
+  assert.equal(page.document.getElementById('balance').textContent, '2.00',
+    '2.0 + 1.5(死) + 0.5(死) = 4.0 − 2.0 = 2.00');
+  const note = page.document.getElementById('bal-dead');
+  assert.equal(note.textContent, '已扣除 2.00 死余额');
+  assert.equal(note.hidden, false);
+});
+
+test('顶部余额：没有死余额时全额计入，不显示「已扣除 0.00」', async (t) => {
+  const ctx = await startTestGateway();
+  t.after(() => ctx.close());
+  const html = (await request(`${ctx.baseUrl}/`)).body;
+  const shim = createDomShim({ html, fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({}) }) });
+  const page = await runInlineScript(html, shim);
+
+  const acc = (remaining, exhausted) => ({
+    enabled: true, concurrency: 0, paused: false, pausedUntil: null, authInvalid: false, lastError: null,
+    exhausted, lastQuota: { ok: true, remaining },
+  });
+  const d = {
+    summary: { accounts: 2, available: 2, paused: 0, concurrency: 0 },
+    stats: { total: 0, errors: 0, totalTokens: 0 },
+    accounts: [acc(9.66, null), acc(4.00, null)],
+    now: Date.now(),
+  };
+
+  page.render(d);
+  assert.equal(page.document.getElementById('balance').textContent, '13.66', '全正常 → 全额');
+  const note = page.document.getElementById('bal-dead');
+  assert.equal(note.textContent, '', '不该出现「已扣除 0.00」');
+  assert.equal(note.hidden, true);
+});
+
+test('顶部余额：拿不到快照的账号当 0，不产生 NaN', async (t) => {
+  const ctx = await startTestGateway();
+  t.after(() => ctx.close());
+  const html = (await request(`${ctx.baseUrl}/`)).body;
+  const shim = createDomShim({ html, fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({}) }) });
+  const page = await runInlineScript(html, shim);
+
+  const d = {
+    summary: { accounts: 2, available: 1, paused: 0, concurrency: 0 },
+    stats: { total: 0, errors: 0, totalTokens: 0 },
+    accounts: [
+      { enabled: true, concurrency: 0, paused: false, pausedUntil: null, authInvalid: false, lastError: null,
+        exhausted: null, lastQuota: null },
+      { enabled: true, concurrency: 0, paused: false, pausedUntil: null, authInvalid: false, lastError: null,
+        exhausted: { kind: 'balance', label: '余额不足', resetAt: null }, lastQuota: null },
+    ],
+    now: Date.now(),
+  };
+
+  page.render(d);
+  assert.equal(page.document.getElementById('balance').textContent, '0.00',
+    '没有快照当 0，不能出现 NaN/—');
+  const note = page.document.getElementById('bal-dead');
+  assert.equal(note.textContent, '');
+  assert.equal(note.hidden, true);
+});

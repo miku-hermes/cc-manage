@@ -280,6 +280,7 @@
     font-variant-numeric: tabular-nums; letter-spacing: -.01em; color: var(--text-primary);
   }
   .hero-balance .bal-label { font-size: var(--fs-sm); color: var(--text-secondary); }
+  .hero-balance .bal-note { font-size: var(--fs-2xs); color: var(--text-tertiary); }
   .hero-sub {
     margin: 2px 0 0; font-size: var(--fs-sm); color: var(--text-secondary);
     display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
@@ -504,7 +505,7 @@
       <h1 id="greeting" class="greeting">下午好</h1>
       <div class="hero-balance">
         <b id="balance">—</b>
-        <span class="bal-label">剩余额度（USD）</span>
+        <span class="bal-label">剩余额度（USD）</span><span class="bal-note" id="bal-dead" hidden></span>
       </div>
       <p class="hero-sub">网关运行中 <span id="health" class="pill">加载中…</span></p>
       <p class="hero-meta"><span id="upstream"></span><span id="updated"></span><span id="cadence" class="hero-cadence"></span></p>
@@ -832,7 +833,20 @@ function render(d) {
 
   // 余额：全页最大字号的主角
   const remaining = accounts.reduce((sum, a) => (a.lastQuota && Number.isFinite(a.lastQuota.remaining) ? sum + a.lastQuota.remaining : sum), 0);
-  $('balance').textContent = accounts.length ? money(remaining) : '—';
+  const deadRemaining = accounts.reduce((sum, a) => (
+    a.exhausted && (a.exhausted.kind === 'monthly' || a.exhausted.kind === 'balance')
+      && a.lastQuota && Number.isFinite(a.lastQuota.remaining)
+    ? sum + a.lastQuota.remaining : sum), 0);
+  const usable = accounts.length ? remaining - deadRemaining : NaN;
+  $('balance').textContent = accounts.length ? money(usable) : '—';
+  const deadEl = $('bal-dead');
+  if (deadRemaining >= 0.005) {
+    deadEl.textContent = '已扣除 ' + money(deadRemaining) + ' 死余额';
+    deadEl.hidden = false;
+  } else {
+    deadEl.textContent = '';
+    deadEl.hidden = true;
+  }
 
   paintKpi('kpi-box-accounts', 'kpi-accounts', s.accounts, {});
   paintKpi('kpi-box-available', 'kpi-available', s.available, { kind: 'warning', warnWhen: (v) => Number(s.accounts) > v });
