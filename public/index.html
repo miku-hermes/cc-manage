@@ -391,6 +391,13 @@
   .card-money { margin: 14px 0 2px; display: flex; align-items: baseline; gap: 8px; }
   .card-money b { font-size: var(--fs-xl); font-weight: 700; font-variant-numeric: tabular-nums; }
   .card-money small { font-size: var(--fs-sm); color: var(--text-secondary); }
+  /* 账上还剩零头、但周期额度已用完 → 这点钱付不起任何请求（上游实测拒付）。
+     标出来，免得「剩余 0.10」和「额度已用完」两个数字互相打脸。 */
+  .card-money .money-note {
+    align-self: center; margin-left: 2px; padding: 1px 7px; border-radius: var(--pill);
+    font-size: var(--fs-2xs); color: var(--danger);
+    border: 1px solid var(--danger); background: var(--danger-light);
+  }
   .card-credits { font-size: var(--fs-xs); color: var(--text-secondary); }
 
   /* 进度条 */
@@ -725,8 +732,17 @@ function freshHTML(fetchedAt) {
     + '>' + esc(f.text) + '</div>';
 }
 
+/* 账上还有没有钱（拿不到快照就当没有，避免误标） */
+function q0Remaining(a) {
+  const q = a && a.lastQuota;
+  return q && Number.isFinite(q.remaining) ? q.remaining : 0;
+}
+
 function card(a) {
   const ex = a.exhausted || null;   // 统一口径的「额度已用完」（含恢复时间）
+  // 已证明「钱」用完（月度额度 / 余额）、账上却还有零头：那点钱付不起任何请求，必须标出来。
+  // 只限钱的原因 —— 周窗口超限只是排队，等窗口重置钱照用，说成"不可支付"是错的。
+  const staleMoney = !!ex && (ex.kind === 'monthly' || ex.kind === 'balance') && Number(q0Remaining(a)) > 0;
   const q = a.lastQuota;
   const c = q && q.credits ? q.credits : null;
   const st = statusText(a);
@@ -757,7 +773,10 @@ function card(a) {
     + (q && q.displayName ? '<span class="card-display">' + esc(q.displayName) + '</span>' : '') + '</h2>'
     + '<span class="status"><span class="dot" aria-hidden="true"></span>' + st.t + '</span></div>'
     // 前台只显示备注名（h2 里）+ 上游显示名，不下发也不渲染 key 的任何片段
-    + '<div class="card-money"><b>' + money(q ? q.remaining : null) + '</b><small>剩余额度</small></div>'
+    + '<div class="card-money"' + (staleMoney ? ' title="周期额度已用完，账上零头无法支付任何请求（上游实测拒付）"' : '') + '>'
+    + '<b>' + money(q ? q.remaining : null) + '</b><small>剩余额度</small>'
+    + (staleMoney ? '<span class="money-note">不可支付</span>' : '')
+    + '</div>'
     + (c
       ? '<div class="card-credits">月度 ' + money(c.monthlyCredits) + ' · 购买 ' + money(c.purchasedCredits) + ' · 赠送 ' + money(c.freeCredits) + '</div>'
       : '<div class="card-credits">尚未获取额度快照</div>')

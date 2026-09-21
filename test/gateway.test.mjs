@@ -1245,3 +1245,41 @@ test('进度条只报百分比（金额收进 title），被证明用完的窗�
   assert.match(ok, /本月周期<\/span><span class="bar-pct">2\.0%<\/span>/);
   assert.match(ok, /可调度/);
 });
+
+// ── 账上还剩零头、但已证明付不起 → 必须标「不可支付」 ─────────────────
+test('额度已用完却还显示剩余 0.10：要标「不可支付」，不能与「已用完」互相打脸', async (t) => {
+  const ctx = await startTestGateway();
+  t.after(() => ctx.close());
+  const html = (await request(`${ctx.baseUrl}/`)).body;
+  const shim = createDomShim({ html, fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({}) }) });
+  const page = await runInlineScript(html, shim);
+
+  const q = (remaining) => ({ ok: true, displayName: 'x', plan: null, remaining, credits: { monthlyCredits: remaining, purchasedCredits: 0, freeCredits: 0 },
+    fiveHour: { used: 0, cap: 3, percent: 0, usedRatio: 0, resetAt: 0 },
+    weekly: { used: 3.9, cap: 6, percent: 65, usedRatio: 0.65, resetAt: 0 },
+    monthly: { used: 9.936, cap: 10, percent: 99.4, usedRatio: 0.994, resetAt: 0 },
+    usage: {}, percent: {}, fetchedAt: Date.now() });
+  const base = { enabled: true, concurrency: 0, paused: false, pausedUntil: null, authInvalid: false, lastError: null };
+
+  // ① 主号：周期额度用完 + 账上还剩 0.098 → 标「不可支付」，并解释得出来
+  const spent = page.card({ ...base, name: '主号', keyId: 'aaaaaaaa', available: false, creditsExhausted: true,
+    exhausted: { kind: 'monthly', label: '月额度已用完', resetAt: 0 }, lastQuota: q(0.098) });
+  assert.match(spent, /<b>0\.10<\/b><small>剩余额度<\/small><span class="money-note">不可支付<\/span>/,
+    '剩下的零头要标成不可支付，否则「剩余 0.10」和「月额度已用完」互相打脸');
+  assert.match(spent, /title="周期额度已用完，账上零头无法支付任何请求（上游实测拒付）"/, '悬停要能问出为什么');
+
+  // ② 账上真的没钱（0）→ 没有"零头"可标，不该出现这个标签
+  const zero = page.card({ ...base, name: '空号', keyId: 'bbbbbbbb', available: false, creditsExhausted: true,
+    exhausted: { kind: 'monthly', label: '月额度已用完', resetAt: 0 }, lastQuota: q(0) });
+  assert.doesNotMatch(zero, /money-note/, '本来就没钱，别画蛇添足');
+
+  // ③ 健康账号（余额充足）→ 当然不标
+  const ok = page.card({ ...base, name: '副号2', keyId: 'cccccccc', available: true, creditsExhausted: false,
+    exhausted: null, lastQuota: q(9.68) });
+  assert.doesNotMatch(ok, /money-note/);
+
+  // ④ 窗口超限但钱还能用（副号）→ 也不该说"不可支付"：等窗口重置钱照用
+  const weekly = page.card({ ...base, name: '副号', keyId: 'dddddddd', available: false, creditsExhausted: false,
+    exhausted: { kind: 'window', window: 'weekly', label: '周额度已用完', resetAt: 0 }, lastQuota: q(4) });
+  assert.doesNotMatch(weekly, /money-note/, '周窗口超限只是排队，钱没坏');
+});
