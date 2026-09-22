@@ -751,6 +751,21 @@ function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;
 function timeText(ts) { const d = new Date(ts); return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString('zh-CN', { hour12: false }); }
 function shortId(id) { return String(id ?? '').slice(0, 8); }
 function money(n) { const v = Number(n); return Number.isFinite(v) ? v.toFixed(2) : '—'; }
+/* 套餐 planId → 人看的名字。映射表见任务书；未知值原样返回，不猜、不吞。 */
+function planLabel(planId) {
+  if (planId === null || planId === undefined) return null;
+  const id = String(planId);
+  if (id === '') return '';
+  if (id.indexOf('teams') === 0) return '团队版';
+  const NAMES = {
+    'individual-go': 'Go 个人版 · $10/月',
+    'individual-goat': 'GOAT 个人版',
+    'individual-pro': 'Pro 个人版',
+    'individual-pro-v1': 'Pro 个人版',
+    'individual-max': 'Max 个人版',
+  };
+  return NAMES[id] ?? id;
+}
 function pctText(p) { const v = Number(p); return (p === null || p === undefined || !Number.isFinite(v)) ? '—' : v.toFixed(1) + '%'; }
 
 function toast(text, bad) {
@@ -894,7 +909,7 @@ function renderAccounts() {
     const q = a.lastQuota;
     const quota = q && q.ok
       ? quotaBar('5h', q.fiveHour) + quotaBar('周', q.weekly) + quotaBar('月', q.monthly)
-        + '<div class="cell-sub">余额 ' + money(q.remaining) + (q.plan && q.plan.planId ? ' · 套餐 ' + esc(q.plan.planId) : '')
+        + '<div class="cell-sub">余额 ' + money(q.remaining) + (q.plan && q.plan.planId ? ' · 套餐 ' + esc(planLabel(q.plan.planId)) : '')
         + (q.displayName ? ' · ' + esc(q.displayName) : '') + (a.lastError ? ' · 最近错误：' + esc(a.lastError) : '') + '</div>'
       : '<div class="cell-sub">' + (q ? '额度查询失败：' + esc(a.lastError || '未知错误') : '尚未获取额度快照') + '</div>';
     const test = testResults.get(a.keyId);

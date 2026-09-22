@@ -1520,3 +1520,78 @@ test('后台：快照查询失败时只显示一次错误，不重复出现最�
   assert.equal((out.match(/额度查询失败/g) || []).length, 1, '额度查询失败只出现一次');
   assert.doesNotMatch(out, /最近错误：/, '不重复显示最近错误');
 });
+
+// ── 套餐 planId → 友好名称 ──────────────────────────────────────────────
+// 用户要求：面板上别再显示 individual-go 这种官方原始 planId。
+// 只改显示层，数据源仍是后端已有的 plan.planId；未知 planId 原样显示。
+test('套餐名：planLabel 映射表逐条正确', async (t) => {
+  const ctx = await startTestGateway();
+  t.after(() => ctx.close());
+  const html = (await request(`${ctx.baseUrl}/`)).body;
+  const shim = createDomShim({ html, fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({}) }) });
+  const page = await runInlineScript(html, shim);
+  assert.equal(typeof page.planLabel, 'function', '页面里应能取到 planLabel()');
+
+  assert.equal(page.planLabel('individual-go'), 'Go 个人版 · $10/月');
+  assert.equal(page.planLabel('individual-goat'), 'GOAT 个人版');
+  assert.equal(page.planLabel('individual-pro'), 'Pro 个人版');
+  assert.equal(page.planLabel('individual-pro-v1'), 'Pro 个人版');
+  assert.equal(page.planLabel('individual-max'), 'Max 个人版');
+  assert.equal(page.planLabel('teams-pro'), '团队版');
+});
+
+test('套餐名：未知值原样返回，空值不抛异常', async (t) => {
+  const ctx = await startTestGateway();
+  t.after(() => ctx.close());
+  const html = (await request(`${ctx.baseUrl}/`)).body;
+  const shim = createDomShim({ html, fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({}) }) });
+  const page = await runInlineScript(html, shim);
+
+  assert.equal(page.planLabel('individual-xyz'), 'individual-xyz', '未知 planId 绝不吞掉');
+  assert.equal(page.planLabel('teams'), '团队版', '以 teams 开头的都算团队版');
+
+  for (const empty of [null, undefined, '']) {
+    let out;
+    assert.doesNotThrow(() => { out = page.planLabel(empty); }, `planLabel(${String(empty)}) 不得抛异常`);
+    assert.ok(out === '' || out === null || out === undefined, `空值返回空，实得 ${JSON.stringify(out)}`);
+    assert.doesNotMatch(String(out ?? ''), /未知套餐/, '不得显示中文兜底文案');
+  }
+});
+
+test('前台卡片：套餐标签显示友好名，不再出现原始 planId', async (t) => {
+  const ctx = await startTestGateway();
+  t.after(() => ctx.close());
+  const html = (await request(`${ctx.baseUrl}/`)).body;
+  const shim = createDomShim({ html, fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({}) }) });
+  const page = await runInlineScript(html, shim);
+  assert.equal(typeof page.card, 'function', '页面里应能取到 card()');
+
+  const out = page.card({ name: '主号', keyId: 'aaaaaaaa', enabled: true, available: true,
+    concurrency: 0, paused: false, pausedUntil: null, authInvalid: false, lastError: null,
+    exhausted: null, lastQuota: { ok: true, plan: { planId: 'individual-go' }, fetchedAt: Date.now() } });
+  assert.match(out, /Go 个人版 · \$10\/月/, '卡片要出现友好套餐名');
+  assert.doesNotMatch(out, /individual-go/, '不得再出现原始 planId');
+});
+
+test('后台：套餐行显示友好名', async (t) => {
+  const ctx = await startTestGateway();
+  t.after(() => ctx.close());
+  const adminHtml = (await request(`${ctx.baseUrl}/admin`)).body;
+  const shim = createDomShim({ html: adminHtml, fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({}) }) });
+  const page = await runInlineScript(adminHtml, shim);
+  assert.equal(typeof page.renderAccounts, 'function', '后台页面里应能取到 renderAccounts');
+
+  vm.runInContext(`
+    state.accounts = [{
+      keyId: 'abcdef12', name: '甲', enabled: true, paused: false, authInvalid: false,
+      lastError: null,
+      lastQuota: { ok: true, remaining: 9.9, plan: { planId: 'individual-go' }, displayName: 'x',
+        fiveHour: null, weekly: null, monthly: null, usage: {}, percent: {}, fetchedAt: Date.now() },
+    }];
+    renderAccounts();
+  `, page);
+
+  const out = shim.el('accounts').innerHTML;
+  assert.match(out, /套餐 Go 个人版 · \$10\/月/, '后台行要显示友好套餐名');
+  assert.doesNotMatch(out, /individual-go/, '不得再出现原始 planId');
+});

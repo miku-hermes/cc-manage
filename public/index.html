@@ -549,6 +549,21 @@ const state = { data: null, filter: '' };
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 function num(n) { const v = Number(n); return Number.isFinite(v) ? v.toLocaleString('zh-CN') : '0'; }
 function money(n) { const v = Number(n); return Number.isFinite(v) ? v.toFixed(2) : '—'; }
+/* 套餐 planId → 人看的名字。映射表见任务书；未知值原样返回，不猜、不吞。 */
+function planLabel(planId) {
+  if (planId === null || planId === undefined) return null;
+  const id = String(planId);
+  if (id === '') return '';
+  if (id.indexOf('teams') === 0) return '团队版';
+  const NAMES = {
+    'individual-go': 'Go 个人版 · $10/月',
+    'individual-goat': 'GOAT 个人版',
+    'individual-pro': 'Pro 个人版',
+    'individual-pro-v1': 'Pro 个人版',
+    'individual-max': 'Max 个人版',
+  };
+  return NAMES[id] ?? id;
+}
 function pctText(p) { const v = Number(p); return (p === null || p === undefined || !Number.isFinite(v)) ? '—' : v.toFixed(1) + '%'; }
 function cls(p) { const v = Number(p); if (p === null || p === undefined || !Number.isFinite(v)) return 's-ok'; return v >= 90 ? 's-bad' : v >= 70 ? 's-warn' : 's-ok'; }
 function timeText(ts) { const d = new Date(ts); return Number.isNaN(d.getTime()) ? '—' : d.toLocaleTimeString('zh-CN'); }
@@ -759,7 +774,7 @@ function card(a) {
     tags.push('<span class="tag bad">余额不足</span>');   // 兼容旧后端
   }
   tags.push('<span class="tag info">在途 ' + esc(num(a.concurrency)) + '</span>');
-  if (q && q.plan) tags.push('<span class="tag">套餐 ' + esc(q.plan.planId ?? '-') + '</span>');
+  if (q && q.plan) tags.push('<span class="tag">套餐 ' + esc(planLabel(q.plan.planId) ?? '-') + '</span>');
 
   const left = '<div class="card-col-left">'
     + '<div class="card-head"><h2>' + esc(a.name)
