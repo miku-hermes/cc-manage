@@ -459,6 +459,14 @@
     .hero { grid-template-columns: minmax(0, 1fr); align-items: flex-start; }
     .hero-aside { align-items: flex-start; text-align: left; }
     .greeting { font-size: 22px; }
+    /* 标签条：窄屏强制单行 + 横向滚动（pill 不换行、不压缩） */
+    .tags {
+      flex-wrap: nowrap; justify-content: flex-start;
+      min-width: 0; max-width: 100%;
+      overflow-x: auto; overflow-y: hidden;
+      -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain;
+    }
+    .tags .tag { flex: 0 0 auto; }
   }
 
   /* 极小屏（≤340px）：搜索框继续收缩，「登录后台」只显图标，工具栏保持一行。
