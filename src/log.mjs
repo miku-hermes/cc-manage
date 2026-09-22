@@ -39,6 +39,32 @@ export function redact(input, secrets = []) {
   return text.replace(LOOSE_KEY_RE, (m) => maskSecret(m));
 }
 
+/**
+ * 日志注入防护：外部输入（登录用户名、session id、来源 IP…）在拼进日志行之前必须清洗。
+ *
+ * 攻击者用 `\n` 可以在日志里伪造出一条「自带时间戳与 level」的独立行（日志伪造），
+ * 用 ANSI 转义序列还能污染终端。这里把 `\r` `\n` `\t` 与 0x00-0x1f / 0x7f 全部转成
+ * 可见转义（`\n` → `\\n`），并按清洗后的可见长度截断到 maxLen 字符（超出补 `…`）。
+ *
+ * 只清洗**外部输入片段**，不改动日志既有的时间戳 / level / 格式。
+ * @param {unknown} value 外部输入
+ * @param {number} maxLen 截断长度（字符数，含省略号）
+ */
+export function sanitizeForLog(value, maxLen = 80) {
+  const text = String(value ?? '');
+  let out = '';
+  for (const ch of text) {
+    const code = ch.codePointAt(0);
+    if (ch === '\n') out += '\\n';
+    else if (ch === '\r') out += '\\r';
+    else if (ch === '\t') out += '\\t';
+    else if (code < 0x20 || code === 0x7f) out += `\\x${code.toString(16).padStart(2, '0')}`;
+    else out += ch;
+  }
+  const limit = Number.isFinite(Number(maxLen)) && Number(maxLen) > 0 ? Math.floor(Number(maxLen)) : 80;
+  return out.length > limit ? `${out.slice(0, limit - 1)}…` : out;
+}
+
 export function createLogger({ level = 'info', file = '' } = {}) {
   const threshold = LEVELS[level] ?? LEVELS.info;
   const secrets = [];

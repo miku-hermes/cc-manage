@@ -1,8 +1,15 @@
 // 账号选择：打分 + 粘性 + 冷却 + 自动暂停/恢复（SPEC §5）
-const HOUR_MS = 3600 * 1000;
-const FIVE_HOUR_MS = 5 * HOUR_MS;
+// 历史常量 FIVE_HOUR_MS（5h）已随审查 A2 移除：额度暂停只在拿到**未来** resetAt 时按它停，
+// 否则退避 60 秒，不再有一律盲停 5 小时的兜底。
 // 普通限流（rate limit）的冷却时间：只让账号短暂退出选择，不再暂停 5 小时。
 const RATE_LIMIT_COOLDOWN_MS = 60 * 1000;
+// 额度耗尽但**拿不到有效 resetAt** 时的兜底复查间隔（审查 A2）：
+// 窗口恰好刚重置 / 上游没给 resetAt 时，绝不能盲停 5 小时，只退避 60 秒等下一轮复查。
+export const QUOTA_RETRY_BACKOFF_MS = 60 * 1000;
+// 额度接口连续失败时的指数退避上限与 fail-open 阈值（审查 A3）：
+// 查询失败不能按「窗口耗尽」顺延 5 小时，否则上游额度接口故障 = 账号永久停用。
+export const QUOTA_RECHECK_MAX_BACKOFF_MS = 15 * 60 * 1000;
+export const QUOTA_RECHECK_FAIL_OPEN_AT = 5;
 
 /**
  * 所有能用的额度窗口（5h、周）。任何一个打满，账号就不可用。
@@ -100,6 +107,8 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
     creditsExhausted: null,
     // 鉴权失效：状态 + 原因 + 发现时间（额度刷新不得撤销，见 recordQuota）
     authInvalid: false, authInvalidReason: null, authInvalidAt: null,
+    // 额度复查连续失败次数（审查 A3）：用于指数退避与 fail-open
+    quotaRecheckFails: 0,
   });
 
   /** 账号是否还在池子里（热删除后即为 false）。 */
@@ -378,20 +387,26 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
 
   /**
    * 额度耗尽 → 暂停到**实际耗尽窗口**的 resetAt（审查#4）。
-   * 历史 bug：永远按 fiveHour.resetAt 算，weekly 耗尽时暂停/复查时间跟着 5h 窗口走。
-   * resetAt 缺失 / 0 / 已过期 → 兜底 now + 5h（宁可到点重查一次，也不盲睡一周；
-   * 复查确认仍未恢复会继续顺延）。
+   * 历史 bug①：永远按 fiveHour.resetAt 算，weekly 耗尽时暂停/复查时间跟着 5h 窗口走。
+   * 历史 bug②（审查 A2）：resetAt 缺失 / 已过期时兜底 `now + 5h`，于是「窗口恰好刚重置」
+   *   或上游没给 resetAt 的账号被白停 5 小时。现在只在 resetAt 是**未来的有限数值**时
+   *   才暂停到该时刻，否则只退避 QUOTA_RETRY_BACKOFF_MS（60 秒）等下一轮复查。
    */
   function pauseForQuota(account, now = Date.now(), windowHint = null) {
     const rt = runtime(account);
     const key = exhaustedWindowOf(rt.lastQuota, windowHint);
     const w = key ? rt.lastQuota?.[key] : null;
     const reset = Number(w?.resetAt);
-    const until = Number.isFinite(reset) && reset > 0 && reset * 1000 > now
+    const until = Number.isFinite(reset) && reset * 1000 > now
       ? reset * 1000
-      : now + FIVE_HOUR_MS;
+      : now + QUOTA_RETRY_BACKOFF_MS;
     rt.pausedUntil = until;
     return until;
+  }
+
+  /** 额度接口连续失败第 fails 次时的退避时长：60s → 120s → 240s → 480s…封顶 15 分钟。 */
+  function quotaFetchBackoffMs(fails) {
+    return Math.min(QUOTA_RECHECK_MAX_BACKOFF_MS, QUOTA_RETRY_BACKOFF_MS * 2 ** Math.max(0, fails - 1));
   }
 
   function availableCount(now = Date.now()) {
@@ -403,8 +418,17 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
   }
 
   /**
-   * 到点复查：pausedUntil 已过期的账号重新查额度；确认 fiveHour.used < cap 才恢复。
+   * 到点复查：pausedUntil 已过期的账号重新查额度；确认所有窗口都未耗尽才恢复。
    * 手动 enabled=false 的账号永不自动恢复。
+   *
+   * 审查 A3：必须把「拿不到快照（查询失败）」与「拿到快照但确实未恢复」分开 ——
+   * 额度接口超时/被拦时 `snapshot.ok` 恒为 false，若按「未恢复」顺延 5 小时，
+   * 账号就再也回不来了（每轮复查都顺延 → 永久停用）。现在：
+   *  - 查询失败 → 60s/120s/240s… 指数退避（封顶 15 分钟），并累计失败次数；
+   *  - 连续失败达 5 次 → fail-open：撤销 pausedUntil，按旧快照重新参与调度
+   *    （宁可撞一次上游，也不要永久停服）；
+   *  - 查询成功但未恢复 → 按 A2 规则（真实 resetAt，无则 60s 短退避）重算；
+   *  - 查询成功 → 失败计数清零。
    * @returns {string[]} 恢复的账号 keyId 列表
    */
   async function recheckPaused({ fetchQuota, now = Date.now(), log: logger = log } = {}) {
@@ -420,10 +444,29 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
         snapshot = { ok: false, error: e?.message ?? String(e) };
       }
       recordQuota(account, snapshot);
+
+      // ── 查询失败：指数退避 + fail-open，绝不顺延大窗口 ──
+      if (!snapshot?.ok) {
+        const fails = (rt.quotaRecheckFails ?? 0) + 1;
+        rt.quotaRecheckFails = fails;
+        if (fails >= QUOTA_RECHECK_FAIL_OPEN_AT) {
+          rt.pausedUntil = null;
+          rt.quotaRecheckFails = 0;
+          recovered.push(account.keyId);
+          logger?.warn?.(`账号「${account.name}」额度复查连续失败 ${fails} 次，恢复调度（按旧快照评估）`);
+          continue;
+        }
+        const backoff = quotaFetchBackoffMs(fails);
+        rt.pausedUntil = now + backoff;
+        logger?.info?.(`账号「${account.name}」额度复查失败（第 ${fails} 次），${Math.round(backoff / 1000)} 秒后重试`);
+        continue;
+      }
+
+      rt.quotaRecheckFails = 0;
       const q = rt.lastQuota;
       // 审查#4：恢复判定要看**所有**窗口（含 exceeded 标记）：只看 fiveHour 会让
       // weekly 仍耗尽的账号被提前恢复，然后又撞一次上游 429。
-      const recovered_ok = snapshot?.ok && quotaWindows(q).every(
+      const recovered_ok = quotaWindows(q).every(
         (w) => w.exceeded !== true && !(Number(w.cap) > 0 && Number(w.used) >= Number(w.cap)),
       );
       if (recovered_ok) {
@@ -431,7 +474,7 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
         recovered.push(account.keyId);
         logger?.info?.(`账号「${account.name}」额度已恢复，重新启用`);
       } else {
-        // 复查后仍未恢复：把暂停顺延到下一个 5h resetAt（无则 now+5h），避免每轮都打上游
+        // 复查后仍未恢复：按真实 resetAt 顺延（无 resetAt 则 60s 短退避），避免每轮都打上游
         pauseForQuota(account, now);
         logger?.info?.(`账号「${account.name}」复查仍未恢复，继续暂停`);
       }

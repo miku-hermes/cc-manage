@@ -277,12 +277,13 @@ test('周额度打满：isAvailable 必须为 false，remainingRatio 必须为 0
   assert.equal(s.isAvailable(accounts[1]), false, '5h 打满同样不得可用');
 });
 
-test('暂停没有 resetAt 时默认 now + 5 小时', () => {
+// 审查 A2：没有有效 resetAt 时不再盲停 5 小时，只退避 60 秒等下一轮复查
+test('暂停没有 resetAt 时退避 60 秒（不再盲停 5 小时）', () => {
   const accounts = makeAccounts([{ name: 'A', key: 'user_pause_b_xxxxxxx' }]);
   const s = createScheduler({ accounts, state: makeState() });
   const now = Date.now();
   s.recordQuota(accounts[0], quotaWith({ used: 100, cap: 100 }));
-  assert.equal(s.pauseForQuota(accounts[0], now), now + 5 * 3600 * 1000);
+  assert.equal(s.pauseForQuota(accounts[0], now), now + 60_000);
 });
 
 // ── F4：429 普通限流 ≠ 额度耗尽（线上账号被莫名停用 5 小时的根因）──────
@@ -330,9 +331,9 @@ test('F4：普通限流只做短冷却，绝不产生 5 小时暂停；额度耗
   s.recordQuota(accounts[1], quotaWith({ used: 90, cap: 100 }));
   assert.equal(s.select({ now: until + 1 }).account.name, 'A');
 
-  // 对照：额度耗尽才允许 5 小时停用
+  // 对照：额度耗尽会写 pausedUntil（无有效 resetAt 时只退避 60 秒，见审查 A2）
   const paused = s.pauseForQuota(accounts[1], now);
-  assert.equal(paused, now + 5 * 3600 * 1000);
+  assert.equal(paused, now + 60_000);
   assert.equal(s.runtime(accounts[1]).pausedUntil, paused);
 });
 

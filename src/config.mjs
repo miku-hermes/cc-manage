@@ -1,6 +1,7 @@
 // 配置加载：config.json 默认值 + 环境变量覆盖
 import fs from 'node:fs';
 import path from 'node:path';
+import { DEFAULT_TRUSTED_PROXY_CIDRS } from './client-ip.mjs';
 
 export const DEFAULTS = {
   gatewayPort: 3051,
@@ -29,6 +30,9 @@ export const DEFAULTS = {
   // 登录尝试令牌桶（审查#3）：每来源每分钟最多多少次「真的要算 scrypt」的登录尝试，**不看用户名**。
   // 轮换用户名刷登录会被同一个桶挡住；用户名锁定（5 次连错）仍然单独生效。
   loginAttemptsPerMinute: 60,
+  // 可信反代来源（审查 A5）：只有 TCP 来源落在这些网段内才采信 x-forwarded-for /
+  // x-real-ip，按真实客户端分桶限速；否则忽略代理头，回落 socket 地址（防伪造）。
+  trustedProxyCidrs: [...DEFAULT_TRUSTED_PROXY_CIDRS],
   allowPassthrough: false,
   // 请求体上限（F18）：每个在途请求都会把 body tee 进内存供换号重放，
   // 20MB × 并发会直接吃掉容器 256m 的额度。收到 8MB，够放长 prompt。
@@ -62,6 +66,7 @@ const ENV_MAP = {
   CREDITS_PROBE_TIMEOUT_MS: ['creditsProbeTimeoutMs', 'number'],
   SESSION_AFFINITY_TTL_MS: ['sessionAffinityTtlMs', 'number'],
   LOGIN_ATTEMPTS_PER_MINUTE: ['loginAttemptsPerMinute', 'number'],
+  TRUSTED_PROXY_CIDRS: ['trustedProxyCidrs', 'list'],
   MAX_BODY_BYTES: ['maxBodyBytes', 'number'],
   MAX_INFLIGHT: ['maxInflight', 'number'],
   ALLOW_PASSTHROUGH: ['allowPassthrough', 'boolean'],
@@ -78,6 +83,9 @@ function coerce(value, type) {
   }
   if (type === 'boolean') {
     return value === '1' || value === 'true' || value === 'yes' || value === 'on';
+  }
+  if (type === 'list') {
+    return String(value).split(',').map((x) => x.trim()).filter(Boolean);
   }
   return String(value);
 }

@@ -193,7 +193,8 @@ test('回归#4a：额度耗尽按实际耗尽窗口（weekly）的 resetAt 暂�
   assert.equal(s.pauseForQuota(accounts[0], now), weeklyAt * 1000, '必须按 weekly.resetAt 暂停');
 });
 
-test('回归#4b：耗尽窗口缺 resetAt 时走兜底，绝不退回 fiveHour.resetAt', () => {
+// 审查 A2：兜底不再是 now+5h，而是 60 秒短退避（到期重查）；重点仍是**绝不**退回 fiveHour.resetAt
+test('回归#4b：耗尽窗口缺 resetAt 时走短退避，绝不退回 fiveHour.resetAt', () => {
   const accounts = [{ name: 'A', key: 'user_weekly_noreset', enabled: true, keyId: 'k-weekly-noreset', keyPrefix: 'user_weekl' }];
   const s = createScheduler({ accounts, state: makeState() });
   const now = Date.now();
@@ -206,8 +207,8 @@ test('回归#4b：耗尽窗口缺 resetAt 时走兜底，绝不退回 fiveHour.r
   // proxy 从 "weekly limit reached" 措辞里认出窗口，作为提示传进来
   assert.equal(
     s.pauseForQuota(accounts[0], now, 'weekly'),
-    now + 5 * 3600 * 1000,
-    'weekly 缺 resetAt → 兜底 now+5h（到期重查并顺延），不是 fiveHour.resetAt',
+    now + 60_000,
+    'weekly 缺 resetAt → 退避 60 秒（到期重查并顺延），不是 fiveHour.resetAt',
   );
 });
 

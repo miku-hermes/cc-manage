@@ -724,6 +724,10 @@
   <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="m-pass-title">
     <h3 id="m-pass-title">修改密码</h3>
     <p class="sub" id="p-sub"></p>
+    <div class="field hidden" id="p-current-field">
+      <label for="p-current">当前管理员密码</label>
+      <input id="p-current" type="password" autocomplete="current-password" spellcheck="false">
+    </div>
     <div class="field">
       <label for="p-pass">新密码（至少 8 位）</label>
       <input id="p-pass" type="password" autocomplete="new-password" spellcheck="false">
@@ -1118,6 +1122,25 @@ async function loadAll() {
 // ── 弹窗 ────────────────────────────────────────────────────────────
 function openModal(id) { $(id).classList.add('open'); }
 function closeModal(id) { $(id).classList.remove('open'); }
+
+/**
+ * 打开「修改密码」弹窗。
+ * 改**他人**密码时后端要求带上当前管理员密码（scrypt 校验）；改自己不需要。
+ * 因此改他人必须显示并校验 #p-current，改自己则隐藏（视为没有该字段）。
+ */
+function openPassModal(name) {
+  passTarget = name;
+  const me = state.auth && state.auth.user ? state.auth.user.username : null;
+  const isSelf = !!me && me === name;
+  $('p-sub').textContent = '为管理员「' + name + '」设置新密码（scrypt 加盐哈希存储）';
+  $('p-pass').value = '';
+  $('p-current').value = '';
+  $('p-err').textContent = '';
+  if (isSelf) $('p-current-field').classList.add('hidden');
+  else $('p-current-field').classList.remove('hidden');
+  openModal('m-pass');
+  $('p-pass').focus();
+}
 for (const el of document.querySelectorAll('[data-close]')) {
   el.onclick = () => closeModal(el.getAttribute('data-close'));
 }
@@ -1292,12 +1315,7 @@ $('users').addEventListener('click', (e) => {
   const act = btn.getAttribute('data-act');
 
   if (act === 'pass') {
-    passTarget = name;
-    $('p-sub').textContent = '为管理员「' + name + '」设置新密码（scrypt 加盐哈希存储）';
-    $('p-pass').value = '';
-    $('p-err').textContent = '';
-    openModal('m-pass');
-    $('p-pass').focus();
+    openPassModal(name);
     return;
   }
 
@@ -1314,8 +1332,17 @@ $('users').addEventListener('click', (e) => {
 $('p-submit').onclick = () => guard(async () => {
   $('p-err').textContent = '';
   const password = $('p-pass').value;
+  if (!password) { $('p-err').textContent = '请输入新密码'; return; }
+  const me = state.auth && state.auth.user ? state.auth.user.username : null;
+  const isSelf = !!me && me === passTarget;
+  const body = { password };
+  if (!isSelf) {
+    const currentPassword = $('p-current').value;
+    if (!currentPassword) { $('p-err').textContent = '修改他人密码需要提供当前管理员密码'; return; }
+    body.currentPassword = currentPassword;
+  }
   try {
-    await apiJSON('/api/admin/users/' + encodeURIComponent(passTarget), { method: 'PATCH', body: { password } });
+    await apiJSON('/api/admin/users/' + encodeURIComponent(passTarget), { method: 'PATCH', body });
   } catch (e) { $('p-err').textContent = e.message; return; }
   closeModal('m-pass');
   toast('密码已更新');

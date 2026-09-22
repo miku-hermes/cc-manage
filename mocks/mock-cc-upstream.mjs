@@ -56,6 +56,9 @@ export async function startMockUpstream(opts = {}) {
     failNext5xx: 0, quotaError: false, delayMs: 0,
     // 测试用开关（默认全关，不影响既有用例）
     rateLimitError: false,      // 429 普通限流
+    // 审查 A1：点名某些 key 的 /v1 请求回「额度类 429」（如 weekly limit），用于验证换号重试
+    quotaErrorKeys: [],
+    quotaErrorBody: '{"error":{"message":"You have reached your weekly limit","type":"quota_exceeded"}}',
     notFound404: false,         // 401/403：key 失效
     authErrorStatus: 0,         // 指定后按该状态码回鉴权错误（401/403）
     abortAfterChunks: 0,        // 流式：写 N 个 chunk 后直接 destroy 连接（模拟上游中途断）
@@ -163,6 +166,11 @@ export async function startMockUpstream(opts = {}) {
         const v1Auth = req.headers.authorization ?? '';
         const v1Key = v1Auth.startsWith('Bearer ') ? v1Auth.slice(7) : (req.headers['x-api-key'] ?? '');
         const v1Plan = v1Key ? plans.get(v1Key) : null;
+        if (Array.isArray(behavior.quotaErrorKeys) && behavior.quotaErrorKeys.includes(v1Key)) {
+          let body = { error: { message: 'You have reached your weekly limit', type: 'quota_exceeded' } };
+          try { body = JSON.parse(behavior.quotaErrorBody); } catch { /* 用默认体 */ }
+          return sendJSON(res, 429, body);
+        }
         if (v1Plan?.creditsExhausted) {
           return sendJSON(res, 400, {
             error: {

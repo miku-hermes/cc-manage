@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfig } from './src/config.mjs';
 import { createStore, CC_KEY_PREFIX, LOCAL_KEY_PREFIX } from './src/store.mjs';
-import { createLogger, keyIdOf, keyPrefixOf, redact } from './src/log.mjs';
+import { createLogger, keyIdOf, keyPrefixOf, redact, sanitizeForLog } from './src/log.mjs';
 import { fetchWhoami, fetchQuota } from './src/quota.mjs';
 import { probeAccountCredits, shouldProbeCredits } from './src/credits-probe.mjs';
 import {
@@ -21,7 +21,8 @@ import {
   sessionCookieHeader,
   verifyPassword,
 } from './src/auth.mjs';
-import { createScheduler } from './src/scheduler.mjs';
+import { createScheduler, quotaWindows } from './src/scheduler.mjs';
+import { DEFAULT_TRUSTED_PROXY_CIDRS, resolveClientIp } from './src/client-ip.mjs';
 import { createProxy } from './src/proxy.mjs';
 import { createAdaptivePoller } from './src/poll.mjs';
 
@@ -52,6 +53,11 @@ const PUBLIC_REFRESH_MIN_MS = 5000;
 const PUBLIC_REFRESH_GLOBAL_MIN_MS = 2000;
 // 来源分桶表上限
 const PUBLIC_REFRESH_MAX_SOURCES = 512;
+// 全池无可用账号时的 503：取不到 resetAt 时给客户端的保守重试间隔（审查 A4）
+const DEFAULT_POOL_RETRY_AFTER_MS = 60 * 1000;
+// 自动「无可用账号 → 刷额度」的最小间隔：并发请求靠 refreshAll 的 refreshInFlight 去重，
+// 串行请求靠这个冷却，绝不能让每个 503 都打一轮上游（审查 A4）。
+const POOL_REFRESH_MIN_MS = 5000;
 
 /** 带 HTTP 状态码的错误，后台接口统一用它转成响应。 */
 class HttpError extends Error {
@@ -174,12 +180,19 @@ export async function startGateway(overrides = {}) {
   }
 
   /**
-   * 限速用的来源 IP：**只看 socket**，不信任 X-Forwarded-For。
-   * 反代（1Panel openresty）后面所有请求的 remoteAddress 都是代理地址，于是限速按「整台代理」计数 ——
-   * 宁可锁得宽一点，也不能信任可伪造的 XFF：那样攻击者轮流换假 IP 就能无限试密码。
+   * 限速用的来源 IP（审查 A5）。
+   *
+   * 历史问题：只看 socket → 反代（1Panel openresty）后面所有请求的 remoteAddress 都是代理地址，
+   * 「每来源」令牌桶退化成**全局桶**，匿名者轮换用户名刷失败就能把管理员登录一并挡掉。
+   * 现在：**仅当** socket 来源落在可信代理集合内才采信 `x-forwarded-for` / `x-real-ip`，
+   * 否则忽略代理头回落 socket（防止伪造 XFF 绕过限速）。
    */
+  const trustedProxyCidrs = Array.isArray(config.trustedProxyCidrs) && config.trustedProxyCidrs.length > 0
+    ? config.trustedProxyCidrs
+    : DEFAULT_TRUSTED_PROXY_CIDRS;
+
   function clientIp(req) {
-    return req.socket?.remoteAddress ?? '-';
+    return resolveClientIp({ remoteAddress: req.socket?.remoteAddress, headers: req.headers }, trustedProxyCidrs);
   }
 
   /**
@@ -297,7 +310,7 @@ export async function startGateway(overrides = {}) {
         const password = validatePassword(body.password);
         if (users.length > 0) throw new HttpError(403, '已完成初始化，初始化接口已永久关闭');
         users = store.saveUsers([{ username, passwordHash: await hashPassword(password), createdAt: Date.now() }]);
-        note('info', `后台初始化完成：创建管理员「${username}」（${ip}）`);
+        note('info', `后台初始化完成：创建管理员「${sanitizeForLog(username)}」（${sanitizeForLog(ip)}）`);
         setSession(res, username, secure);
         return sendJSON(res, 201, { ok: true, user: { username } });
       } finally {
@@ -320,23 +333,26 @@ export async function startGateway(overrides = {}) {
 
       if (!user || !passwordOk) {
         const r = loginLimiter.fail(ip, username || null);
+        // 审查 A6：username / ip 都是外部输入，先清洗再拼日志，防止换行伪造日志行 / ANSI 注入
+        const safeUser = sanitizeForLog(username || '-');
+        const safeIp = sanitizeForLog(ip);
         note('warn', r.locked
-          ? `后台登录失败（针对「${username || '-'}」，已锁定 ${Math.round((r.retryAfterMs ?? LOGIN_LOCK_MS) / 60000)} 分钟）：来自 ${ip}`
-          : `后台登录失败：来自 ${ip}（用户名「${username || '-'}」剩余 ${r.remaining} 次机会）`);
+          ? `后台登录失败（针对「${safeUser}」，已锁定 ${Math.round((r.retryAfterMs ?? LOGIN_LOCK_MS) / 60000)} 分钟）：来自 ${safeIp}`
+          : `后台登录失败：来自 ${safeIp}（用户名「${safeUser}」剩余 ${r.remaining} 次机会）`);
         if (r.locked) return rateLimited(res, r.retryAfterMs);
         return sendJSON(res, 401, { error: { message: '用户名或密码错误', type: 'auth_error' } });
       }
 
       loginLimiter.reset(ip, user.username);
       setSession(res, user.username, secure);
-      note('info', `管理员「${user.username}」登录成功（${ip}）`);
+      note('info', `管理员「${sanitizeForLog(user.username)}」登录成功（${sanitizeForLog(ip)}）`);
       return sendJSON(res, 200, { ok: true, user: { username: user.username } });
     }
 
     if (req.method === 'POST' && p === '/api/auth/logout') {
       const revoked = sessions.revoke(sessionTokenOf(req));
       res.setHeader('set-cookie', clearCookieHeader({ secure }));
-      note('info', `管理员退出登录（${ip}）${revoked ? '' : '（会话已过期）'}`);
+      note('info', `管理员退出登录（${sanitizeForLog(ip)}）${revoked ? '' : '（会话已过期）'}`);
       return sendJSON(res, 200, { ok: true });
     }
 
@@ -648,6 +664,51 @@ export async function startGateway(overrides = {}) {
     };
   }
 
+
+  // ── 全池无可用账号时的自动刷新（审查 A4）─────────────────
+  // 触发条件（二者其一）：池内存在账号的某个窗口 resetAt 已是过去时（窗口应已重置），
+  // 或 lastQuota.fetchedAt 缺失 / 距现在超过 2 × idleIntervalMs（快照过旧）。
+  function poolStaleAfterMs() {
+    const idle = Number(config.quotaPollIntervalMs);
+    return 2 * (idle > 0 ? idle : 600000);
+  }
+
+  function poolNeedsRefresh(now = Date.now()) {
+    const staleAfter = poolStaleAfterMs();
+    for (const a of accounts) {
+      if (a.enabled === false) continue;
+      const q = scheduler.runtime(a).lastQuota;
+      if (!q) return true;                       // 从没拿到过快照 → 必须刷
+      for (const w of quotaWindows(q)) {
+        const reset = Number(w.resetAt);
+        if (Number.isFinite(reset) && reset * 1000 <= now) return true;   // 窗口已过期
+      }
+      const fetchedAt = Number(q.fetchedAt);
+      if (!Number.isFinite(fetchedAt) || now - fetchedAt > staleAfter) return true;  // 快照过旧
+    }
+    return false;
+  }
+
+  // 串行请求的冷却：refreshAll 只去重「并发」，连发 503 仍会一轮轮打上游。
+  let lastAutoRefreshAt = 0;
+  function canAutoRefreshPool(now = Date.now()) {
+    if (now - lastAutoRefreshAt < POOL_REFRESH_MIN_MS) return false;
+    lastAutoRefreshAt = now;
+    return true;
+  }
+
+  /** 503 的可重试提示：距最近一个未来 resetAt 的毫秒数，取不到给保守默认值。 */
+  function retryAfterMsForPool(now = Date.now()) {
+    let nearest = Infinity;
+    for (const a of accounts) {
+      const q = scheduler.runtime(a).lastQuota;
+      for (const w of quotaWindows(q)) {
+        const reset = Number(w.resetAt);
+        if (Number.isFinite(reset) && reset * 1000 > now) nearest = Math.min(nearest, reset * 1000);
+      }
+    }
+    return Number.isFinite(nearest) ? nearest - now : DEFAULT_POOL_RETRY_AFTER_MS;
+  }
 
   // ── 账号池 / 本地 key 热生效 ───────────────────────────
   /** 用最新的凭据列表原地更新账号池（proxy 持有的 scheduler 引用不变，无需重启）。 */
@@ -1127,7 +1188,7 @@ export async function startGateway(overrides = {}) {
       const isPassthrough = !isLocal && config.allowPassthrough && key.startsWith(CC_KEY_PREFIX);
 
       if (!isLocal && !isPassthrough) {
-        log.warn(`鉴权失败（不认识的 key: ${keyPrefixOf(key)}***）来自 ${req.socket.remoteAddress}`);
+        log.warn(`鉴权失败（不认识的 key: ${sanitizeForLog(keyPrefixOf(key))}***）来自 ${sanitizeForLog(req.socket.remoteAddress ?? '-')}`);
         return authError(res);
       }
 
@@ -1151,12 +1212,27 @@ export async function startGateway(overrides = {}) {
         sessionId = peekSessionFromBody(initialChunks);
       }
 
-      const { account, reason } = scheduler.select({ sessionId });
+      let { account, reason } = scheduler.select({ sessionId });
+      if (!account) {
+        // 审查 A4：全池不可用时不能干等下一拍空闲轮询（最长 600s 的全池 503）。
+        // 若池里有窗口已过期 / 快照过旧的账号，立刻触发一轮额度刷新（refreshAll 自带
+        // refreshInFlight 去重 + 冷却，绝不会每个请求都刷），刷完在本请求内重选。
+        if (poolNeedsRefresh(Date.now()) && canAutoRefreshPool()) {
+          log.warn(`无可用账号（${reason}），快照可能过期 → 触发一轮额度刷新`);
+          await refreshAll().catch((e) => log.warn(`自动刷新额度失败: ${e.message}`));
+          ({ account, reason } = scheduler.select({ sessionId }));
+        }
+      }
       if (!account) {
         log.warn(`无可用账号，拒绝 ${url.pathname}（${reason}）`);
-        return sendJSON(res, 503, { error: { message: 'No available account in pool', type: 'no_available_account' } });
+        const retryAfterMs = retryAfterMsForPool(Date.now());
+        res.setHeader('retry-after', String(Math.max(1, Math.ceil(retryAfterMs / 1000))));
+        return sendJSON(res, 503, {
+          error: { message: 'No available account in pool', type: 'no_available_account' },
+          retryAfterMs,
+        });
       }
-      log.info(`路由 ${url.pathname} → 账号「${account.name}」${sessionId ? `(session ${sessionId})` : ''}`);
+      log.info(`路由 ${url.pathname} → 账号「${account.name}」${sessionId ? `(session ${sanitizeForLog(sessionId)})` : ''}`);
 
       return proxy.forward({ req, res, account, pathname: url.pathname, search: url.search, initialChunks, bodyEnded, sessionId });
     }

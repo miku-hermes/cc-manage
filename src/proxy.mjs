@@ -492,6 +492,16 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
             log?.warn?.(`账号「${current.name}」额度耗尽（${windowHint ?? '按最受限窗口'}），暂停到 ${new Date(until).toISOString()}`);
             scheduler.recordError(current, '额度耗尽');
             if (refreshAccount) await refreshAccount(current).catch(() => {});
+            // 审查 A1：池里还有健康账号时不能让客户端白吃一个 429/402 —— 与「余额不足」
+            // 同路径换号重试一次（必须先确认确实存在下一个可用账号，否则单账号池会变成 502）。
+            // 严格条件：attempt===0 且未写出任何字节，绝不能在有字节已下发时重试。
+            if (attempt === 0 && !res.headersSent && !current.__passthrough && pickRetryAccount(current)) {
+              release();
+              bodyState?.stop?.();
+              if (hasBody && !bodyState?.complete) await drainRemaining(req, bodyState, maxBodyBytes).catch(() => {});
+              attempt++;
+              continue;
+            }
           } else if (status === 429) {
             // 普通限流：只短暂冷却（默认 60s），绝不是 5 小时停用。
             // 历史 bug：`"Rate limit exceeded"` 命中了 /limit|exceeded/ → 账号被误判额度耗尽。

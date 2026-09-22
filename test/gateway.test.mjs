@@ -175,7 +175,7 @@ test('上游 4xx 原样透传状态码，且 body 里的 key 被脱敏', async (
   assert.ok(!res.body.includes('user_test_'), '上游 body 里若含 key 必须脱敏');
 });
 
-test('402 额度耗尽 → 账号被暂停，后续请求换到另一个账号', async (t) => {
+test('402 额度耗尽 → 换号重试（两个账号都被证实耗尽）', async (t) => {
   const ctx = await startTestGateway({ behavior: { quotaError: true } });
   t.after(() => ctx.close());
 
@@ -184,16 +184,15 @@ test('402 额度耗尽 → 账号被暂停，后续请求换到另一个账号',
   });
   assert.equal(first.status, 402);
 
+  // 审查 A1：首个账号 402 后会在同一请求内换号重试，客户端不该白吃这个错误；
+  // mock 的额度错误是全局的，因此第二个账号也被证实耗尽并暂停。
+  const forwarded = ctx.upstream.seen.filter((s) => s.url.startsWith('/v1/'));
+  assert.equal(forwarded.length, 2, '应换号重试一次');
+  assert.notEqual(forwarded[0].headers.authorization, forwarded[1].headers.authorization);
+
   const status = JSON.parse((await request(`${ctx.baseUrl}/api/status`)).body);
   const paused = status.accounts.filter((a) => a.paused);
-  assert.equal(paused.length, 1, '应恰好暂停一个账号');
-
-  // 第二个请求必须落到另一个账号
-  await request(`${ctx.baseUrl}/v1/chat/completions`, {
-    method: 'POST', headers: { authorization: `Bearer ${ctx.localKey}`, 'content-type': 'application/json' }, body: '{}',
-  });
-  const forwarded = ctx.upstream.seen.filter((s) => s.url.startsWith('/v1/'));
-  assert.notEqual(forwarded[0].headers.authorization, forwarded[1].headers.authorization);
+  assert.equal(paused.length, 2, '两个账号都真耗尽，都应暂停');
 });
 
 test('GET /v1/models 被转发给内核', async (t) => {

@@ -105,8 +105,10 @@ test('F4：额度耗尽（429 明确额度语义）仍应暂停账号 —— 别
   assert.equal(res.status, 402);
 
   const status = JSON.parse((await request(`${ctx.baseUrl}/api/status`)).body);
-  assert.equal(status.summary.paused, 1, '真额度耗尽必须暂停一个账号');
-  assert.ok(status.accounts.some((a) => a.paused && a.pausedUntil));
+  // 审查 A1：首个账号额度耗尽后会换号重试一次；mock 的额度错误是全局的，
+  // 于是第二个账号也被证实耗尽并暂停 —— 两个都该停，不能漏。
+  assert.equal(status.summary.paused, 2, '真额度耗尽的两个账号都必须被暂停');
+  assert.ok(status.accounts.every((a) => a.paused && a.pausedUntil));
 });
 
 test('F4：429 + quota_exceeded 措辞 → 按额度耗尽暂停', async (t) => {
@@ -127,7 +129,8 @@ test('F4：429 + quota_exceeded 措辞 → 按额度耗尽暂停', async (t) => 
   const res = await post(ctx, '/v1/chat/completions');
   assert.equal(res.status, 429);
   const status = JSON.parse((await request(`${ctx.baseUrl}/api/status`)).body);
-  assert.equal(status.summary.paused, 1, '明确额度语义的 429 必须暂停账号');
+  // 审查 A1：429 额度语义同样触发换号重试 → 两个账号都被上游证实耗尽
+  assert.equal(status.summary.paused, 2, '明确额度语义的 429 必须暂停（换号后两个都被证实）');
 });
 
 // ── F5：换号重试不得把请求体丢成空体 / 不得绕过 413 ──────────────────
