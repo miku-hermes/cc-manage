@@ -1266,7 +1266,10 @@ test('额度已用完的账号卡片显示 0.00，window 卡住的钱照常显�
     exhausted: { kind: 'monthly', label: '月额度已用完', resetAt: 0 }, lastQuota: q(0.098) });
   assert.match(spent, /<b>0\.00<\/b><small>剩余额度<\/small>/,
     '用不了的钱就是 0：卡片必须显示 0.00，不能与「月额度已用完」打脸');
-  assert.doesNotMatch(spent, /0\.10/, '死账号的零头不许再出现在卡片上');
+  assert.doesNotMatch(spent, /<b>0\.10<\/b><small>剩余额度<\/small>/,
+    '死账号的零头不许再出现在「剩余额度」结论数字上');
+  assert.match(spent, /月度 0\.10 · 购买 0\.00 · 赠送 0\.00/,
+    'B2-3：额度构成明细各显真实值，不随剩余额度被门控成 0.00');
   assert.doesNotMatch(spent, /不可支付|money-note/, '不再需要「不可支付」标签');
   assert.doesNotMatch(spent, /title="周期额度已用完/, '不再需要悬停解释');
 

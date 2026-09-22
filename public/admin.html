@@ -842,7 +842,21 @@ async function apiJSON(path, { method = 'GET', body } = {}) {
 }
 
 // ── 登录 / 初始化页 ─────────────────────────────────────────────────
+/* 会话失效 / 登出：账号 keyPrefix、客户端 key、管理员、运行日志都不能留在 DOM 里。
+   共享终端下 session 过期或点过「退出登录」后，F12 / 页面另存仍能读到这些内容。 */
+function clearSensitiveData() {
+  state.accounts = [];
+  state.keys = [];
+  state.users = [];
+  state.events = [];
+  testResults.clear();
+  for (const id of ['accounts', 'keys', 'users', 'events']) $(id).innerHTML = '';
+  for (const id of ['acc-count', 'key-count', 'user-count', 'event-count']) $(id).textContent = '—';
+  $('who').innerHTML = '';
+}
+
 function showGate(mode, me) {
+  clearSensitiveData();
   state.mode = mode;
   document.body.className = 'gate';
   $('gate-head').style.display = '';
@@ -956,8 +970,11 @@ function statusTag(a) {
 }
 
 // ── CC 账号（含额度 + 连通性测试）────────────────────────────────────
-function quotaBar(label, w) {
-  const pct = w && typeof w.percent === 'number' ? w.percent : null;
+function quotaBar(label, w, opts) {
+  // 与前台 bar() 同口径：上游/探针已证明这个窗口用完时直接画满 —— 99.4% 这种
+  // 「差一点」会和紧挨着的「月额度已用完」状态标签自相矛盾。
+  const spent = !!opts && opts.spent === true;
+  const pct = spent ? 100 : (w && typeof w.percent === 'number' ? w.percent : null);
   const cls = pct === null ? '' : pct >= 90 ? 'bad' : pct >= 70 ? 'warn' : '';
   return '<div class="qbar"><span class="qbar-label">' + label + '</span>'
     + '<span class="qbar-track ' + cls + '"><i style="width:' + (pct === null ? 0 : Math.max(0, Math.min(100, pct))) + '%"></i></span>'
@@ -975,13 +992,16 @@ function renderAccounts() {
   $('accounts').innerHTML = list.map((a) => {
     const id = esc(a.keyId);
     const q = a.lastQuota;
+    const ex = a.exhausted || null;
     const usable = usableRemaining(a);
     const raw = q && Number.isFinite(q.remaining) ? q.remaining : null;
-    const dead = a.exhausted && (a.exhausted.kind === 'monthly' || a.exhausted.kind === 'balance');
+    const dead = ex && (ex.kind === 'monthly' || ex.kind === 'balance');
     const balanceTitle = raw === null ? '账面余额未知' : '账面 ' + money(raw)
       + (dead ? ' · ' + esc(a.exhausted.label || '额度已用完') + '，不可用' : '');
     const quota = q && q.ok
-      ? quotaBar('5h', q.fiveHour) + quotaBar('周', q.weekly) + quotaBar('月', q.monthly)
+      ? quotaBar('5h', q.fiveHour, { spent: !!ex && ex.kind === 'window' && ex.window === 'fiveHour' })
+        + quotaBar('周', q.weekly, { spent: !!ex && ex.kind === 'window' && ex.window === 'weekly' })
+        + quotaBar('月', q.monthly, { spent: !!ex && ex.kind === 'monthly' })
         + '<div class="cell-sub aux-text">余额 <span class="usable-balance" title="' + balanceTitle + '">' + money(usable) + '</span>'
         + (q.plan && q.plan.planId ? ' · 套餐 ' + esc(planLabel(q.plan.planId)) : '')
         + (q.displayName ? ' · ' + esc(q.displayName) : '') + '</div>'
@@ -1099,11 +1119,19 @@ async function loadUsers() {
   renderUsers();
 }
 
+let eventsGeneration = 0;
 async function loadEvents() {
+  const generation = ++eventsGeneration;
   const q = state.level ? '?level=' + encodeURIComponent(state.level) : '';
-  const data = await apiJSON('/api/admin/events' + q);
-  state.events = data.events || [];
-  renderEvents();
+  try {
+    const data = await apiJSON('/api/admin/events' + q);
+    if (generation !== eventsGeneration) return;   // 过期响应直接丢弃，不写 state、不渲染
+    state.events = data.events || [];
+    renderEvents();
+  } catch (e) {
+    if (generation !== eventsGeneration) return;   // 过期请求的错误也不冒泡到 toast
+    throw e;
+  }
 }
 
 async function loadAll() {

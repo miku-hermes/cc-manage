@@ -459,14 +459,22 @@
     .hero { grid-template-columns: minmax(0, 1fr); align-items: flex-start; }
     .hero-aside { align-items: flex-start; text-align: left; }
     .greeting { font-size: 22px; }
-    /* 标签条：窄屏强制单行 + 横向滚动（pill 不换行、不压缩） */
+    /* 标签条：窄屏强制单行 + 横向滚动（pill 不换行、不压缩）。
+       后面的标签会被推出可视区，所以右侧渐隐遮罩 + 极窄滚动条给出「可滑动」提示。 */
     .tags {
       flex-wrap: nowrap; justify-content: flex-start;
       min-width: 0; max-width: 100%;
       overflow-x: auto; overflow-y: hidden;
       -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain;
+      -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+      mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+      scrollbar-width: thin;
+      scrollbar-color: var(--border-strong) transparent;
     }
     .tags .tag { flex: 0 0 auto; }
+    .tags::-webkit-scrollbar { height: 4px; }
+    .tags::-webkit-scrollbar-track { background: transparent; }
+    .tags::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: var(--pill); }
   }
 
   /* 极小屏（≤340px）：搜索框继续收缩，「登录后台」只显图标，工具栏保持一行。
@@ -599,6 +607,13 @@ let staleMs = DEFAULT_STALE_MS;
 function setStaleFrom(status) {
   const idle = Number(status?.quotaPoll?.idleIntervalMs);
   staleMs = Number.isFinite(idle) && idle > 0 ? idle * 2 : Infinity;
+}
+/** 「快照过旧」的提示文案：阈值由后端配置算出，文案也必须跟着算，不能写死。 */
+function staleText() {
+  if (!Number.isFinite(staleMs) || staleMs <= 0) return '额度快照已超过较长时间未更新';
+  const min = staleMs / 60000;
+  const n = Number.isInteger(min) ? String(min) : min.toFixed(1);
+  return min >= 1 ? '额度快照已超过 ' + n + ' 分钟未更新' : '额度快照已超过 ' + Math.round(staleMs / 1000) + ' 秒未更新';
 }
 function relText(ts, at = Date.now()) {
   const t = Number(ts);
@@ -757,7 +772,7 @@ function freshHTML(fetchedAt) {
   const f = freshness(known ? t : NaN);
   return '<div class="card-fresh aux-text' + (f.stale ? ' is-stale' : '') + '"'
     + (known ? ' data-fetched-at="' + t + '"' : '')
-    + (f.stale ? ' title="额度快照已超过 10 分钟未更新"' : '')
+    + (f.stale ? ' title="' + esc(staleText()) + '"' : '')
     + '>' + esc(f.text) + '</div>';
 }
 
@@ -800,11 +815,11 @@ function card(a, wideLast = false) {
   const left = '<div class="card-col-left">'
     + '<div class="card-head"><h2>' + esc(a.name)
     + (q && q.displayName ? '<span class="card-display">' + esc(q.displayName) + '</span>' : '') + '</h2>'
-    + '<span class="status"><span class="dot" aria-hidden="true"></span>' + st.t + '</span></div>'
+    + '<span class="status"><span class="dot" aria-hidden="true"></span>' + esc(st.t) + '</span></div>'
     // 前台只显示备注名（h2 里）+ 上游显示名，不下发也不渲染 key 的任何片段
     + '<div class="card-money"><b>' + money(usableRemaining(a)) + '</b><small>剩余额度</small></div>'
     + (c
-      ? '<div class="card-credits aux-text">月度 ' + money(usableRemaining(a) && c.monthlyCredits) + ' · 购买 ' + money(usableRemaining(a) && c.purchasedCredits) + ' · 赠送 ' + money(usableRemaining(a) && c.freeCredits) + '</div>'
+      ? '<div class="card-credits aux-text">月度 ' + money(c.monthlyCredits) + ' · 购买 ' + money(c.purchasedCredits) + ' · 赠送 ' + money(c.freeCredits) + '</div>'
       : '<div class="card-credits aux-text">尚未获取额度快照</div>')
     + (q ? freshHTML(q.fetchedAt) : '')
     + '</div>';
@@ -852,7 +867,8 @@ function render(d) {
   $('health').className = 'pill ' + (Number(s.available) > 0 ? 'ok' : 'bad');
   $('updated').textContent = '更新于 ' + timeText(d.now);
   $('cadence').textContent = cadenceText(d.quotaPoll);
-  $('upstream').textContent = '内核 ' + String(d.upstreamProxyUrl ?? '') + (d.allowPassthrough ? ' · 已开启直连透传' : '');
+  // 公开面板不下发也不渲染内网上游地址（host/port 对匿名访客无用，只泄露拓扑）
+  $('upstream').textContent = '内网上游' + (d.allowPassthrough ? ' · 已开启直连透传' : '');
   $('tokens').textContent = num(st.totalTokens);
 
   // 余额：全页最大字号的主角（用不了的钱算 0，见 usableRemaining）
@@ -954,7 +970,7 @@ function tickFreshness() {
     if (age >= staleMs) {
       el.textContent = '额度更新于 ' + timeText(t);
       el.classList.add('is-stale');
-      el.title = '额度快照已超过 10 分钟未更新';
+      el.title = staleText();
     } else {
       el.textContent = '额度更新于 ' + relText(t, at);
       el.classList.remove('is-stale');
