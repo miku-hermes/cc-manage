@@ -527,14 +527,25 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
             const until = scheduler.markRateLimited(current);
             log?.warn?.(`账号「${current.name}」被上游限流，冷却到 ${new Date(until).toISOString()}`);
             scheduler.recordError(current, `上游 HTTP 429（限流，冷却 60 秒）`);
+          } else if (status === 401) {
+            // 401：key 确实被吊销/无效（上游报文形如 Invalid 'Authorization' header or token）
+            // → 立刻停止调度该账号；状态码原样透传，但不再把该账号选进池。
+            scheduler.recordError(current, '上游 HTTP 401');
+            scheduler.markAuthInvalid(current, '上游 HTTP 401');
+            log?.warn?.(`账号「${current.name}」鉴权失效（HTTP 401），已停止调度`);
+            if (refreshAccount) refreshAccount(current).catch(() => {});
+          } else if (status === 403) {
+            // 403 的语义是「模型名不存在 / 套餐不含该模型」，与 key 是否有效无关：
+            //   · Model/provider not recognized: anthropic:deepseek-v4.1-falsh
+            //   · MODEL_NOT_IN_PLAN: X available in GOAT and above plans
+            // 2026-09-22 线上事故：403 被和 401 同等处理 → 两个有效副号被误标 authInvalid
+            // 停调并落盘，叠加主号月额度耗尽后整池 503。这里只记错误、原样透传 403，
+            // 绝不 markAuthInvalid / 不换号 / 不 refreshAccount。
+            const summary = redact(text, secrets).slice(0, 300);
+            scheduler.recordError(current, '上游 HTTP 403（模型/套餐限制，不停调账号）');
+            log?.warn?.(`账号「${current.name}」收到上游 HTTP 403（模型/套餐限制，不停调账号）：${summary}`);
           } else {
             scheduler.recordError(current, `上游 HTTP ${status}`);
-            // 401/403：key 被吊销/权限不对 → 立刻停止调度该账号，不再把 401 透传给客户端
-            if (status === 401 || status === 403) {
-              scheduler.markAuthInvalid(current, `上游 HTTP ${status}`);
-              log?.warn?.(`账号「${current.name}」鉴权失效（HTTP ${status}），已停止调度`);
-              if (refreshAccount) refreshAccount(current).catch(() => {});
-            }
           }
           bump(true);
           release();

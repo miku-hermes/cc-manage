@@ -214,22 +214,34 @@ test('F6：换号重试成功后 affinity 指向新账号，下个同 session �
   assert.equal(forwarded2[2].headers.authorization, serving, '同 session 的后续请求必须粘在同一账号');
 });
 
-// ── F9：上游 401/403 → 立刻停调度该账号，不再透传 401 ─────────────────
-for (const status of [401, 403]) {
-  test(`F9：上游 ${status} → 账号标记 authInvalid 并换到健康账号`, async (t) => {
-    const ctx = await startTestGateway({ behavior: { authErrorStatus: status } });
-    t.after(() => ctx.close());
+// ── F9：上游 401 → 立刻停调度该账号，不再透传 401 ─────────────────────
+// 2026-09-22 修正：403 的语义是「模型名不存在 / 套餐不含该模型」，不是 key 失效；
+// 403 不再标记 authInvalid（回归见 proxy-403-not-auth.test.mjs）。
+test('F9：上游 401 → 账号标记 authInvalid 并换到健康账号', async (t) => {
+  const ctx = await startTestGateway({ behavior: { authErrorStatus: 401 } });
+  t.after(() => ctx.close());
 
-    const res = await post(ctx, '/v1/chat/completions');
-    assert.equal(res.status, status, '状态码原样透传（不伪装成 200/500）');
+  const res = await post(ctx, '/v1/chat/completions');
+  assert.equal(res.status, 401, '状态码原样透传（不伪装成 200/500）');
 
-    const view = JSON.parse((await request(`${ctx.baseUrl}/api/status`)).body);
-    assert.equal(view.summary.available, 1, `失效账号必须立刻变成不可调度，实际 available=${view.summary.available}`);
-    const invalid = view.accounts.find((a) => a.authInvalid);
-    assert.ok(invalid, '必须标记 authInvalid');
-    assert.equal(invalid.available, false);
-  });
-}
+  const view = JSON.parse((await request(`${ctx.baseUrl}/api/status`)).body);
+  assert.equal(view.summary.available, 1, `失效账号必须立刻变成不可调度，实际 available=${view.summary.available}`);
+  const invalid = view.accounts.find((a) => a.authInvalid);
+  assert.ok(invalid, '必须标记 authInvalid');
+  assert.equal(invalid.available, false);
+});
+
+test('F9：上游 403（模型/套餐限制）→ 不停调该账号，仅原样透传 403', async (t) => {
+  const ctx = await startTestGateway({ behavior: { authErrorStatus: 403 } });
+  t.after(() => ctx.close());
+
+  const res = await post(ctx, '/v1/chat/completions');
+  assert.equal(res.status, 403, '状态码原样透传');
+
+  const view = JSON.parse((await request(`${ctx.baseUrl}/api/status`)).body);
+  assert.equal(view.summary.available, 2, '403 与 key 有效性无关，两个账号都必须仍可调度');
+  assert.equal(view.accounts.some((a) => a.authInvalid), false, '403 绝不能标记 authInvalid');
+});
 
 // ── F10：统计口径自洽（一个请求只算一次；中止单独计数）────────────────
 test('F10：换号失败 + 最终成功 → errors 不得超过 total（历史：total=1 errors=2）', async (t) => {

@@ -262,7 +262,7 @@ curl -N -X POST 127.0.0.1:3051/v1/chat/completions \
 4. **粘性路由**：请求带 `x-session-id` 头，或 body 里有 `conversation_id` / `user` 字段时，同一 session 优先复用上次的账号（TTL 30 分钟，最多 2000 条，LRU 淘汰）；原账号不可用则改选并更新粘性表。
 5. **额度耗尽才暂停**：上游 402，或 429 且 body 有**明确额度语义**（`quota` / `quota_exceeded` / `windowLimits` / `insufficient credits` / `weekly|monthly limit` 等）→ 暂停到 5h 窗口的 `resetAt`（没有则 now + 5h），并立刻触发一次额度刷新。
    普通限流（`429` + `Rate limit exceeded` / `too many requests` / `type:"rate_limit"`）**只冷却 60 秒**，绝不会把账号停用 5 小时。
-6. **鉴权失效立刻停调度**：上游 401/403 → 标记 `authInvalid`，不再把该账号选进池（早期要等额度轮询才发现，最长 ~10 分钟窗口）。
+6. **鉴权失效立刻停调度**：上游 401（key 吊销/无效，报文如 `Invalid 'Authorization' header or token`）→ 标记 `authInvalid`，不再把该账号选进池（早期要等额度轮询才发现，最长 ~10 分钟窗口）。**403 不算鉴权失效**：它的语义是「模型名不存在 / 套餐不含该模型」（`Model/provider not recognized` / `MODEL_NOT_IN_PLAN`），只记 `lastError` 并把 403 原样透传，绝不停调账号。
 6. **自动恢复**：后台默认每 60s 复查到期账号，确认 `used < cap` 才恢复。**手动 `enabled=false` 的账号永不自动恢复。**
 
 ## 转发细节
