@@ -26,6 +26,12 @@ export const DEFAULTS = {
   creditsProbeBelowRatio: 0.02,
   creditsProbeModel: 'deepseek/deepseek-v4-flash',
   creditsProbeTimeoutMs: 20000,
+  // 探针 TTL（B2）：同一账号两次探针的最小间隔。低于阈值但**仍可用**的账号
+  // （大套餐 belowThreshold、余额低于 2% 周期）原本每轮都重探，活跃期 60s 一次 = 1440 次推理/天，
+  // 全记在该账号账单上；正常账号一次都不打的短路保留。
+  creditsProbeTtlMs: 10 * 60 * 1000,
+  // 探针自身失败（超时/套餐不含该模型/5xx/429）时的指数退避上限（B2）：1×→2×→4× TTL…
+  creditsProbeFailBackoffMaxMs: 60 * 60 * 1000,
   sessionAffinityTtlMs: 1800000,
   // 登录尝试令牌桶（审查#3）：每来源每分钟最多多少次「真的要算 scrypt」的登录尝试，**不看用户名**。
   // 轮换用户名刷登录会被同一个桶挡住；用户名锁定（5 次连错）仍然单独生效。
@@ -64,6 +70,8 @@ const ENV_MAP = {
   CREDITS_PROBE_BELOW_RATIO: ['creditsProbeBelowRatio', 'number'],
   CREDITS_PROBE_MODEL: ['creditsProbeModel', 'string'],
   CREDITS_PROBE_TIMEOUT_MS: ['creditsProbeTimeoutMs', 'number'],
+  CREDITS_PROBE_TTL_MS: ['creditsProbeTtlMs', 'number'],
+  CREDITS_PROBE_FAIL_BACKOFF_MAX_MS: ['creditsProbeFailBackoffMaxMs', 'number'],
   SESSION_AFFINITY_TTL_MS: ['sessionAffinityTtlMs', 'number'],
   LOGIN_ATTEMPTS_PER_MINUTE: ['loginAttemptsPerMinute', 'number'],
   TRUSTED_PROXY_CIDRS: ['trustedProxyCidrs', 'list'],

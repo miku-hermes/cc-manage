@@ -3,7 +3,7 @@ import http from 'node:http';
 import https from 'node:https';
 import { URL } from 'node:url';
 import { redact } from './log.mjs';
-import { isQuotaError, isCreditsExhausted } from './scheduler.mjs';
+import { isQuotaError, isCreditsExhausted, quotaWindowHint } from './scheduler.mjs';
 
 // 只把这些下游请求头转给上游；authorization / x-api-key 一律替换，绝不透传
 const PASSTHROUGH_HEADERS = ['content-type', 'accept', 'x-session-id'];
@@ -12,20 +12,23 @@ const FORWARD_RESPONSE_HEADERS = ['content-type', 'cache-control', 'retry-after'
 const UPSTREAM_UA = 'commandcode-cli/1.53.1';
 const ERROR_BODY_CAP = 1024 * 1024;
 
-function clientFor(url) {
-  return url.protocol === 'https:' ? https : http;
+/**
+ * B11：透传伪账号统一归到固定桶，不按客户端自造的 key 建独立统计条目。
+ *
+ * 透传时 keyId 完全由客户端自选（任何 user_* 串），按它建统计会让 stats.byAccount
+ * 随请求数线性增长 —— 进程内存、data/state.json、匿名可读的 /api/status 全被撑大。
+ * 固定桶保证 statusView() 的输出大小只与池内账号数成正比。
+ */
+export const PASSTHROUGH_STATS_KEY = '__passthrough__';
+
+/** 统计条目的键：透传伪账号 → 固定桶；真实账号 → keyId。 */
+function statsKeyOf(acct) {
+  if (!acct) return PASSTHROUGH_STATS_KEY;
+  return acct.__passthrough ? PASSTHROUGH_STATS_KEY : acct.keyId;
 }
 
-/**
- * 从 402/429 报文措辞里认出**被点名的额度窗口**（审查#4）：
- * `weekly limit reached` / `weekly quota exceeded` → weekly；`5 hour limit` → fiveHour。
- * 点不出来返回 null，交给调度器按「最受限窗口」挑，绝不默认扣在 fiveHour 上。
- */
-function quotaWindowHint(text) {
-  const t = String(text ?? '');
-  if (/weekly[\s_-]*(?:limit|quota|window|exceed|exhaust|reached)|周额度|每周额度/i.test(t)) return 'weekly';
-  if (/(?:five[\s_-]*hour|5[\s_-]*hour|5h)[\s_-]*(?:limit|quota|window|exceed|exhaust|reached)/i.test(t)) return 'fiveHour';
-  return null;
+function clientFor(url) {
+  return url.protocol === 'https:' ? https : http;
 }
 
 /** 读完整响应体（仅用于错误路径，便于脱敏后回给客户端）。 */
@@ -229,7 +232,7 @@ function drainRemaining(req, bodyState, maxBodyBytes) {
   });
 }
 
-export function createProxy({ config, scheduler, log, stats, secrets = [], refreshAccount, touchActivity } = {}) {
+export function createProxy({ config, scheduler, log, stats, secrets = [], refreshAccount, touchActivity, persistState } = {}) {
   const maxBodyBytes = config.maxBodyBytes ?? 20 * 1024 * 1024;
   // 客户端中止计数（F10）：不计入 errors，单独展示，保证错误率口径真实
   if (typeof stats.aborted !== 'number') stats.aborted = 0;
@@ -239,10 +242,19 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
   const base = new URL(config.upstreamProxyUrl);
   const upstreamTimeoutMs = config.upstreamTimeoutMs ?? 300000;
 
-  /** 重试时挑一个不同的可用账号 */
+  /**
+   * 重试时挑一个不同的可用账号（B6）。
+   *
+   * 历史 bug：只按池内顺序取第一个可用账号（accounts.find），绕过 rank()/打分的并发分摊 ——
+   * 池内顺序靠前、只剩 10% 额度的账号会被反复选中，而剩 100% 的被跳过，与「减少账号集中
+   * 耗尽」的目标相反。改用与 select() 相同的打分/排序（scheduler.rank），排除当前账号取最高分。
+   * 找不到时返回 null，保持调用方的 null 语义（单账号池不变成 502）。
+   */
   function pickRetryAccount(prev) {
     const now = Date.now();
-    return scheduler.accounts.find((a) => a.keyId !== prev.keyId && scheduler.isAvailable(a, now)) ?? null;
+    const candidates = scheduler.accounts.filter((a) => a.keyId !== prev.keyId && scheduler.isAvailable(a, now));
+    if (candidates.length === 0) return null;
+    return scheduler.rank(candidates, now)[0] ?? null;
   }
 
   function sendJSON(res, status, obj) {
@@ -292,13 +304,13 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
     // 显式把 globalErrors 落成数字（哪怕 0）：pruneState 才分得清「老版本留下的数据」
     // 与「新数据但确实没有全局贡献」，否则会退化成按 errors 全额扣（审查#15）。
     const bumpAccountError = (acct) => {
-      const s = stats.byAccount[acct.keyId] ?? (stats.byAccount[acct.keyId] = { requests: 0, errors: 0, tokens: 0, aborted: 0 });
+      const s = accountStatsOf(acct);
       s.errors++;
       s.globalErrors = Number.isFinite(s.globalErrors) ? s.globalErrors : 0;
     };
 
-    const accountStatsOf = (acct) => stats.byAccount[acct.keyId]
-      ?? (stats.byAccount[acct.keyId] = { requests: 0, errors: 0, tokens: 0, aborted: 0 });
+    const accountStatsOf = (acct) => stats.byAccount[statsKeyOf(acct)]
+      ?? (stats.byAccount[statsKeyOf(acct)] = { requests: 0, errors: 0, tokens: 0, aborted: 0 });
 
     /**
      * 全局统计只记一次（一个客户端请求 == 一行）：err 为真才算错误，
@@ -488,7 +500,14 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
             // 只有明确额度语义（quota / windowLimits / 周期额度）才暂停；
             // 暂停到**实际耗尽窗口**的 resetAt（weekly 就按周窗口，不再一律扣 5h）
             const windowHint = quotaWindowHint(text);
+            const wasPaused = scheduler.runtime(current).pausedUntil > Date.now();
             const until = scheduler.pauseForQuota(current, Date.now(), windowHint);
+            // B9：暂停只存在内存时会丢（重启/崩溃后 state.json 里仍是旧状态，账号立刻
+            // 重新参与调度、再撞一次同样的错，面板也看不到本次暂停原因）→ 触发一次落盘。
+            // 只在状态**发生变化**时写（本来就在暂停中的重复错误不写盘），热路径不放大 IO。
+            if (!wasPaused && !current.__passthrough) {
+              try { persistState?.(); } catch { /* 落盘失败不影响响应 */ }
+            }
             log?.warn?.(`账号「${current.name}」额度耗尽（${windowHint ?? '按最受限窗口'}），暂停到 ${new Date(until).toISOString()}`);
             scheduler.recordError(current, '额度耗尽');
             if (refreshAccount) await refreshAccount(current).catch(() => {});

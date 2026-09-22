@@ -13,9 +13,12 @@
  * @param {{
  *   idleIntervalMs?: number, activeIntervalMs?: number, activeWindowMs?: number,
  *   run: () => any,
- *   now?: () => number, setTimer?: (fn: Function, ms: number) => any, clearTimer?: (h: any) => void,
+ *   now?: () => number, monoNow?: () => number,
+ *   setTimer?: (fn: Function, ms: number) => any, clearTimer?: (h: any) => void,
  *   onError?: (e: Error) => void, isBusy?: () => boolean, log?: object,
  * }} opts
+ *   now    = 墙钟（仅用于展示/持久化的 lastActivityAt 与重排判断）；
+ *   monoNow= 单调时钟（默认 performance.now()，缺失时回退 Date.now）。活跃判定只认它。
  */
 export function createAdaptivePoller({
   idleIntervalMs = 600000,
@@ -23,6 +26,7 @@ export function createAdaptivePoller({
   activeWindowMs = 300000,
   run,
   now = () => Date.now(),
+  monoNow = () => (typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now()),
   setTimer = (fn, ms) => setTimeout(fn, ms),
   clearTimer = (h) => clearTimeout(h),
   onError = null,
@@ -38,19 +42,25 @@ export function createAdaptivePoller({
   let armedDelay = 0;
   let running = false;
   let stopped = true;
-  let lastActivityAt = null;
+  // B7：活跃判定用单调时钟。墙钟被 NTP 回拨后 `at - lastActivityAt` 会长期为负，
+  // 于是 isActive 恒真、每 60s 打一轮而不是 600s（回拨多久就多打多久，约 10× 上游调用）。
+  let lastActivityAt = null;        // 墙钟时间戳（展示/持久化用）
+  let lastActivityMonoAt = null;    // 单调时间戳（判定用）
   const stats = { runs: 0, skips: 0, errors: 0 };
 
   /** idleIntervalMs <= 0 → 轮询完全关闭。 */
   const enabled = () => idle > 0;
 
-  /** 距上次活动是否落在活跃窗内（从未有过活动 → 视为空闲）。 */
-  function isActive(at = now()) {
-    return active > 0 && lastActivityAt !== null && at - lastActivityAt <= windowMs;
+  /**
+   * 距上次活动是否落在活跃窗内（从未有过活动 → 视为空闲）。
+   * 只比较单调时间戳；默认参数也从单调时钟取，墙钟回拨不影响判定。
+   */
+  function isActive(at = monoNow()) {
+    return active > 0 && lastActivityMonoAt !== null && at - lastActivityMonoAt <= windowMs;
   }
 
   /** 下一次该等多久：活跃 → activeIntervalMs，否则 → idleIntervalMs。 */
-  function nextDelayMs(at = now()) {
+  function nextDelayMs(at = monoNow()) {
     return isActive(at) ? active : idle;
   }
 
@@ -110,6 +120,7 @@ export function createAdaptivePoller({
    */
   function touch(at = now()) {
     lastActivityAt = at;
+    lastActivityMonoAt = monoNow();
     if (stopped || !enabled() || running || timer === null) return;
     // 仅在「当前排的是更晚的空闲间隔」时提前改排，避免持续流量把定时器往后推
     if (active > 0 && armedDelay > active && armedAt + armedDelay > at + active) arm(true);
@@ -125,16 +136,27 @@ export function createAdaptivePoller({
     clear();
   }
 
+  /**
+   * B7 兼容：从持久化状态恢复活动时间。老 state 只存了墙钟（没有单调基准）→ 单调时间戳
+   * 置 null，按「不活跃」处理 —— 绝不能拿墙钟差去喂 isActive，否则时钟回拨时会恒活跃。
+   */
+  function restoreActivity({ lastActivityAt: wallAt = null, lastActivityMonoAt: monoAt = null } = {}) {
+    lastActivityAt = Number.isFinite(wallAt) ? wallAt : null;
+    lastActivityMonoAt = Number.isFinite(monoAt) ? monoAt : null;
+  }
+
   return {
     start,
     stop,
     touch,
     isActive,
     nextDelayMs,
+    restoreActivity,
     stats,
     get enabled() { return enabled(); },
     get running() { return running; },
     get lastActivityAt() { return lastActivityAt; },
+    get lastActivityMonoAt() { return lastActivityMonoAt; },
     get scheduledDelayMs() { return armedDelay; },
   };
 }

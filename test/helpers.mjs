@@ -37,7 +37,7 @@ export async function closeServer(server, timeoutMs = 3000) {
 }
 
 /** 起一个真实网关，上游指向 mock。返回 ctx，测试结束务必 await ctx.close()。 */
-export async function startTestGateway({ accounts, keys, config = {}, plans, behavior, rootDir, noTimers = true } = {}) {
+export async function startTestGateway({ accounts, keys, config = {}, plans, behavior, rootDir, noTimers = true, now } = {}) {
   const dir = rootDir ?? makeTmpDir();
   const defaultAccounts = accounts ?? [
     { name: '账号A', key: 'user_test_alpha', enabled: true },
@@ -53,6 +53,7 @@ export async function startTestGateway({ accounts, keys, config = {}, plans, beh
     rootDir: dir,
     noTimers,
     noInitialRefresh: true,
+    now,
     env: { ...process.env, CC_ACCOUNTS: '', ASSET_NO: '1' },
     config: {
       gatewayPort: port,

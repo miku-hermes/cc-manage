@@ -90,6 +90,8 @@ function peekSessionFromBody(chunks) {
 export async function startGateway(overrides = {}) {
   const config = { ...loadConfig(overrides.configPath ?? path.join(ROOT, 'config.json'), overrides.env ?? process.env), ...(overrides.config ?? {}) };
   const log = createLogger({ level: config.logLevel, file: config.logFile });
+  // 可注入的墙钟：测试用可控 now 驱动探针 TTL / 退避，生产默认 Date.now。
+  const nowFn = typeof overrides.now === 'function' ? overrides.now : () => Date.now();
 
   // ── 事件缓冲（后台「运行日志」）：内存环形，最多 EVENTS_MAX 条 ──
   const events = [];
@@ -111,7 +113,9 @@ export async function startGateway(overrides = {}) {
 
   note('info', `已加载 ${accounts.length} 个 CC 账号、${localKeys.length} 个本地 key`);
 
-  const scheduler = createScheduler({ accounts, state: store.state, ttlMs: config.sessionAffinityTtlMs, log });
+  // B8：过期快照阈值 = 2 × 空闲轮询间隔（无轮询配置时回退 20 分钟，与 poolStaleAfterMs 同口径）。
+  const snapshotStaleMs = 2 * (Number(config.quotaPollIntervalMs) > 0 ? Number(config.quotaPollIntervalMs) : 600000);
+  const scheduler = createScheduler({ accounts, state: store.state, ttlMs: config.sessionAffinityTtlMs, snapshotStaleMs, log });
   const stats = store.state.stats;
   for (const a of accounts) stats.byAccount[a.keyId] ??= { requests: 0, errors: 0, tokens: 0 };
 
@@ -369,8 +373,16 @@ export async function startGateway(overrides = {}) {
    *
    * 只对「余额快见底」的账号探（内部记 probeState，正常账号一次都不打），
    * 命中即记标记并停止再探 —— 开销可忽略（每次 1 个输出 token）。
+   *
+   * B2：光靠「已标记」去重不够 —— 余额低于阈值但**仍可用**的账号（belowThreshold 的大套餐、
+   * 余额低于 2% 周期的账号）会每轮都被探，活跃期 60s 一次 = 1440 次推理/天，全记在该账号
+   * 账单上；探针自身失败（超时/套餐不含该模型/5xx/429）也会每轮重打。因此再加：
+   *  - TTL（config.creditsProbeTtlMs，默认 10 分钟）：同一账号两次探针的最小间隔；
+   *  - 失败指数退避（1×→2×→4× TTL…，封顶 config.creditsProbeFailBackoffMaxMs，默认 1 小时），
+   *    探针成功/明确没钱后重置；
+   *  - 「已判定余额不足 → 停止再探」的既有短路保留（见上面的 creditsExhaustedState）。
    */
-  const probeState = new Map();   // keyId → { at, verdict }
+  const probeState = new Map();   // keyId → { at, verdict, fails, nextAt }
 
   async function maybeProbeCredits(account, snapshot) {
     if (!config.creditsProbeEnabled) return null;
@@ -380,26 +392,56 @@ export async function startGateway(overrides = {}) {
     // 探针是「我要用它之前的最后一道确认」，不是巡检。
     if (!scheduler.isAvailable(account)) return null;
     if (!shouldProbeCredits(snapshot, config.creditsProbeBelowUsd, config.creditsProbeBelowRatio)) return null;
+
+    const now = nowFn();
+    const prev = probeState.get(account.keyId);
+    // TTL / 失败退避未到点 → 直接跳过，不打上游（探针是真花钱的推理请求）
+    if (prev && Number.isFinite(prev.nextAt) && now < prev.nextAt) return null;
+
     const result = await probeAccountCredits(account.key, {
       baseUrl: config.upstreamProxyUrl,
       model: config.creditsProbeModel,
       timeoutMs: config.creditsProbeTimeoutMs,
       fetchImpl: overrides.fetchImpl,
     });
-    probeState.set(account.keyId, { at: Date.now(), verdict: result.insufficientCredits ? 'no-credits' : (result.ok ? 'ok' : 'unknown') });
-    if (result.insufficientCredits) {
+
+    const weighted = creditsProbeWeight(result);
+    const fails = weighted.ok ? 0 : (prev?.fails ?? 0) + 1;
+    const ttl = Number(config.creditsProbeTtlMs) > 0 ? Number(config.creditsProbeTtlMs) : 10 * 60 * 1000;
+    const backoffMs = weighted.ok ? ttl : probeBackoffMs(fails, ttl, config.creditsProbeFailBackoffMaxMs);
+    const verdict = weighted.insufficientCredits ? 'no-credits' : (weighted.ok ? 'ok' : 'unknown');
+    probeState.set(account.keyId, { at: now, verdict, fails, nextAt: now + backoffMs });
+
+    if (weighted.insufficientCredits) {
       scheduler.markCreditsExhausted(account, '余额不足（探针实测：上游拒付）');
       log.warn(`账号「${account.name}」探针实测余额不足（剩余 ${snapshot.remaining}），已停止调度`);
-    } else if (result.ok) {
-      probeState.set(account.keyId, { at: Date.now(), verdict: 'ok' });
-    } else {
-      // 探针本身失败（超时/套餐不含该模型/5xx）：不据此改判定，只记一笔
-      log.debug?.(`账号「${account.name}」余额探针无结论: ${redact(result.error ?? '', secrets)}`);
+    } else if (!weighted.ok) {
+      // 探针本身失败（超时/套餐不含该模型/5xx）：不据此改判定，只记一笔；
+      // 下一次允许时间已按失败次数指数放大。
+      log.debug?.(`账号「${account.name}」余额探针无结论（第 ${fails} 次，${Math.round(backoffMs / 1000)}s 后再探）: ${redact(result.error ?? '', secrets)}`);
     }
     return result;
   }
 
-  async function refreshAccount(account) {
+  /** B2：探针退避时长 = TTL × 2^(fails-1)，封顶 maxMs。 */
+  function probeBackoffMs(fails, ttlMs, maxMs) {
+    const cap = Number(maxMs) > 0 ? Number(maxMs) : 60 * 60 * 1000;
+    return Math.min(cap, ttlMs * 2 ** Math.max(0, fails - 1));
+  }
+
+  /** 探针结果是否算「成功」（成功或明确没钱都重置退避）。 */
+  function creditsProbeWeight(result) {
+    return { ok: !!result?.ok || !!result?.insufficientCredits, insufficientCredits: !!result?.insufficientCredits };
+  }
+
+  // ── 单账号额度刷新去重（B1）──────────────────────────────
+  // 一次请求撞额度错误就触发一轮 4 接口查询；并发时按在途数线性放大（8 并发 → 32 次上游调用）。
+  // 按账号复用同一个在途 promise + 每账号最小刷新间隔，把放大压回 1~2 轮。
+  const REFRESH_ACCOUNT_MIN_INTERVAL_MS = 5000;
+  const accountRefreshInFlight = new Map();   // keyId → Promise
+  const accountRefreshLastAt = new Map();     // keyId → 上次发起刷新的墙钟
+
+  async function doRefreshAccount(account) {
     const snapshot = await fetchQuota(account.key, {
       baseUrl: config.ccApiBase,
       timeoutMs: config.quotaTimeoutMs,
@@ -416,6 +458,35 @@ export async function startGateway(overrides = {}) {
       });
     }
     return { account, snapshot };
+  }
+
+  /**
+   * 单账号刷新入口（B1）：同账号已有在途刷新 → 复用同一个 promise；距上次刷新不足
+   * REFRESH_ACCOUNT_MIN_INTERVAL_MS → 直接复用上一次结果（跳过本轮 4 个上游请求）。
+   * force=true 用于轮询/手动刷新等「确实要拿最新值」的路径，跳过最小间隔但仍共享在途 promise。
+   */
+  function refreshAccount(account, { force = false } = {}) {
+    const id = account?.keyId;
+    if (!id) return doRefreshAccount(account);
+    const inFlight = accountRefreshInFlight.get(id);
+    if (inFlight) return inFlight;
+    if (!force) {
+      const last = accountRefreshLastAt.get(id);
+      if (Number.isFinite(last) && nowFn() - last < REFRESH_ACCOUNT_MIN_INTERVAL_MS) {
+        return Promise.resolve({
+          account,
+          snapshot: scheduler.runtime(account).lastQuota ?? null,
+          skipped: true,
+        });
+      }
+    }
+    const tracked = doRefreshAccount(account).finally(() => {
+      if (accountRefreshInFlight.get(id) === tracked) accountRefreshInFlight.delete(id);
+    });
+    tracked.catch(() => { /* 调用方各自 catch；这里只防未处理拒绝 */ });
+    accountRefreshInFlight.set(id, tracked);
+    accountRefreshLastAt.set(id, nowFn());
+    return tracked;
   }
 
   // 进行中的一轮刷新（含手动点「刷新额度」触发的）：轮询据此跳过，避免叠起来
@@ -435,7 +506,7 @@ export async function startGateway(overrides = {}) {
 
   async function doRefreshAll() {
     // 各账号互不影响：单个失败不会中断其它查询
-    const results = await Promise.all(accounts.map((a) => refreshAccount(a).catch((e) => ({
+    const results = await Promise.all(accounts.map((a) => refreshAccount(a, { force: true }).catch((e) => ({
       account: a,
       snapshot: { ok: false, error: redact(e?.message ?? String(e), secrets), authInvalid: false, fetchedAt: Date.now() },
     }))));
@@ -459,7 +530,7 @@ export async function startGateway(overrides = {}) {
     poller.touch();
   }
 
-  const proxy = createProxy({ config, scheduler, log, stats, secrets, refreshAccount, touchActivity });
+  const proxy = createProxy({ config, scheduler, log, stats, secrets, refreshAccount, touchActivity, persistState: () => store.saveState() });
 
   // ── 后台定时器 ─────────────────────────────────────────
   let recheckTimer = null;
@@ -1334,6 +1405,7 @@ export async function startGateway(overrides = {}) {
     server, config, log, accounts, localKeys, store, scheduler, stats, refreshAll, statusView, stop, proxy,
     events, note, reloadNow, syncPool, handleAdmin, handleAuth, sessions, loginLimiter, currentUser,
     poller, touchActivity, runPausedRecheck,
+    probeState,
     sessionTokenOf,
     get users() { return users; }, get testHistory() { return testHistory; }, usersView, isSetupRequired,
   };

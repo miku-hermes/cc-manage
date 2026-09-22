@@ -10,6 +10,25 @@ export const QUOTA_RETRY_BACKOFF_MS = 60 * 1000;
 // 查询失败不能按「窗口耗尽」顺延 5 小时，否则上游额度接口故障 = 账号永久停用。
 export const QUOTA_RECHECK_MAX_BACKOFF_MS = 15 * 60 * 1000;
 export const QUOTA_RECHECK_FAIL_OPEN_AT = 5;
+// 快照过旧（B8）：lastQuota 可能来自任意久以前（重启后从 state.json 恢复），
+// 默认取「2 × 空闲轮询间隔」；调度器自身拿不到轮询配置时回退 20 分钟。
+export const DEFAULT_SNAPSHOT_STALE_MS = 20 * 60 * 1000;
+// 过期快照 / 数据不完整窗口的中性打分（B3、B8）：不能拿满分抢流量，也不判不可用（避免全池 503）。
+export const NEUTRAL_RATIO = 0.5;
+
+/**
+ * B8：额度快照是否过旧。`fetchedAt` 缺失、非有限数、或距 `now` 超过 `staleMs` → 过期。
+ *
+ * 过期快照不能据以路由：调度器只看 `lastQuota`，而它可能是重启前写进 state.json 的旧数据，
+ * 按它打分会把请求送到实际已耗尽的账号（撞 429/400）。调用方可传入
+ * 「2 × 空闲轮询间隔」；不传/非法时回退 DEFAULT_SNAPSHOT_STALE_MS。
+ */
+export function isSnapshotStale(q, now = Date.now(), staleMs = DEFAULT_SNAPSHOT_STALE_MS) {
+  const t = Number(q?.fetchedAt);
+  if (!Number.isFinite(t)) return true;
+  const limit = Number.isFinite(Number(staleMs)) && Number(staleMs) > 0 ? Number(staleMs) : DEFAULT_SNAPSHOT_STALE_MS;
+  return now - t > limit;
+}
 
 /**
  * 所有能用的额度窗口（5h、周）。任何一个打满，账号就不可用。
@@ -18,14 +37,50 @@ export const QUOTA_RECHECK_FAIL_OPEN_AT = 5;
  * 二者都看不见 —— 账号既被判定「可用」，又因 5h 剩余 100% 拿到最高分被优先选中，
  * 于是每次路由都先撞一次 429 再 failover。
  */
+/**
+ * B4：把上游 `exceededWindow` 点名的窗口对应的键名归一化。
+ * 实测顶层 exceeded 是窗口名字符串（如 "weekly" / "fiveHour"）；这里做宽松匹配，
+ * 认不出来又找不到同名槽位时返回 null。
+ */
+function exceededSlotKey(quota) {
+  const name = quota?.exceededWindow;
+  if (typeof name !== 'string' || !name) return null;
+  if (/five|hour|5h/i.test(name)) return 'fiveHour';
+  if (/week|周/i.test(name)) return 'weekly';
+  if (/month|月/i.test(name)) return 'monthly';
+  return Object.prototype.hasOwnProperty.call(quota, name) ? name : null;
+}
+
+/**
+ * B4：`exceededWindow` 点名的窗口对象（对象缺失时给一个 exceeded:true 的占位）。
+ * 上游点名是「哪个窗口超限」的权威判据；若只因为它省略了窗口对象就不纳入可用性判定，
+ * 账号会被判「可用 + 剩 98%」并拿最高优先级，全部流量打到已知超限的账号。
+ */
+function exceededWindowSlot(quota) {
+  const key = exceededSlotKey(quota);
+  if (!key) return null;
+  const w = quota?.[key];
+  if (w && typeof w === 'object') return { ...w, exceeded: true };
+  return { exceeded: true, used: null, cap: 0, usedRatio: null, resetAt: null, incomplete: true };
+}
+
 export function quotaWindows(quota) {
   const out = [];
+  const seen = new Set();
+  const push = (w) => {
+    if (w && typeof w === 'object' && !seen.has(w)) {
+      seen.add(w);
+      out.push(w);
+    }
+  };
   for (const w of [quota?.fiveHour, quota?.weekly]) {
     // 审查#7：缺有效 cap 的窗口 usedRatio=null，早先直接被这里过滤掉 ——
     // 于是上游**明确**的 exceeded=true 反而不参与可用性判断。判定条件：
     // 有 usedRatio（可算比例）**或** 上游点了 exceeded（权威超限标记）。
-    if (w && (typeof w.usedRatio === 'number' || w.exceeded === true)) out.push(w);
+    if (w && (typeof w.usedRatio === 'number' || w.exceeded === true)) push(w);
   }
+  // B4：上游点名的超限窗口也纳入（对象缺失时用占位窗口），可用性判定为 false。
+  push(exceededWindowSlot(quota));
   return out;
 }
 
@@ -49,11 +104,38 @@ function ratioOf(w) {
   return Math.max(0, 1 - used / cap);
 }
 
-/** remainingRatio = 最受限窗口的剩余比例；无数据算 1.0。 */
+/**
+ * B3：窗口「数据不完整」= cap 缺失/<=0，或 used 缺失。
+ *
+ * 上游字段改名/缺失（或老 state.json）时，一个 `used=99` 的窗口在 cap 缺失时
+ * 既不计入可用性判定、也不影响打分，于是账号 remainingRatio=1.0 拿到最高分被优先选中，
+ * 每次路由都撞一次 429；反之 used 缺失被 num() 补成 0（剩 100%）。
+ *
+ * `hasUsed` 是解析层（parseWindow）带的显式标记；老快照没有该标记时退化为看 used 是否为 null/undefined。
+ */
+function windowDataIncomplete(w) {
+  if (!w || typeof w !== 'object') return false;
+  const capMissing = !(Number(w.cap) > 0);
+  const usedMissing = w.hasUsed === false
+    || (w.hasUsed === undefined && (w.used === undefined || w.used === null));
+  return capMissing || usedMissing;
+}
+
+/** 账号是否存在任何「数据不完整」的窗口（只看 5h/周两个判定窗口）。 */
+export function hasIncompleteWindow(quota) {
+  return windowDataIncomplete(quota?.fiveHour) || windowDataIncomplete(quota?.weekly);
+}
+
+/**
+ * remainingRatio = 最受限窗口的剩余比例；无数据算 1.0。
+ *
+ * B3：只要账号存在「数据不完整」的窗口，比例就**不得高于 0.5** —— 不能因为上游漏字段
+ * 而获得比数据完整的健康账号更高的优先级；全部窗口数据完整时行为与历史一致。
+ */
 export function remainingRatio(quota) {
   const w = ratioWindow(quota);
-  if (!w) return 1.0;
-  return ratioOf(w);
+  const base = w ? ratioOf(w) : 1.0;
+  return hasIncompleteWindow(quota) ? Math.min(base, NEUTRAL_RATIO) : base;
 }
 
 /**
@@ -66,8 +148,46 @@ export function remainingRatio(quota) {
  * 现在只有明确指向「额度窗口/额度用量」的措辞才算额度耗尽：quota / quota_exceeded /
  * windowLimits / credit(s) / <周期> limit|window（weekly limit reached 这种仍是额度语义）。
  * 裸的 "rate limit" / "too many requests" / "rate_limit" 字段一律不算。
+ *
+ * B5：`5 hour limit` / `5h limit` / `five-hour window limit` 必须与 proxy 的窗口点名
+ * （quotaWindowHint）用同一份文案集合，否则同一句上游措辞在同一个仓库里有两个答案。
+ * 周期措辞集中定义在下面两个常量里，isQuotaError 与 quotaWindowHint 共用。
  */
-const QUOTA_HINT_RE = /quota|window_?limits?|credits?|(?:weekly|monthly|daily|hourly|usage|plan|subscription|account)[\s_-]*(?:limit|window|quota|exhaust)/i;
+// 5 小时窗口的写法：five hour(s) / five-hour / 5 hour(s) / 5-hour / 5h
+export const FIVE_HOUR_WINDOW_PHRASE = String.raw`(?:five[\s_-]*hours?|5[\s_-]*hours?|5h)`;
+// 周窗口的写法：weekly（+ 中文「周额度」）
+export const WEEKLY_WINDOW_PHRASE = String.raw`weekly`;
+const WEEKLY_CN_PHRASE = String.raw`周额度|每周额度`;
+// 窗口点名用到的动作词 —— 与历史 proxy 的 quotaWindowHint 口径完全一致
+const WINDOW_ACTION_PHRASE = String.raw`(?:limit|quota|window|exceed|exhaust|reached)`;
+// isQuotaError 的动作词：保持历史集合，不额外扩大误判面（exceed/reached 由前面的周期词覆盖）
+const QUOTA_ACTION_PHRASE = String.raw`(?:limit|window|quota|exhaust)`;
+
+const QUOTA_HINT_RE = new RegExp(
+  [
+    'quota',
+    'window_?limits?',
+    'credits?',
+    `(?:weekly|monthly|daily|hourly|usage|plan|subscription|account|${FIVE_HOUR_WINDOW_PHRASE})[\\s_-]*${QUOTA_ACTION_PHRASE}`,
+  ].join('|'),
+  'i',
+);
+
+/**
+ * B5：从 402/429 报文措辞里认出**被点名的额度窗口**（审查#4）。
+ * `weekly limit reached` → weekly；`5 hour limit` / `five-hour window limit` → fiveHour。
+ * 点不出来返回 null，交给调度器按「最受限窗口」挑，绝不默认扣在 fiveHour 上。
+ * 文案集合与 isQuotaError 共用（FIVE_HOUR_WINDOW_PHRASE）。
+ */
+const WEEKLY_HINT_RE = new RegExp(`(?:${WEEKLY_WINDOW_PHRASE}[\\s_-]*${WINDOW_ACTION_PHRASE}|${WEEKLY_CN_PHRASE})`, 'i');
+const FIVE_HOUR_HINT_RE = new RegExp(`${FIVE_HOUR_WINDOW_PHRASE}[\\s_-]*${WINDOW_ACTION_PHRASE}`, 'i');
+
+export function quotaWindowHint(text) {
+  const t = String(text ?? '');
+  if (WEEKLY_HINT_RE.test(t)) return 'weekly';
+  if (FIVE_HOUR_HINT_RE.test(t)) return 'fiveHour';
+  return null;
+}
 
 /** 上游是否报了「额度耗尽」。402 一律算；429 需 body 里明确出现额度语义。 */
 export function isQuotaError(status, bodyText = '') {
@@ -97,7 +217,7 @@ export function isCreditsExhausted(status, bodyText = '') {
   return CREDITS_HINT_RE.test(String(bodyText));
 }
 
-export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffinity = 2000, log } = {}) {
+export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffinity = 2000, snapshotStaleMs = DEFAULT_SNAPSHOT_STALE_MS, log } = {}) {
   // 运行期状态：state.accounts[keyId]
   const blankRuntime = () => ({
     concurrency: 0, pausedUntil: null, lastQuota: null, lastError: null, lastErrorAt: null,
@@ -202,15 +322,24 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
     return true;
   }
 
-  function score(account) {
+  /**
+   * 打分用的有效剩余比例（B8）：过期快照降为中性 0.5 —— 既不能拿满分抢流量，
+   * 也不判不可用（避免全池 503；刷新由 A4 的「全池无可用 → 自动刷新」负责）。
+   */
+  function effectiveRatio(account, now = Date.now()) {
+    const q = runtime(account).lastQuota;
+    return isSnapshotStale(q, now, snapshotStaleMs) ? NEUTRAL_RATIO : remainingRatio(q);
+  }
+
+  function score(account, now = Date.now()) {
     const rt = runtime(account);
-    return remainingRatio(rt.lastQuota) / (1 + (rt.concurrency || 0));
+    return effectiveRatio(account, now) / (1 + (rt.concurrency || 0));
   }
 
   /** 排序候选：分数降序，同分按 accounts 数组顺序（稳定）。 */
-  function rank(candidates) {
+  function rank(candidates, now = Date.now()) {
     return candidates
-      .map((account, index) => ({ account, index, score: score(account) }))
+      .map((account, index) => ({ account, index, score: score(account, now) }))
       .sort((a, b) => (b.score - a.score) || (a.index - b.index))
       .map((x) => x.account);
   }
@@ -227,7 +356,7 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
     }
     const candidates = accounts.filter((a) => isAvailable(a, now));
     if (candidates.length === 0) return { account: null, reason: 'no_available_account' };
-    const picked = rank(candidates)[0];
+    const picked = rank(candidates, now)[0];
     setAffinity(sessionId, picked.keyId, now);
     return { account: picked };
   }
@@ -250,7 +379,13 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
   function recordQuota(account, snapshot) {
     const rt = runtime(account);
     if (snapshot?.ok) {
-      rt.lastQuota = snapshot;
+      // B8：走 recordQuota 的必然是「刚查回来的快照」；若上游/调用方没带 fetchedAt，
+      // 补上当前时刻，避免它被下一次打分当成过期快照。老 state.json 的旧快照不经过这里，
+      // 仍会按真实（缺失/久远）时间被判过期。
+      const fetchedAt = snapshot.fetchedAt;
+      rt.lastQuota = (typeof fetchedAt === 'number' && Number.isFinite(fetchedAt))
+        ? snapshot
+        : { ...snapshot, fetchedAt: Date.now() };
       rt.lastError = null;
       rt.lastErrorAt = null;
       rt.rateLimitedUntil = null;
@@ -487,8 +622,10 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
     state,
     runtime,
     isAvailable,
-    remainingRatio: (account) => remainingRatio(runtime(account).lastQuota),
+    // B8：账号维度的「有效」剩余比例（含过期快照 → 0.5 的降级），与打分同源。
+    remainingRatio: (account, now = Date.now()) => effectiveRatio(account, now),
     score,
+    rank,
     select,
     acquire,
     release,

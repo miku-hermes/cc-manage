@@ -75,9 +75,14 @@ export async function probeAccountCredits(key, opts = {}) {
 export function shouldProbeCredits(snapshot, floorUsd, floorRatio = DEFAULT_FLOOR_RATIO) {
   if (!snapshot?.ok) return false;
   // 审查#8：parseSnapshot 把官方低余额信号放在 credits.belowThreshold（真实报文的嵌套位置），
-  // 早先这里却只读顶层 → 官方信号永远不触发探针。两个位置都认（顶层兼容老快照）。
-  const belowThreshold = snapshot.credits?.belowThreshold ?? snapshot.belowThreshold;
-  if (belowThreshold === true) return true;
+  // 早先这里却只读顶层 → 官方信号永远不触发探针。
+  // B10：兼容分支必须显式判「credits 对象是否存在」，不能用 `??` —— parseSnapshot 总会
+  // 产出 credits（belowThreshold 默认 false），`??` 只在 null/undefined 时回落，于是顶层
+  // 老快照里的 `belowThreshold: true` 永远被吞掉，注释承诺的行为与实现不符。
+  // 语义：credits 对象存在就只看它；不存在（老快照/手工数据）才回退顶层 belowThreshold。
+  const hasCredits = snapshot.credits !== null && typeof snapshot.credits === 'object';
+  const belowThreshold = hasCredits ? snapshot.credits.belowThreshold === true : snapshot.belowThreshold === true;
+  if (belowThreshold) return true;
   const remaining = Number(snapshot.remaining);
   if (!Number.isFinite(remaining)) return false;
 

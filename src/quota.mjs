@@ -4,8 +4,25 @@ import { redact } from './log.mjs';
 export const CC_USER_AGENT = 'commandcode-cli/1.53.1';
 
 /**
+ * B12：把「无时区」的 ISO 日期时间按 **UTC** 补全，保证同一字符串在不同 TZ 的容器里
+ * 解析出同一个时间戳。SPEC 只说 resetAt 可能是秒级数字 / 毫秒级数字 / ISO 字符串，
+ * 没约定必须带时区；若不补，`2026-09-22T12:00:00` 会被 `Date.parse` 按**本机时区**
+ * 解释（Asia/Shanghai 上整体偏移 8 小时），窗口重置时间随之错位。
+ *
+ * - 带 `Z`/`z` 或 `±HH:MM` / `±HHMM` 偏移的：时区已明确，原样返回；
+ * - 只有日期（`YYYY-MM-DD`）：ES 规范本身就按 UTC 解释，原样返回；
+ * - 日期 + 时间但无时区：补 `Z` 按 UTC 解释。
+ */
+function isoWithUtcFallback(value) {
+  const s = String(value).trim();
+  if (/(?:[zZ]|[+-]\d{2}:?\d{2})$/.test(s)) return s;
+  if (/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(s)) return `${s.replace(' ', 'T')}Z`;
+  return s;
+}
+
+/**
  * resetAt 归一化成秒：>=1e12 视为毫秒 → /1000；ISO 字符串 → 秒；其余按秒。
- * 无法解析时返回 null。
+ * 无时区的 ISO 日期时间按 UTC 解释（B12）。无法解析时返回 null。
  */
 export function normalizeResetAt(value) {
   if (value === null || value === undefined || value === '') return null;
@@ -15,7 +32,7 @@ export function normalizeResetAt(value) {
   if (typeof value === 'string') {
     const asNum = Number(value);
     if (Number.isFinite(asNum)) return normalizeResetAt(asNum);
-    const ms = Date.parse(value);
+    const ms = Date.parse(isoWithUtcFallback(value));
     if (Number.isFinite(ms)) return Math.floor(ms / 1000);
   }
   return null;
@@ -60,6 +77,11 @@ export function parseWindow(w) {
     // 上游自带的「这个窗口超了」标记 —— 比我们自己用 used>=cap 反推更权威
     // （实测副号 weekly used=6.003>cap=6 时上游给 exceeded=true）。
     exceeded,
+    // B3：数据完整性标记。used 缺失会被 num() 补成 0、cap 缺失会是 0，
+    // 单看归一化后的值分不清「真的是 0」还是「上游没给」—— 下游需要据此判断
+    // 该窗口能不能用来判定额度是否充足，故显式带出。
+    hasUsed,
+    hasCap,
   };
 }
 

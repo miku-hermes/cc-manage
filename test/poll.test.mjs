@@ -45,6 +45,8 @@ function makePoller(clock, run, opts = {}) {
     activeWindowMs: 300000,
     run,
     now: clock.now,
+    // B7：活跃判定改用单调时钟，测试里让假钟同时充当墙钟与单调钟（单调整调，语义不变）。
+    monoNow: clock.now,
     setTimer: clock.setTimer,
     clearTimer: clock.clearTimer,
     ...opts,
