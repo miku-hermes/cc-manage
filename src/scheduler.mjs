@@ -105,16 +105,20 @@ function ratioOf(w) {
 }
 
 /**
- * B3：窗口「数据不完整」= cap 缺失/<=0，或 used 缺失。
+ * B3：窗口「数据不完整」= 窗口整体缺失/非对象，或 cap 缺失/<=0，或 used 缺失。
  *
  * 上游字段改名/缺失（或老 state.json）时，一个 `used=99` 的窗口在 cap 缺失时
  * 既不计入可用性判定、也不影响打分，于是账号 remainingRatio=1.0 拿到最高分被优先选中，
  * 每次路由都撞一次 429；反之 used 缺失被 num() 补成 0（剩 100%）。
  *
+ * M4：窗口**整个为 null/非对象**同样是「数据不完整」—— 五小时 + 周窗口全 null 时
+ * ratioWindow() 返回 null，若不在这里拦，remainingRatio 会退化成 1.0，
+ * 比数据完整的健康账号还优先，反复撞 429/400。
+ *
  * `hasUsed` 是解析层（parseWindow）带的显式标记；老快照没有该标记时退化为看 used 是否为 null/undefined。
  */
 function windowDataIncomplete(w) {
-  if (!w || typeof w !== 'object') return false;
+  if (!w || typeof w !== 'object') return true;
   const capMissing = !(Number(w.cap) > 0);
   const usedMissing = w.hasUsed === false
     || (w.hasUsed === undefined && (w.used === undefined || w.used === null));
@@ -127,7 +131,7 @@ export function hasIncompleteWindow(quota) {
 }
 
 /**
- * remainingRatio = 最受限窗口的剩余比例；无数据算 1.0。
+ * remainingRatio = 最受限窗口的剩余比例；窗口缺失/不完整算中性 0.5（M4）。
  *
  * B3：只要账号存在「数据不完整」的窗口，比例就**不得高于 0.5** —— 不能因为上游漏字段
  * 而获得比数据完整的健康账号更高的优先级；全部窗口数据完整时行为与历史一致。
@@ -173,6 +177,10 @@ const QUOTA_HINT_RE = new RegExp(
   'i',
 );
 
+// M7/M1b：内核把上游 402（额度/用量耗尽）折叠成 429 + type:"rate_limit_error"，message
+// 只会是兜底文案 `CC API error (402)`；此时只有机器可读的 `code` 还能区分额度 vs 普通限流。
+const QUOTA_CODE_RE = /USAGE_EXCEEDED|QUOTA_EXCEEDED|CREDITS_EXHAUSTED/i;
+
 /**
  * B5：从 402/429 报文措辞里认出**被点名的额度窗口**（审查#4）。
  * `weekly limit reached` → weekly；`5 hour limit` / `five-hour window limit` → fiveHour。
@@ -193,7 +201,9 @@ export function quotaWindowHint(text) {
 export function isQuotaError(status, bodyText = '') {
   if (status === 402) return true;
   if (status !== 429) return false;
-  return QUOTA_HINT_RE.test(String(bodyText));
+  const text = String(bodyText);
+  // M7：文案判据 与 code 判据是 OR 关系 —— 内核折叠后的 402 只剩 code 可判。
+  return QUOTA_HINT_RE.test(text) || QUOTA_CODE_RE.test(text);
 }
 
 /**

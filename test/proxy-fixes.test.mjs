@@ -231,16 +231,22 @@ test('F9：上游 401 → 账号标记 authInvalid 并换到健康账号', async
   assert.equal(invalid.available, false);
 });
 
-test('F9：上游 403（模型/套餐限制）→ 不停调该账号，仅原样透传 403', async (t) => {
-  const ctx = await startTestGateway({ behavior: { authErrorStatus: 403 } });
+test('F9：内核折叠 403→401（模型/套餐限制）→ 不停调该账号，仅原样透传 401', async (t) => {
+  // 生产里网关看不到上游 403：内核把它折叠成 401 + authentication_error + 模型错误文案。
+  const ctx = await startTestGateway({
+    behavior: {
+      authErrorStatus: 401,
+      authErrorBody: { error: { message: 'Model/provider not recognized: anthropic:deepseek-v4.1-falsh', type: 'authentication_error' } },
+    },
+  });
   t.after(() => ctx.close());
 
   const res = await post(ctx, '/v1/chat/completions');
-  assert.equal(res.status, 403, '状态码原样透传');
+  assert.equal(res.status, 401, '状态码原样透传');
 
   const view = JSON.parse((await request(`${ctx.baseUrl}/api/status`)).body);
-  assert.equal(view.summary.available, 2, '403 与 key 有效性无关，两个账号都必须仍可调度');
-  assert.equal(view.accounts.some((a) => a.authInvalid), false, '403 绝不能标记 authInvalid');
+  assert.equal(view.summary.available, 2, '模型/套餐限制与 key 有效性无关，两个账号都必须仍可调度');
+  assert.equal(view.accounts.some((a) => a.authInvalid), false, '绝不能标记 authInvalid');
 });
 
 // ── F10：统计口径自洽（一个请求只算一次；中止单独计数）────────────────

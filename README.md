@@ -49,6 +49,12 @@ npm start                                            # 监听 127.0.0.1:3051
 默认只监听 `127.0.0.1`。对外暴露时后台走账号密码登录（首次访问 `/admin` 初始化），面板默认公开只读；
 若要连面板也藏起来，设 `PUBLIC_DASHBOARD=0`（此时 `/api/status` 需要登录 session）。
 
+**反向代理（1Panel / openresty / nginx）注意**：网关自身 `keepAliveTimeout` 默认 65s
+（`KEEPALIVE_TIMEOUT_MS` 可调），反代侧的 upstream `keepalive_timeout` **必须小于**该值
+（建议 60s 及以下）。否则反代会复用一条后端已关闭的连接，POST 请求写过去就是 EPIPE，
+客户端偶发 502。另外反代应把真实来源写进 `X-Real-IP`（用 `$remote_addr` 覆盖），
+网关在 `X-Forwarded-For` 里**从右往左**取第一个非可信地址，客户端伪造的左侧前缀无效。
+
 ### Docker 部署（一键起网关 + 协议内核）
 
 `docker compose` 会同时拉起两个服务：`gateway`（本仓库，宿主只映射 `127.0.0.1:3051`）与 `core`（`vendor/commandcode-proxy`，**不映射宿主端口**）。宿主上的客户端只跟 `gateway` 说话。

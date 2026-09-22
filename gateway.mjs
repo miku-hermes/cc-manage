@@ -73,6 +73,9 @@ class HttpError extends Error {
 export const BODY_PEEK_BYTES = 8192;
 // 收到首块后最多再等这么久找 session id（毫秒），到点就放行开始转发。
 const BODY_PEEK_IDLE_MS = 150;
+// L5：peek 的**起始**超时 —— 连接建立后一直不发送 body 也不能无限占住 socket
+// （armIdle 只在收到首块数据后才生效）。默认 10s，可经 config.bodyPeekStartMs/env 覆盖。
+const BODY_PEEK_START_MS = 10000;
 // docker stop 默认宽限期 10s，这里留一半余量给在途请求自然结束（F3）
 const GRACEFUL_SHUTDOWN_MS = 5000;
 
@@ -136,6 +139,10 @@ export async function startGateway(overrides = {}) {
     now: () => Date.now(),
     // 全局尝试预算（不分用户名）：轮换用户名刷登录也会被限速，不再无限触发 scrypt
     attemptMax: Number(config.loginAttemptsPerMinute) > 0 ? Number(config.loginAttemptsPerMinute) : 60,
+    // H2：进程级全局桶（跨来源），伪造 XFF/轮换来源也绕不过；0 → attemptMax×10
+    globalAttemptMax: Number(config.loginGlobalAttemptsPerMinute) > 0
+      ? Number(config.loginGlobalAttemptsPerMinute)
+      : (Number(config.loginAttemptsPerMinute) > 0 ? Number(config.loginAttemptsPerMinute) : 60) * 10,
     attemptWindowMs: 60 * 1000,
   });
   let users = [];
@@ -670,6 +677,10 @@ export async function startGateway(overrides = {}) {
       concurrency: rt.concurrency,
       pausedUntil: rt.pausedUntil,
       paused: !!(rt.pausedUntil && rt.pausedUntil > Date.now()),
+      // M2：普通限流（429 非额度）的 60s 短冷却状态 —— 前端读 a.rateLimited 渲染，
+      // 历史不下发导致被限流账号被画成红色「不可调度」。
+      rateLimited: !!(rt.rateLimitedUntil && rt.rateLimitedUntil > Date.now()),
+      rateLimitedUntil: rt.rateLimitedUntil ?? null,
       authInvalid: !!rt.authInvalid,
       // 上游明确说余额不足：面板要能把它和「暂停到 X」区分开（充值或周期刷新才恢复）
       creditsExhausted: !!rt.creditsExhausted,
@@ -702,9 +713,9 @@ export async function startGateway(overrides = {}) {
     return {
       ok: true,
       now: Date.now(),
-      upstreamProxyUrl: config.upstreamProxyUrl,
       allowPassthrough: config.allowPassthrough,
-      gateway: { host: config.gatewayHost, port: config.gatewayPort },
+      // M1：匿名可读的 /api/status 不下发上游拓扑（内核地址如 http://core:3050、
+      // 网关 host/port）。前端已不消费该字段，暴露只会帮攻击者画网络地图。
       summary: {
         accounts: accounts.length,
         enabled: accounts.filter((a) => a.enabled).length,
@@ -768,11 +779,19 @@ export async function startGateway(overrides = {}) {
     return true;
   }
 
-  /** 503 的可重试提示：距最近一个未来 resetAt 的毫秒数，取不到给保守默认值。 */
+  /**
+   * 503 的可重试提示：距最近一个「未来恢复时刻」的毫秒数，取不到给保守默认值。
+   * L3：只统计可调度候选（enabled 且非 authInvalid/creditsExhausted）—— 被禁用账号的
+   * +5 天 resetAt 会把 Retry-After 抬成天级。候选包含 pausedUntil（暂停账号最早恢复时刻）。
+   */
   function retryAfterMsForPool(now = Date.now()) {
     let nearest = Infinity;
     for (const a of accounts) {
-      const q = scheduler.runtime(a).lastQuota;
+      if (a.enabled === false) continue;
+      const rt = scheduler.runtime(a);
+      if (rt.authInvalid || rt.creditsExhausted) continue;
+      if (Number.isFinite(rt.pausedUntil) && rt.pausedUntil > now) nearest = Math.min(nearest, rt.pausedUntil);
+      const q = rt.lastQuota;
       for (const w of quotaWindows(q)) {
         const reset = Number(w.resetAt);
         if (Number.isFinite(reset) && reset * 1000 > now) nearest = Math.min(nearest, reset * 1000);
@@ -873,6 +892,9 @@ export async function startGateway(overrides = {}) {
       enabled: a.enabled !== false,
       available: scheduler.isAvailable(a),
       paused: !!(rt.pausedUntil && rt.pausedUntil > Date.now()),
+      // M2：同 accountView，公开视图也必须下发 rateLimited（前端依赖）。
+      rateLimited: !!(rt.rateLimitedUntil && rt.rateLimitedUntil > Date.now()),
+      rateLimitedUntil: rt.rateLimitedUntil ?? null,
       authInvalid: !!rt.authInvalid,
       creditsExhausted: !!rt.creditsExhausted,
       creditsExhaustedAt: rt.creditsExhausted?.at ?? null,
@@ -1225,6 +1247,10 @@ export async function startGateway(overrides = {}) {
         return await handleAuth(req, res, url);
       } catch (e) {
         if (e instanceof HttpError) return sendJSON(res, e.status, { error: { message: e.message, type: 'auth_error' } });
+        // M2b：store 的只读挂载写入失败 → 明确 403（文案含「只读」），绝不 500
+        if (e?.code === 'READONLY_FS') {
+          return sendJSON(res, 403, { error: { message: '凭据以只读方式挂载，无法修改；请改用可写的 config/ 目录', type: 'auth_error' } });
+        }
         log.error(`鉴权接口异常: ${e.message}`);
         return sendJSON(res, 500, { error: { message: '鉴权接口内部错误', type: 'auth_error' } });
       }
@@ -1276,8 +1302,16 @@ export async function startGateway(overrides = {}) {
       let sessionId = typeof headerSession === 'string' && headerSession ? headerSession : null;
 
       if (!sessionId && req.method !== 'GET' && req.method !== 'HEAD') {
-        const peeked = await peekBody(req, BODY_PEEK_BYTES, { match: (cs) => peekSessionFromBody(cs) !== null })
-          .catch(() => ({ chunks: [], ended: false }));
+        const peeked = await peekBody(req, BODY_PEEK_BYTES, {
+          match: (cs) => peekSessionFromBody(cs) !== null,
+          startMs: config.bodyPeekStartMs,
+        }).catch(() => ({ chunks: [], ended: false }));
+        // L5：起始超时（连 body 都不发）→ 明确 408 并关连接，不再无限占住 socket。
+        if (peeked.timedOut) {
+          res.setHeader('connection', 'close');
+          note('warn', `请求体起始超时（${config.bodyPeekStartMs}ms 未收到 body），已断开`);
+          return sendJSON(res, 408, { error: { message: 'Request body timeout', type: 'request_timeout' } });
+        }
         initialChunks = peeked.chunks;
         bodyEnded = peeked.ended;
         sessionId = peekSessionFromBody(initialChunks);
@@ -1351,6 +1385,10 @@ export async function startGateway(overrides = {}) {
         await handleAdmin(req, res, url);
       } catch (e) {
         if (e instanceof HttpError) return sendJSON(res, e.status, { error: { message: e.message, type: 'admin_error' } });
+        // M2b：只读挂载下的写操作 → 403 且文案含「只读」，不裸抛 500
+        if (e?.code === 'READONLY_FS') {
+          return sendJSON(res, 403, { error: { message: '凭据以只读方式挂载，无法修改；请改用可写的 config/ 目录', type: 'admin_error' } });
+        }
         log.error(`后台接口异常: ${e.message}`);
         return sendJSON(res, 500, { error: { message: '后台接口内部错误', type: 'admin_error' } });
       }
@@ -1367,6 +1405,15 @@ export async function startGateway(overrides = {}) {
   function readAdmin() {
     return fs.readFileSync(path.join(ROOT, 'public', 'admin.html'), 'utf8');
   }
+
+  // 后端-M5：Node 默认 keepAliveTimeout=5s，反代 upstream keepalive 大于它会复用到
+  // 后端已关的连接（POST 命中 EPIPE → 502）。抬到 65s，与上游内核同款；反代侧
+  // keepalive_timeout 必须小于该值（见 README 部署节）。
+  const keepAliveTimeoutMs = Number(config.keepAliveTimeoutMs) > 0 ? Number(config.keepAliveTimeoutMs) : 65000;
+  server.keepAliveTimeout = keepAliveTimeoutMs;
+  server.headersTimeout = Number(config.headersTimeoutMs) > keepAliveTimeoutMs
+    ? Number(config.headersTimeoutMs)
+    : keepAliveTimeoutMs + 1000;   // Node 要求 headersTimeout > keepAliveTimeout
 
   await new Promise((resolve, reject) => {
     server.once('error', reject);
@@ -1425,12 +1472,14 @@ export async function startGateway(overrides = {}) {
  *   4. 收到首块后 idleMs 内没有新的 session id 线索（兜底，不无限等）
  * 放行时总是先 pause()，由 pipingBody 接手并 resume()，保证不丢字节。
  */
-export function peekBody(req, limit, { idleMs = BODY_PEEK_IDLE_MS, match = null } = {}) {
+export function peekBody(req, limit, { idleMs = BODY_PEEK_IDLE_MS, startMs = BODY_PEEK_START_MS, match = null } = {}) {
   return new Promise((resolve) => {
     const chunks = [];
     let size = 0;
     let done = false;
     let idleTimer = null;
+    let startTimer = null;
+    let timedOut = false;
     const onEnd = () => finish(true);
     const onError = () => finish(false);
     const onAborted = () => finish(false);
@@ -1438,6 +1487,8 @@ export function peekBody(req, limit, { idleMs = BODY_PEEK_IDLE_MS, match = null 
     const cleanup = () => {
       if (idleTimer) clearTimeout(idleTimer);
       idleTimer = null;
+      if (startTimer) clearTimeout(startTimer);
+      startTimer = null;
       // 审查#1：放行时必须摘掉**全部**请求监听器（尤其 data）。
       // 早先只清 timer，data 监听器继续 chunks.push —— peek 已经放行了，chunks 却还在
       // 随整个请求体增长，与 pipingBody() 的重试缓冲各驻留一份完整 body（大上传直接翻倍内存）。
@@ -1452,7 +1503,13 @@ export function peekBody(req, limit, { idleMs = BODY_PEEK_IDLE_MS, match = null 
       done = true;
       cleanup();
       req.pause();
-      resolve({ chunks, ended });
+      resolve({ chunks, ended, timedOut });
+    };
+    // L5：起始超时从 peek 开始就挂上，绝不等到收到首块数据。
+    const armStart = () => {
+      if (startTimer || done) return;
+      startTimer = setTimeout(() => { timedOut = true; finish(false); }, startMs);
+      startTimer.unref?.();
     };
     const armIdle = () => {
       if (idleTimer || done) return;
@@ -1477,6 +1534,7 @@ export function peekBody(req, limit, { idleMs = BODY_PEEK_IDLE_MS, match = null 
     req.once('error', onError);
     req.once('aborted', onAborted);
     req.once('close', onClose);
+    if (Number(startMs) > 0) armStart();
   });
 }
 

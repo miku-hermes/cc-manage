@@ -199,3 +199,120 @@ test('F10：删账号时全局 aborted 一并扣减', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ── B5：透传固定桶不能被 pruneState 当成「已删账号」清掉 ──────────────────
+test('B5：pruneState 保留 __passthrough__ 桶，total/errors 不被倒扣', () => {
+  const dir = makeTmpDir();
+  try {
+    writeAccountFiles(dir, { accounts: [{ name: '在册', key: ALIVE }], keys: [{ name: 'c', key: 'sk-cg-local0001' }] });
+    const aliveId = keyIdOf(ALIVE);
+    seedState(dir, {
+      accountsStatus: { [aliveId]: { concurrency: 0 } },
+      byAccount: {
+        [aliveId]: { requests: 2, errors: 0, tokens: 20 },
+        // 透传伪账号的固定桶：不是池内账号，但也绝不能当已删账号清掉
+        '__passthrough__': { requests: 3, errors: 1, tokens: 30 },
+      },
+      total: 5, errors: 1, totalTokens: 50,
+    });
+
+    const store = createStore({ rootDir: dir });
+    store.loadState(store.loadAccounts());
+
+    assert.ok('__passthrough__' in store.state.stats.byAccount, '透传固定桶必须保留');
+    assert.equal(store.state.stats.total, 5, '透传统计不得被倒扣（历史 10→7）');
+    assert.equal(store.state.stats.errors, 1);
+    assert.equal(store.state.stats.totalTokens, 50);
+    assert.deepEqual(store.state.stats.byAccount['__passthrough__'], { requests: 3, errors: 1, tokens: 30 });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ── B4：删账号后新增「同 keyId」账号不得继承旧 runtime 标记 ──────────────
+const REUSED = 'user_reused_same_key_aa';
+
+test('B4：上次落盘时不在池中的 keyId 重新出现 → authInvalid/pausedUntil 必须清空', () => {
+  const dir = makeTmpDir();
+  try {
+    const X = keyIdOf(REUSED);
+    const other = keyIdOf('user_other_account_bb');
+    writeAccountFiles(dir, { accounts: [{ name: '新账号', key: REUSED }], keys: [{ name: 'c', key: 'sk-cg-local0001' }] });
+    fs.mkdirSync(path.join(dir, 'data'), { recursive: true });
+    // state.json：X 带着旧账号 A 的停调标记；但上次落盘时池里只有 other（X 是被删掉的 A）
+    fs.writeFileSync(path.join(dir, 'data', 'state.json'), JSON.stringify({
+      accounts: { [X]: { authInvalid: true, authInvalidReason: '旧账号的 401', pausedUntil: Date.now() + 3600_000 } },
+      pool: [other],
+      stats: { total: 0, errors: 0, totalTokens: 0, byAccount: {} },
+    }, null, 2));
+
+    const store = createStore({ rootDir: dir });
+    store.loadState(store.loadAccounts());
+
+    assert.notEqual(store.state.accounts[X]?.authInvalid, true, '同 keyId 的新账号不得继承 authInvalid');
+    assert.ok(!Number.isFinite(store.state.accounts[X]?.pausedUntil), '也不得继承 pausedUntil');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('B4：仍在池中的 keyId 必须保留 runtime 标记（不误清）', () => {
+  const dir = makeTmpDir();
+  try {
+    const X = keyIdOf(ALIVE);
+    writeAccountFiles(dir, { accounts: [{ name: '在册', key: ALIVE }], keys: [{ name: 'c', key: 'sk-cg-local0001' }] });
+    fs.mkdirSync(path.join(dir, 'data'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'data', 'state.json'), JSON.stringify({
+      accounts: { [X]: { authInvalid: true, authInvalidReason: '仍然是它' } },
+      pool: [X],
+      stats: { total: 0, errors: 0, totalTokens: 0, byAccount: {} },
+    }, null, 2));
+
+    const store = createStore({ rootDir: dir });
+    store.loadState(store.loadAccounts());
+    assert.equal(store.state.accounts[X].authInvalid, true, '同一账号跨重启必须保留停调标记');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ── M2b：legacy 只读单文件不得被 writable() 误报为可写 ────────────────────
+// 注意：本用例依赖 chmod 目录权限位来模拟只读。root 会绕过 DAC 权限检查
+// （fs.accessSync(dir, W_OK) 对 0o555 目录仍返回 true），chmod 无法模拟只读，
+// 因此在 root 下必然失败——用 skip 守卫，该路径仅在非 root 环境可测。
+test('M2b：legacy 凭据所在目录不可写（chmod 555）→ writable()=false 且写入报只读',
+  { skip: typeof process.getuid === 'function' && process.getuid() === 0
+      ? 'root 用户绕过文件权限位，chmod 无法模拟只读目录；该路径仅在非 root 环境可测'
+      : false },
+  () => {
+  const dir = makeTmpDir();
+  try {
+    // config/ 目录存在且可写（旧代码只看它 → 误报 true），真正的凭据却回落到只读 legacy 文件
+    fs.mkdirSync(path.join(dir, 'config'), { recursive: true });
+    const legacy = path.join(dir, 'accounts.json');
+    fs.writeFileSync(legacy, JSON.stringify({ accounts: [] }));
+    fs.writeFileSync(path.join(dir, 'keys.json'), JSON.stringify({ keys: [] }));
+    fs.writeFileSync(path.join(dir, 'users.json'), JSON.stringify({ users: [] }));
+    fs.chmodSync(dir, 0o555);   // 无法建 tmp / rename → 凭据文件不可替换
+
+    const store = createStore({ rootDir: dir });
+    assert.equal(store.accountsFile, legacy, '前置：凭据路径确实回落到 legacy 单文件');
+    assert.equal(store.writable(), false, '只读 legacy 文件必须判为不可写（否则写接口 500）');
+    assert.throws(() => store.saveAccounts([{ name: 'x', key: ALIVE }]), /只读/, '写失败要是明确的只读语义');
+  } finally {
+    try { fs.chmodSync(dir, 0o755); } catch { /* 忽略 */ }
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('M2b：正常可写的 config/ 目录 → writable()=true', () => {
+  const dir = makeTmpDir();
+  try {
+    fs.mkdirSync(path.join(dir, 'config'), { recursive: true });
+    writeAccountFiles(dir, { accounts: [{ name: '在册', key: ALIVE }], keys: [{ name: 'c', key: 'sk-cg-local0001' }] });
+    const store = createStore({ rootDir: dir });
+    assert.equal(store.writable(), true);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

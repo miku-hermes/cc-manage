@@ -4,6 +4,8 @@ import https from 'node:https';
 import { URL } from 'node:url';
 import { redact } from './log.mjs';
 import { isQuotaError, isCreditsExhausted, quotaWindowHint } from './scheduler.mjs';
+// B5：透传固定桶常量定义在 store.mjs（pruneState 也要用它跳过已删账号清理），这里复用/再导出。
+import { PASSTHROUGH_STATS_KEY } from './store.mjs';
 
 // 只把这些下游请求头转给上游；authorization / x-api-key 一律替换，绝不透传
 const PASSTHROUGH_HEADERS = ['content-type', 'accept', 'x-session-id'];
@@ -19,12 +21,35 @@ const ERROR_BODY_CAP = 1024 * 1024;
  * 随请求数线性增长 —— 进程内存、data/state.json、匿名可读的 /api/status 全被撑大。
  * 固定桶保证 statusView() 的输出大小只与池内账号数成正比。
  */
-export const PASSTHROUGH_STATS_KEY = '__passthrough__';
+export { PASSTHROUGH_STATS_KEY };
 
 /** 统计条目的键：透传伪账号 → 固定桶；真实账号 → keyId。 */
 function statsKeyOf(acct) {
   if (!acct) return PASSTHROUGH_STATS_KEY;
   return acct.__passthrough ? PASSTHROUGH_STATS_KEY : acct.keyId;
+}
+
+/**
+ * H1：上游 401 的两类语义必须分开（内核把上游 403 折叠成 401 之后尤其重要）。
+ *
+ * vendor/commandcode-proxy 的 CC_STATUS_MAP 把上游 403 → 401 + type:"authentication_error"，
+ * 而 403 的真实语义是「模型名不存在 / 套餐不含该模型」。若网关只看 401 就 markAuthInvalid，
+ * 一次拼错模型名就会把整池有效账号停掉（2026-09-22 线上事故）。
+ */
+// 「模型/套餐」语义：拼错模型名、套餐不含该模型 → 与 key 有效性无关，绝不停调。
+const MODEL_PLAN_LIMIT_RE = /Model\/provider not recognized|MODEL_NOT_IN_PLAN|available in [^.\n]*plans?/i;
+// 「真·鉴权失效」语义：上游明确说 key/token 被吊销或无效。只认这些措辞，
+// 绝不认 type:"authentication_error"（内核折叠 403 时也用它）。
+const AUTH_INVALID_MSG_RE = /Invalid\s+['"]?Authorization['"]?\s+header|invalid\s+api[\s_-]*key|(?:key|token|credential)s?\s+(?:has been\s+|was\s+)?revoked|\brevoked\b/i;
+
+/** H1：模型/套餐限制语义。 */
+function isModelPlanLimit(text) {
+  return MODEL_PLAN_LIMIT_RE.test(String(text ?? ''));
+}
+
+/** H1：真·鉴权失效语义。 */
+function isAuthInvalidMessage(text) {
+  return AUTH_INVALID_MSG_RE.test(String(text ?? ''));
 }
 
 function clientFor(url) {
@@ -228,7 +253,11 @@ function drainRemaining(req, bodyState, maxBodyBytes) {
       req.off('data', onData);
       resolve();
     });
-    setTimeout(resolve, 1000).unref?.();
+    setTimeout(() => {
+      // 客户端迟迟不发完 body → 标记「超时未完成」，与「客户端断开」区分（排查/统计口径）。
+      bodyState.incompleteByTimeout = true;
+      resolve();
+    }, 1000).unref?.();
   });
 }
 
@@ -430,7 +459,11 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
             clientGone.signal.removeEventListener('abort', abortEarly);
             release();
             bodyState?.stop?.();
-            bump(!!bodyState?.error);
+            // 后端-M1：这条路径必然是失败（body 不完整），历史写成 bump(!!bodyState?.error)
+            // 在「客户端还没发完/超时」时 error 为 null → 谎报成功；同时刚建的 upstreamReq
+            // 一直挂着直到 300s 超时。这里按失败计数并立刻释放上游连接。
+            bump(true);
+            try { upstreamReq.destroy(); } catch { /* 忽略 */ }
             return sendJSON(res, 502, { error: { message: 'Upstream request failed', type: 'upstream_error' } });
           }
         } else {
@@ -487,9 +520,16 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
             // ① 标记后该账号立刻退出调度，面板显示「余额不足」而不是「可用」；
             // ② 未写出任何字节时换号重试 —— 否则轮到这种号就白给客户端一个 400。
             // 实测：主号 HTTP 400 insufficient credits，网关原来把它当普通 4xx 透传。
+            const wasCreditsExhausted = !!scheduler.runtime(current).creditsExhausted;
             scheduler.markCreditsExhausted(current);
+            // L2：状态发生变化就落盘，否则关轮询/重启后标记丢失，账号又被当可用调度。
+            if (!wasCreditsExhausted && !current.__passthrough) {
+              try { persistState?.(); } catch { /* 落盘失败不影响响应 */ }
+            }
             log?.warn?.(`账号「${current.name}」余额不足，已停止调度（充值或周期刷新后自动恢复）`);
-            if (attempt === 0 && !res.headersSent && !current.__passthrough) {
+            // M6：必须和 quota 分支（下方）同构地先确认「确实有下一个可用账号」，
+            // 否则单账号池会变成 502 No available account，把上游可操作的 400 文案丢掉。
+            if (attempt === 0 && !res.headersSent && !current.__passthrough && pickRetryAccount(current)) {
               release();
               bodyState?.stop?.();
               if (hasBody && !bodyState?.complete) await drainRemaining(req, bodyState, maxBodyBytes).catch(() => {});
@@ -510,7 +550,9 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
             }
             log?.warn?.(`账号「${current.name}」额度耗尽（${windowHint ?? '按最受限窗口'}），暂停到 ${new Date(until).toISOString()}`);
             scheduler.recordError(current, '额度耗尽');
-            if (refreshAccount) await refreshAccount(current).catch(() => {});
+            // 后端-M2：换号决策不依赖本次刷新结果，绝不能把最多 ~15s 的额度查询压在
+            // 客户端首字节之前（与 401 分支同口径：fire-and-forget）。
+            if (refreshAccount) { void refreshAccount(current).catch(() => {}); }
             // 审查 A1：池里还有健康账号时不能让客户端白吃一个 429/402 —— 与「余额不足」
             // 同路径换号重试一次（必须先确认确实存在下一个可用账号，否则单账号池会变成 502）。
             // 严格条件：attempt===0 且未写出任何字节，绝不能在有字节已下发时重试。
@@ -528,12 +570,30 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
             log?.warn?.(`账号「${current.name}」被上游限流，冷却到 ${new Date(until).toISOString()}`);
             scheduler.recordError(current, `上游 HTTP 429（限流，冷却 60 秒）`);
           } else if (status === 401) {
-            // 401：key 确实被吊销/无效（上游报文形如 Invalid 'Authorization' header or token）
-            // → 立刻停止调度该账号；状态码原样透传，但不再把该账号选进池。
-            scheduler.recordError(current, '上游 HTTP 401');
-            scheduler.markAuthInvalid(current, '上游 HTTP 401');
-            log?.warn?.(`账号「${current.name}」鉴权失效（HTTP 401），已停止调度`);
-            if (refreshAccount) refreshAccount(current).catch(() => {});
+            // H1：401 不再无条件 markAuthInvalid。内核把上游 403（模型名错/套餐不含）也
+            // 折叠成 401 + authentication_error，必须读 message 把两类语义分开：
+            //   ① 模型/套餐限制 → 只 recordError，原样透传 401，不停调/不 refresh；
+            //   ② 真鉴权失效（Invalid 'Authorization' header / invalid api key / revoked）
+            //      → markAuthInvalid + 停调；
+            //   ③ 认不出来 → 保守：只 recordError 不停调（宁可面板少一个停调，不可误杀有效号）。
+            if (isModelPlanLimit(text)) {
+              const summary = redact(text, secrets).slice(0, 300);
+              scheduler.recordError(current, '上游 HTTP 401（模型/套餐限制，不停调账号）');
+              log?.warn?.(`账号「${current.name}」收到上游 401（模型/套餐限制，不停调账号）：${summary}`);
+            } else if (isAuthInvalidMessage(text)) {
+              const wasInvalid = !!scheduler.runtime(current).authInvalid;
+              scheduler.recordError(current, '上游 HTTP 401');
+              scheduler.markAuthInvalid(current, '上游 HTTP 401');
+              // L2：状态由 false→true 时落盘，否则重启后停调标记丢失。
+              if (!wasInvalid && !current.__passthrough) {
+                try { persistState?.(); } catch { /* 落盘失败不影响响应 */ }
+              }
+              log?.warn?.(`账号「${current.name}」鉴权失效（HTTP 401），已停止调度`);
+              if (refreshAccount) refreshAccount(current).catch(() => {});
+            } else {
+              scheduler.recordError(current, '上游 HTTP 401（无法归类，保守不停调）');
+              log?.warn?.(`账号「${current.name}」收到无法归类的上游 401，保守处理：不停调账号`);
+            }
           } else if (status === 403) {
             // 403 的语义是「模型名不存在 / 套餐不含该模型」，与 key 是否有效无关：
             //   · Model/provider not recognized: anthropic:deepseek-v4.1-falsh

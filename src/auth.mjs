@@ -378,10 +378,16 @@ export function createLoginLimiter({
   // 默认 60/min 与「同 IP 连错 5 次锁账号」的 F14 口径兼容（合法管理员远用不满）。
   attemptMax = 60,
   attemptWindowMs = 60 * 1000,
+  // H2：**进程级全局桶** —— 任何来源构造（伪造 XFF / 轮换来源）都绕不过的每分钟总尝试上限。
+  // 量级参照 attemptMax×10：正常运维远用不满，攻击者换多少来源也炸不出无限次 scrypt。
+  globalAttemptMax = attemptMax * 10,
 } = {}) {
   const users = new Map();     // username → { count, lockedUntil, at, round }
   // source → { failures, at, tokens, tokensAt }：失败统计 + 尝试令牌桶（复用一张有界的表）
   const sources = new Map();
+  // 全局令牌桶（H2）：与来源无关，先扣它再扣来源桶，保证总量有硬上限。
+  const globalMax = Number(globalAttemptMax) > 0 ? Number(globalAttemptMax) : Math.max(1, attemptMax * 10);
+  const globalBucket = { tokens: globalMax, tokensAt: now() };
 
   /** 硬上限：表永远不会无界增长（locked 条目也要能淘汰）。 */
   function prune() {
@@ -397,11 +403,26 @@ export function createLoginLimiter({
     while (sources.size > maxEntries) sources.delete(sources.keys().next().value);
   }
 
+  /** 从一个令牌桶里按时间线性补充并扣一个令牌；不足返回还需等多久。 */
+  function consumeToken(bucket, max) {
+    const t = now();
+    const rate = max / attemptWindowMs;             // 个/毫秒
+    bucket.tokens = Math.min(max, (Number.isFinite(bucket.tokens) ? bucket.tokens : max) + Math.max(0, t - (bucket.tokensAt ?? t)) * rate);
+    bucket.tokensAt = t;
+    if (bucket.tokens >= 1) {
+      bucket.tokens -= 1;
+      return { ok: true };
+    }
+    return { ok: false, retryAfterMs: Math.max(1, Math.ceil((1 - bucket.tokens) / rate)) };
+  }
+
   /**
-   * 从来源桶里取一个「登录尝试」令牌（令牌按时间线性补充，桶容量 attemptMax）。
-   * 不足则返回还需等多久 —— 这一层**与用户名无关**，轮换用户名绕不过去。
+   * 从「全局桶 + 来源桶」各取一个「登录尝试」令牌。
+   * 不足则返回还需等多久 —— 这一层**与用户名无关**，轮换用户名/伪造来源都绕不过去。
    */
   function takeAttemptToken(source) {
+    const g = consumeToken(globalBucket, globalMax);
+    if (!g.ok) return { allowed: false, retryAfterMs: g.retryAfterMs, scope: 'global' };
     const t = now();
     const rate = attemptMax / attemptWindowMs;      // 个/毫秒
     const s = sources.get(source) ?? { failures: 0, at: t, tokens: attemptMax, tokensAt: t };
@@ -413,7 +434,7 @@ export function createLoginLimiter({
       s.tokens -= 1;
       return { allowed: true };
     }
-    return { allowed: false, retryAfterMs: Math.max(1, Math.ceil((1 - s.tokens) / rate)) };
+    return { allowed: false, retryAfterMs: Math.max(1, Math.ceil((1 - s.tokens) / rate)), scope: 'source' };
   }
 
   function backoffMs(round) {
@@ -436,7 +457,7 @@ export function createLoginLimiter({
         }
       }
       const gate = takeAttemptToken(source);
-      if (!gate.allowed) return { locked: true, retryAfterMs: gate.retryAfterMs, scope: 'source' };
+      if (!gate.allowed) return { locked: true, retryAfterMs: gate.retryAfterMs, scope: gate.scope ?? 'source' };
       return { locked: false };
     },
     /** 记一次失败（按用户名计锁；来源只计数）。 */

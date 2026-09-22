@@ -12,6 +12,13 @@ const CREDENTIAL_MODE = 0o640;
 // 凭据目录挂载点（相对 rootDir）
 const CREDENTIAL_DIR = 'config';
 
+/**
+ * B11：透传伪账号在 stats.byAccount 里的固定桶（与 src/proxy.mjs 共用同一常量）。
+ * 它不是池内账号，但**必须**躲过 pruneState 的「已删账号清理」，否则删任意一个真实
+ * 账号都会顺手把这桶的透传统计扣掉（实测 total 10→7）。
+ */
+export const PASSTHROUGH_STATS_KEY = '__passthrough__';
+
 // data/ 不可写（只读挂载 / SELinux / 宿主权限不对）时降级：打一条 warn 后转纯内存，不刷屏、不阻塞。
 let persistenceDisabled = false;
 
@@ -54,7 +61,16 @@ export function atomicWrite(file, data, { log = null, mode = 0 } = {}) {
     if (mode) fs.chmodSync(file, mode);
   } catch (e) {
     try { fs.rmSync(tmp, { force: true }); } catch { /* 忽略 */ }
-    if (mode) throw new Error(`${path.basename(file)} 写入失败: ${e.message}`);
+    if (mode) {
+      // M2b：只读挂载/权限不足时，凭据写失败必须是明确的 403 语义（只读），
+      // 不能裸抛 → 被上层统一转成 500（面板只显示「内部错误」，运维查不到原因）。
+      const readonly = e && (e.code === 'EROFS' || e.code === 'EACCES' || e.code === 'EPERM');
+      const err = new Error(readonly
+        ? `${path.basename(file)} 只读挂载（${e.code}），无法写入`
+        : `${path.basename(file)} 写入失败: ${e.message}`);
+      if (readonly) err.code = 'READONLY_FS';
+      throw err;
+    }
     if (!persistenceDisabled) {
       persistenceDisabled = true;
       log?.warn?.(`运行期状态无法持久化（${path.basename(file)} 写入失败：${e.message}），已降级为纯内存模式继续运行`);
@@ -107,6 +123,23 @@ function isDir(p) {
 
 function canWriteDir(dir) {
   try { fs.accessSync(dir, fs.constants.W_OK | fs.constants.X_OK); return true; } catch { return false; }
+}
+
+/**
+ * M2b：某个凭据路径能否被原子写替换。
+ * 只查 config/ 目录会把「legacy 单文件（如 ./accounts.json）挂成只读」判成可写 ——
+ * resolveCredentialPath 会优先回落到那个只读文件，写接口于是 500。
+ * 正确判据：父目录可写可执行（建 tmp / rename）+ 目标文件已存在时本身可写
+ * （只读挂载/filesystem 的 W_OK 会返回 EROFS/EACCES）。
+ */
+function canReplacePath(file) {
+  if (!canWriteDir(path.dirname(file))) return false;
+  try {
+    if (!fs.existsSync(file)) return true;          // 新文件：目录可写即可
+    if (!fs.statSync(file).isFile()) return false;  // 目录/设备等不当作凭据文件
+    fs.accessSync(file, fs.constants.W_OK);
+    return true;
+  } catch { return false; }
 }
 
 /**
@@ -212,15 +245,20 @@ export function createStore({ rootDir = process.cwd(), env = process.env, log = 
   }
 
   /**
-   * 当前是否可写：凭据目录 config/ 必须存在且可写。
-   * 旧的单文件挂载（只读）恒为 false → 所有写接口 403。
+   * 当前是否可写：按**实际解析出的**凭据文件路径逐个判断（父目录可写 + 文件可替换）。
+   * 只查 config/ 会在 legacy 只读单文件回落时误报 true，写接口随即 500。
    */
   function writable() {
     if (env.CC_ACCOUNTS) return false;   // 账号池来自环境变量，落盘不会生效
-    return isDir(configDir) && canWriteDir(configDir);
+    const p = currentPaths();
+    return canReplacePath(p.accountsFile) && canReplacePath(p.keysFile) && canReplacePath(p.usersFile);
   }
 
-  const state = { accounts: {}, stats: { total: 0, errors: 0, totalTokens: 0, byAccount: {} } };
+  // pool：上次落盘时账号池的 keyId 列表。用于 B4 —— 若某 keyId 现在出现、但上次落盘
+  // 时并不在池中，说明它是「删掉旧账号后重新加回来的同 keyId 新账号」，runtime 标记必须
+  // 清空，绝不能继承旧账号的 authInvalid / pausedUntil。老 state.json 没有该字段 → null，
+  // 此时不做该判定（保守，避免升级后误清真实账号的标记）。
+  const state = { accounts: {}, stats: { total: 0, errors: 0, totalTokens: 0, byAccount: {} }, pool: null };
   // loadState 里是否已经落过盘（损坏重建 / 残留清理）—— 供测试断言用，不进任何响应体
   let persistAfterLoad = false;
 
@@ -337,6 +375,18 @@ export function createStore({ rootDir = process.cwd(), env = process.env, log = 
   function pruneState(accounts = []) {
     const alive = new Set(accounts.map((a) => a.keyId));
     const removed = { accounts: [], stats: [] };
+    // B4：上次落盘时不在池中的 keyId → 新出现的账号，清掉可能继承来的 runtime 标记。
+    const prevPool = Array.isArray(state.pool) ? new Set(state.pool) : null;
+    if (prevPool) {
+      for (const id of alive) {
+        if (!prevPool.has(id) && state.accounts[id]) {
+          delete state.accounts[id];
+          removed.accounts.push(id);
+        }
+      }
+    }
+    // B5：透传固定桶不是池内账号，不能被当作「已删账号」清掉并倒扣全局统计。
+    alive.add(PASSTHROUGH_STATS_KEY);
     for (const id of Object.keys(state.accounts)) {
       if (!alive.has(id)) {
         delete state.accounts[id];
@@ -359,6 +409,7 @@ export function createStore({ rootDir = process.cwd(), env = process.env, log = 
       delete byAccount[id];
       removed.stats.push(id);
     }
+    state.pool = accounts.map((a) => a.keyId);
     return removed;
   }
 
@@ -387,6 +438,8 @@ export function createStore({ rootDir = process.cwd(), env = process.env, log = 
     }
     // stats / byAccount 必须规范化成对象（审查#13）：null / 字符串会让 Object.entries() 直接抛错
     state.stats = normalizeStats(raw?.stats);
+    // B4：先恢复「上次落盘时的池成员」再 prune —— pruneState 据此识别新出现的 keyId。
+    state.pool = Array.isArray(raw?.pool) ? raw.pool.map(String) : null;
     if (Array.isArray(accounts)) {
       const removed = pruneState(accounts);
       if (removed.accounts.length > 0 || removed.stats.length > 0) {
@@ -404,7 +457,9 @@ export function createStore({ rootDir = process.cwd(), env = process.env, log = 
     for (const [id, rt] of Object.entries(state.accounts)) {
       accounts[id] = { ...rt, concurrency: 0 };
     }
-    atomicWrite(stateFile, JSON.stringify({ accounts, stats: state.stats }, null, 2), { log });
+    // pool 一并落盘：下次加载据此识别「删掉又加回来的同 keyId 新账号」（B4）。
+    const pool = Array.isArray(state.pool) ? state.pool : [];
+    atomicWrite(stateFile, JSON.stringify({ accounts, stats: state.stats, pool }, null, 2), { log });
   }
 
   return {

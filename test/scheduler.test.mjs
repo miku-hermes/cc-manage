@@ -15,7 +15,9 @@ function makeState() {
 
 function quotaWith(fiveHour, weekly) {
   const w = (x) => (x ? { used: x.used, cap: x.cap, percent: x.cap ? (x.used / x.cap) * 100 : null, usedRatio: x.cap ? x.used / x.cap : null, resetAt: x.resetAt ?? null } : null);
-  return { ok: true, fiveHour: w(fiveHour), weekly: w(weekly) };
+  // M4 后「窗口缺失」= 数据不完整（比例降到 0.5），所以未显式给 weekly 时补一个完整空窗口，
+  // 否则这些「只关心 5h」的用例会被中性化，测不到原本的按额度排序行为。
+  return { ok: true, fiveHour: w(fiveHour), weekly: weekly === undefined ? w({ used: 0, cap: 100 }) : w(weekly) };
 }
 
 test('剩余额度高的被选中', () => {
@@ -230,9 +232,15 @@ test('isQuotaError / remainingRatio / pauseForQuota 行为', () => {
   assert.equal(isQuotaError(429, '{"error":{"message":"too many requests"}}'), false);
   assert.equal(isQuotaError(500, 'quota'), false);
 
-  assert.equal(remainingRatio(null), 1.0);
+  // M4：快照/窗口全缺失 → 中性 0.5（不能拿满分抢流量）
+  assert.equal(remainingRatio(null), 0.5);
   assert.equal(remainingRatio(quotaWith({ used: 30, cap: 100 })), 0.7);
   assert.equal(remainingRatio(quotaWith(null, { used: 50, cap: 100 })), 0.5);
+  // M4：五小时 + 周窗口都为 null（parseSnapshot 拿不到 windowLimits）→ 中性，不优于完整账号
+  assert.equal(remainingRatio({ ok: true, fiveHour: null, weekly: null }), 0.5);
+  assert.ok(remainingRatio({ ok: true, fiveHour: null, weekly: null })
+    <= remainingRatio({ ok: true, fiveHour: { used: 10, cap: 100, usedRatio: 0.1 }, weekly: { used: 10, cap: 100, usedRatio: 0.1 } }),
+    '无窗口数据的账号不得比有完整数据的健康账号更优先');
 
   const accounts = makeAccounts([{ name: 'A', key: 'user_pause_a_xxxxxxx' }]);
   const s = createScheduler({ accounts, state: makeState() });
@@ -295,6 +303,11 @@ test('F4：isQuotaError 只在明确额度语义时成立，普通限流一律�
   assert.equal(isQuotaError(429, '{"error":{"message":"windowLimits exceeded"}}'), true);
   assert.equal(isQuotaError(429, '{"error":{"message":"monthly quota reached"}}'), true);
   assert.equal(isQuotaError(429, '{"error":{"message":"insufficient credits"}}'), true);
+  // M7/M1b：内核把上游 402 折成 429 + rate_limit_error，只剩机器可读的 code 可判
+  assert.equal(isQuotaError(429, '{"error":{"message":"CC API error (402)","type":"rate_limit_error","code":"USAGE_EXCEEDED"}}'), true,
+    'code=USAGE_EXCEEDED 必须算额度（只看 message 会漏判，账号只拿 60s 冷却不换号）');
+  assert.equal(isQuotaError(429, '{"error":{"message":"CC API error (402)","code":"CREDITS_EXHAUSTED"}}'), true);
+  assert.equal(isQuotaError(429, '{"error":{"message":"CC API error (429)","code":"quota_exceeded"}}'), true, 'code 判据大小写不敏感');
 
   // 普通限流 → 不算（历史 bug：这些全被当成额度耗尽，账号被停 5 小时）
   assert.equal(isQuotaError(429, '{"error":{"message":"Rate limit exceeded, retry later","type":"rate_limit"}}'), false,
@@ -305,6 +318,8 @@ test('F4：isQuotaError 只在明确额度语义时成立，普通限流一律�
   assert.equal(isQuotaError(429, '{"error":{"message":"request limit exceeded, slow down"}}'), false);
   assert.equal(isQuotaError(429, ''), false);
   assert.equal(isQuotaError(429, '{"error":{"message":"Concurrency limit reached"}}'), false);
+  assert.equal(isQuotaError(429, '{"error":{"message":"slow down","type":"rate_limit_error","code":"RATE_LIMITED"}}'), false,
+    '普通限流的 code 不受影响');
   assert.equal(isQuotaError(500, 'quota'), false);
 });
 

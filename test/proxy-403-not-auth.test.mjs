@@ -1,14 +1,16 @@
-// 回归：上游 403 被误判成「鉴权失效」→ 有效副号被停调、整池 503（2026-09-22 线上事故）。
+// 回归：上游 403（模型名错/套餐不含）被内核折叠成 401 后，网关不得误判为「鉴权失效」
+// → 有效副号被停调、整池 503（2026-09-22 线上事故）。
 //
-// 上游 403 的两类真实语义都**不是** key 失效：
-//   1. `Model/provider not recognized: ...` —— 客户端模型名写错/不存在
-//   2. `MODEL_NOT_IN_PLAN: X available in GOAT and above plans ...` —— 套餐不含该模型
-// 真正的 key 吊销，上游返回 401 `Invalid 'Authorization' header or token`。
+// 关键前提（H1）：vendor/commandcode-proxy 的 CC_STATUS_MAP 把上游 403 折叠成
+//   401 + type:"authentication_error" + message `Model/provider not recognized: ...`
+//   / `MODEL_NOT_IN_PLAN: ... available in ... plans`
+// 也就是说**生产里网关看不到 403**，只在 401 分支就能收到这两类文案。因此 fixture 必须
+// 模拟「内核折叠后」的形态（401 + authentication_error + 模型错误文案），而不是上游原始 403
+// —— 旧的 403 fixture 走的是生产不可达的 403 分支，是假绿。
+//
+// 真·key 失效是 401 `Invalid 'Authorization' header or token` / `invalid api key` / revoked。
 //
 // 约定：这些用例在**未修复**的源码上必须变红（mutation check）。
-//
-// 现有 mock 的 `authErrorStatus` 只能回固定 body（invalid api key），构造不出真实 403
-// 报文，所以这里抽一个最小可注入上游 fixture，不动共享 mock、不改现有断言。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -68,7 +70,7 @@ async function startUpstream({ status, body }) {
   };
 }
 
-/** 起一个网关 + 指定 403/401 行为的自定义上游。 */
+/** 起一个网关 + 指定「内核折叠后」行为的自定义上游。 */
 async function startCtx({ status, body }) {
   const dir = makeTmpDir();
   writeAccountFiles(dir, { accounts: ACCOUNTS, keys: KEYS });
@@ -112,43 +114,45 @@ const post = (ctx, body = { model: 'mock-model' }) =>
 
 const statusView = async (ctx) => JSON.parse((await request(`${ctx.baseUrl}/api/status`)).body);
 
-// ── a. 403（模型/套餐限制）不得停调账号，且 403 原样透传 ──────────────────────
-test('403-not-auth#a：上游 403（MODEL_NOT_IN_PLAN）不停调账号，403 原样透传', async (t) => {
+// ── a. 内核折叠后的 401（模型名错/套餐不含）不得停调账号 ─────────────────────
+test('403-not-auth#a：内核折叠 403→401（MODEL_NOT_IN_PLAN）不停调账号，401 原样透传', async (t) => {
   const ctx = await startCtx({
-    status: 403,
-    body: { error: { message: 'MODEL_NOT_IN_PLAN: claude-opus-4-1 available in GOAT and above plans', type: 'invalid_request_error' } },
+    status: 401,
+    body: { error: { message: 'MODEL_NOT_IN_PLAN: claude-opus-4-1 available in GOAT and above plans', type: 'authentication_error' } },
   });
   t.after(() => ctx.close());
 
   const res = await post(ctx);
-  assert.equal(res.status, 403, '状态码必须原样透传给客户端');
-  assert.match(res.body, /MODEL_NOT_IN_PLAN/, '403 报文原样透传');
+  assert.equal(res.status, 401, '内核折叠后的状态码 401 必须原样透传');
+  assert.match(res.body, /MODEL_NOT_IN_PLAN/, '上游报文原样透传');
 
   const view = await statusView(ctx);
   for (const acct of view.accounts) {
-    assert.equal(acct.authInvalid, false, `403 绝不能让账号「${acct.name}」变成 authInvalid`);
-    assert.equal(acct.available, true, `403 后账号「${acct.name}」必须仍可调度`);
+    assert.equal(acct.authInvalid, false, `模型/套餐限制绝不能让账号「${acct.name}」变成 authInvalid`);
+    assert.equal(acct.available, true, `401（模型/套餐限制）后账号「${acct.name}」必须仍可调度`);
   }
-  assert.equal(view.summary.available, 2, '403 与 key 有效性无关，两个账号都得留在池里');
+  assert.equal(view.summary.available, 2, '与 key 有效性无关，两个账号都得留在池里');
 });
 
-test('403-not-auth#a2：即使 403 报文含 key，也走脱敏口径后再透传', async (t) => {
+test('403-not-auth#a2：内核折叠后的 401 报文含 key，也走脱敏口径后再透传', async (t) => {
   const ctx = await startCtx({
-    status: 403,
-    body: { error: { message: `Model/provider not recognized: anthropic:deepseek-v4.1-falsh (key ${ACCOUNTS[0].key})` } },
+    status: 401,
+    body: { error: { message: `Model/provider not recognized: anthropic:deepseek-v4.1-falsh (key ${ACCOUNTS[0].key})`, type: 'authentication_error' } },
   });
   t.after(() => ctx.close());
 
   const res = await post(ctx);
-  assert.equal(res.status, 403);
+  assert.equal(res.status, 401);
   assert.match(res.body, /Model\/provider not recognized/, '上游错误摘要原样透传');
   for (const a of ACCOUNTS) {
-    assert.ok(!res.body.includes(a.key), `403 响应里绝不能出现明文账号 key（${a.key}）`);
+    assert.ok(!res.body.includes(a.key), `响应里绝不能出现明文账号 key（${a.key}）`);
   }
+  const view = await statusView(ctx);
+  assert.equal(view.summary.available, 2, '模型名错误不得停调任何账号');
 });
 
-// ── b. 401 仍停调（防回归：不要把 401 也顺手放宽）──────────────────────────
-test('403-not-auth#b：上游 401 仍然标记 authInvalid 并停止调度', async (t) => {
+// ── b. 真·无效 key（Invalid 'Authorization' header）仍停调 ──────────────────
+test('403-not-auth#b：真·无效 key（401 Invalid Authorization header）仍标记 authInvalid 并停止调度', async (t) => {
   const ctx = await startCtx({
     status: 401,
     body: { error: { message: "Invalid 'Authorization' header or token", type: 'authentication_error' } },
@@ -160,17 +164,30 @@ test('403-not-auth#b：上游 401 仍然标记 authInvalid 并停止调度', asy
 
   const view = await statusView(ctx);
   const invalid = view.accounts.find((a) => a.authInvalid);
-  assert.ok(invalid, '401 必须标记 authInvalid');
+  assert.ok(invalid, '真鉴权失效必须标记 authInvalid');
   assert.equal(invalid.available, false, '鉴权失效的账号必须立刻退出调度');
   assert.match(invalid.lastError ?? '', /401/, '原因文案必须能看出是 401');
   assert.equal(view.summary.available, 1, '一个账号失效后池里只剩一个可用');
 });
 
-// ── c. 面板可见性：403 的 lastError 不能像是「鉴权失效」 ─────────────────────
-test('403-not-auth#c：403 的 lastError 文案不得含「鉴权失效」或「401」字样', async (t) => {
+test('403-not-auth#b2：invalid api key / revoked 文案同样按鉴权失效处理', async (t) => {
+  for (const message of ['invalid api key', 'this key has been revoked']) {
+    const ctx = await startCtx({ status: 401, body: { error: { message, type: 'authentication_error' } } });
+    try {
+      await post(ctx);
+      const view = await statusView(ctx);
+      assert.ok(view.accounts.some((a) => a.authInvalid), `「${message}」必须停调`);
+    } finally {
+      await ctx.close();
+    }
+  }
+});
+
+// ── c. 面板可见性：模型错误 401 的 lastError 不能像是「鉴权失效」 ─────────────
+test('403-not-auth#c：模型/套餐 401 的 lastError 不得含「鉴权失效」', async (t) => {
   const ctx = await startCtx({
-    status: 403,
-    body: { error: { message: 'Model/provider not recognized: anthropic:deepseek-v4.1-falsh' } },
+    status: 401,
+    body: { error: { message: 'Model/provider not recognized: anthropic:deepseek-v4.1-falsh', type: 'authentication_error' } },
   });
   t.after(() => ctx.close());
 
@@ -178,9 +195,20 @@ test('403-not-auth#c：403 的 lastError 文案不得含「鉴权失效」或「
   const view = await statusView(ctx);
   const acct = ctx.gateway.accounts.find((a) => a.name === '主号');
   const row = view.accounts.find((a) => a.keyId === acct.keyId);
-  assert.ok(row.lastError, '403 必须给账号写 lastError（面板要能看到这次错误）');
-  assert.match(row.lastError, /403/, '面板要能看出这是上游 403');
-  assert.doesNotMatch(row.lastError, /鉴权失效/, '403 不是鉴权问题，面板文案不得提「鉴权失效」');
-  assert.doesNotMatch(row.lastError, /401/, '403 的 lastError 不得混入 401 字样');
   assert.equal(row.authInvalid, false);
+  assert.ok(row.lastError, '必须给账号写 lastError（面板要能看到这次错误）');
+  assert.match(row.lastError, /模型|套餐/, '面板要能看出这是模型/套餐限制');
+  assert.doesNotMatch(row.lastError, /鉴权失效/, '不得提「鉴权失效」');
+});
+
+// ── d. 无法归类的 401 保守处理：只记错误、不停调（宁可少停一个也不误杀） ──────
+test('403-not-auth#d：无法归类的 401 → 保守不停调', async (t) => {
+  const ctx = await startCtx({ status: 401, body: { error: { message: 'something weird happened', type: 'authentication_error' } } });
+  t.after(() => ctx.close());
+
+  const res = await post(ctx);
+  assert.equal(res.status, 401);
+  const view = await statusView(ctx);
+  assert.equal(view.accounts.some((a) => a.authInvalid), false, '认不出的 401 不得误杀账号');
+  assert.equal(view.summary.available, 2);
 });

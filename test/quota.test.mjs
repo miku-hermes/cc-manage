@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fetchQuota, normalizeResetAt, parseWindow, CC_USER_AGENT } from '../src/quota.mjs';
+import { remainingRatio } from '../src/scheduler.mjs';
 
 /** 造一个按路径返回预设响应的假 fetch，同时记录请求供断言。 */
 function fakeFetch(routes) {
@@ -135,13 +136,14 @@ test('官方低余额字段：belowThreshold / creditThreshold 如实解析（�
 });
 
 test('缺字段不炸，仍然返回可用快照', async () => {
+  const warns = [];
   const ff = fakeFetch({
     '/alpha/whoami': { org: { id: 'org-min' } },       // 没有 login
     '/alpha/billing/credits': {},                       // 全空
     '/alpha/billing/subscriptions': {},
     '/alpha/usage/summary': {},
   });
-  const snap = await fetchQuota('user_minimal_xxxx', { fetchImpl: ff });
+  const snap = await fetchQuota('user_minimal_xxxx', { fetchImpl: ff, log: { warn: (m) => warns.push(m) } });
   assert.equal(snap.ok, true);
   assert.equal(snap.orgId, 'org-min');
   assert.equal(snap.displayName, null);
@@ -149,6 +151,9 @@ test('缺字段不炸，仍然返回可用快照', async () => {
   assert.equal(snap.fiveHour, null);
   assert.equal(snap.weekly, null);
   assert.equal(snap.usage.totalTokens, 0);
+  // M4：ok 但两个判定窗口都缺 → 中性打分 + 一条 warn（不能静默当成满分账号）
+  assert.equal(remainingRatio(snap), 0.5);
+  assert.ok(warns.some((w) => /windowLimits|窗口/.test(w)), `必须 warn 窗口缺失，实际 ${JSON.stringify(warns)}`);
 });
 
 test('whoami 缺少 org.id 视为查询失败', async () => {
@@ -210,14 +215,17 @@ test('org 有 id：三个额度接口仍带上 orgId', async () => {
   }
 });
 
-test('401 → authInvalid；403 也算', async () => {
-  for (const status of [401, 403]) {
-    const ff = fakeFetch({ '/alpha/whoami': { __status: status, body: { error: 'bad key user_supersecretvalue' } } });
-    const snap = await fetchQuota('user_supersecretvalue', { fetchImpl: ff });
-    assert.equal(snap.ok, false);
-    assert.equal(snap.authInvalid, true, `HTTP ${status} 应标记 authInvalid`);
-    assert.ok(!snap.error.includes('user_supersecretvalue'), '错误信息必须脱敏 key');
-  }
+test('#3：401 → authInvalid；403 不再算（403 = 模型/套餐限制，与 key 有效性无关）', async () => {
+  const ff401 = fakeFetch({ '/alpha/whoami': { __status: 401, body: { error: 'bad key user_supersecretvalue' } } });
+  const snap401 = await fetchQuota('user_supersecretvalue', { fetchImpl: ff401 });
+  assert.equal(snap401.ok, false);
+  assert.equal(snap401.authInvalid, true, '401 才是鉴权失效');
+  assert.ok(!snap401.error.includes('user_supersecretvalue'), '错误信息必须脱敏 key');
+
+  const ff403 = fakeFetch({ '/alpha/whoami': { __status: 403, body: { error: 'MODEL_NOT_IN_PLAN' } } });
+  const snap403 = await fetchQuota('user_supersecretvalue', { fetchImpl: ff403 });
+  assert.equal(snap403.ok, false);
+  assert.equal(snap403.authInvalid, false, '403 不得标记 authInvalid（否则额度轮询会误停有效账号）');
 });
 
 test('500 → 查询失败但不算 authInvalid', async () => {

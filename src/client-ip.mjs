@@ -112,8 +112,13 @@ export function isTrustedProxy(ip, cidrs = DEFAULT_TRUSTED_PROXY_CIDRS) {
 /**
  * 解析请求的真实来源 IP。
  * - 来源不可信 → 忽略一切代理头，回落 socket 地址（防伪造）。
- * - 来源可信 → 取 `x-forwarded-for` 最左有效项（IPv6 映射形式归一化），否则 `x-real-ip`,
- *   都拿不到再回落 socket。
+ * - 来源可信 → **从右往左**取 `x-forwarded-for` 里第一个不在 trustedCidrs 中的地址
+ *   （客户端自填的伪造前缀会被逐个跳过；反代追加在右侧的真实来源才是可信答案）。
+ *   整条 XFF 全落在可信网段 → 回落 `x-real-ip`（1Panel 模板用 $remote_addr 覆盖，
+ *   客户端改不动），再拿不到才回落 socket。
+ *
+ * 历史 bug（H2）：取最左项时，客户端自填 `X-Forwarded-For: 10.88.0.9, 2.2.2.2`
+ * 即可把自己伪装成可信内网地址，换任意 XFF 前缀 = 换满桶，登录/refresh 限速被绕过。
  * @param {{ remoteAddress?: string, headers?: object }} req
  * @param {string[]} trustedCidrs
  */
@@ -126,9 +131,13 @@ export function resolveClientIp(req, trustedCidrs = DEFAULT_TRUSTED_PROXY_CIDRS)
   const xffRaw = headers['x-forwarded-for'];
   const xff = Array.isArray(xffRaw) ? xffRaw.join(',') : xffRaw;
   if (typeof xff === 'string' && xff) {
-    for (const part of xff.split(',')) {
+    const parts = xff.split(',');
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const part = parts[i];
       const ip = normalizeIp(part);
-      if (ip) return ip;
+      // 只看「不在可信集合里」的地址：代理链中间的内网 hop（含客户端伪造的
+      // 10.x/172.16.x/192.168.x 前缀）一律跳过，直到最右一个真实来源。
+      if (ip && !isTrustedProxy(ip, trustedCidrs)) return ip;
     }
   }
 

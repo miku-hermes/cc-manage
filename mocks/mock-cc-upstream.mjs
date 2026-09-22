@@ -61,6 +61,8 @@ export async function startMockUpstream(opts = {}) {
     quotaErrorBody: '{"error":{"message":"You have reached your weekly limit","type":"quota_exceeded"}}',
     notFound404: false,         // 401/403：key 失效
     authErrorStatus: 0,         // 指定后按该状态码回鉴权错误（401/403）
+    authErrorBody: null,        // 覆盖鉴权错误体（H1：模拟内核把上游 403 折叠成 401 + 模型错误文案）
+    alphaDelayMs: 0,            // 仅 /alpha/* 接口延迟（后端-M2：额度刷新慢不得阻塞首字节）
     abortAfterChunks: 0,        // 流式：写 N 个 chunk 后直接 destroy 连接（模拟上游中途断）
     delayBeforeBodyMs: 0,       // 收到请求后先等再回响应体
     bodyBytesSeen: [],          // 每次 /v1 实收请求体字节数
@@ -102,6 +104,7 @@ export async function startMockUpstream(opts = {}) {
 
       // ── 额度接口 ─────────────────────────────────────────
       if (req.url.startsWith('/alpha/')) {
+        if (behavior.alphaDelayMs) await sleep(behavior.alphaDelayMs);
         const auth = req.headers.authorization ?? '';
         const key = auth.startsWith('Bearer ') ? auth.slice(7) : '';
         if (!key.startsWith('user_')) {
@@ -181,7 +184,8 @@ export async function startMockUpstream(opts = {}) {
           });
         }
         if (behavior.authErrorStatus) {
-          return sendJSON(res, behavior.authErrorStatus, { error: { message: 'invalid api key', type: 'authentication_error' } });
+          return sendJSON(res, behavior.authErrorStatus,
+            behavior.authErrorBody ?? { error: { message: 'invalid api key', type: 'authentication_error' } });
         }
         if (behavior.notFound404) {
           return sendJSON(res, 404, { error: { message: 'unknown key', type: 'not_found' } });

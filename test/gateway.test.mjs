@@ -473,7 +473,9 @@ test('面板数据契约：/api/status 提供 index.html 读取的全部字段',
   for (const k of ['total', 'errors', 'totalTokens']) {
     assert.equal(typeof d.stats[k], 'number', `stats.${k} 必须是数字`);
   }
-  assert.equal(typeof d.upstreamProxyUrl, 'string');
+  // M1：匿名 /api/status 不再下发上游拓扑（内核地址 / 网关 host:port）
+  assert.equal(d.upstreamProxyUrl, undefined, '不得下发上游内核地址');
+  assert.equal(d.gateway, undefined, '不得下发网关 host/port');
   assert.equal(typeof d.allowPassthrough, 'boolean');
   assert.equal(typeof d.now, 'number');
 

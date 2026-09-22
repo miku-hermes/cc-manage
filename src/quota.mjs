@@ -238,13 +238,20 @@ export async function fetchQuota(key, opts = {}) {
     const since = subscriptions?.data?.currentPeriodStart;
     const sep = q ? '&' : '?';
     const usage = await get(`/alpha/usage/summary${q}${since ? `${sep}since=${encodeURIComponent(since)}` : ''}`);
-    return parseSnapshot({ whoami, credits, subscriptions, usage });
+    const snapshot = parseSnapshot({ whoami, credits, subscriptions, usage });
+    // M4：ok 但两个判定窗口都没有 → 调度侧会按「数据不完整」降为中性 0.5；这里留一条
+    // warn，便于区分「上游真的没给窗口」与「字段改名/接口降级」，别静默当成满分账号。
+    if (!snapshot.fiveHour && !snapshot.weekly) {
+      opts.log?.warn?.('额度快照不含 5h/周窗口（windowLimits 缺失），调度将按中性比例处理');
+    }
+    return snapshot;
   } catch (e) {
     const aborted = e?.name === 'AbortError' || e?.code === 'ABORT_ERR';
     const status = e?.status;
     return {
       ok: false,
-      authInvalid: status === 401 || status === 403,
+      // #3：403 不是鉴权失效（内核里 403 = 模型/套餐限制）。额度轮询路径只认 401。
+      authInvalid: status === 401,
       error: aborted ? `额度查询超时（>${timeoutMs}ms）` : redactMessage(e?.message ?? String(e), key),
       fetchedAt: now(),
     };
