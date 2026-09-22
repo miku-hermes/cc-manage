@@ -1295,7 +1295,8 @@ $('accounts').addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-act]');
   if (!btn) return;
   const id = btn.getAttribute('data-id');
-  const account = state.accounts.find((a) => shortId(a.keyId) === shortId(id));
+  // 必须比完整 keyId：shortId（前 8 字符）相同时会把操作作用到另一个账号上。
+  const account = state.accounts.find((a) => String(a.keyId) === String(id));
   if (!account) return;
   const act = btn.getAttribute('data-act');
 
@@ -1402,7 +1403,8 @@ $('keys').addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-act="delkey"]');
   if (!btn) return;
   const id = btn.getAttribute('data-id');
-  const k = state.keys.find((x) => shortId(x.keyId) === shortId(id));
+  // 同上：只比前 8 字符会误删/误判另一个 keyId 相同的客户端 key。
+  const k = state.keys.find((x) => String(x.keyId) === String(id));
   if (!k) return;
   if (!confirm('确定要删除客户端 key「' + k.name + '」吗？\n删除后该客户端会立刻 401。')) return;
   return guard(async () => {

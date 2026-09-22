@@ -7,16 +7,65 @@ import path from 'node:path';
 import { startMockUpstream } from '../mocks/mock-cc-upstream.mjs';
 import { startGateway } from '../gateway.mjs';
 
+// ── 挂起保护（对齐 vendor/commandcode-proxy/test/helpers.mjs）──────────
+// node --test 的子进程只要还有活着的 server/socket 就不会退出：套件看起来「跑完了」
+// 却一直挂着。这里用 unref 的定时器兜底：到点强制退出并说明原因；正常退出时
+// unref 不阻止进程结束。用 CC_TEST_HANG_GUARD_MS 可在测试里缩短（见 batch3-ops.test.mjs）。
+const rawGuardMs = Number(process.env.CC_TEST_HANG_GUARD_MS);
+// 非正数/非法值一律回落默认值：空串或拼错会算出 0/NaN，setTimeout 会立刻触发并假红。
+const HANG_GUARD_MS = Number.isFinite(rawGuardMs) && rawGuardMs > 0 ? rawGuardMs : 120000;
+const hangGuard = setTimeout(() => {
+  console.error(`[test] ${HANG_GUARD_MS}ms 内进程没有退出：疑似有 server/socket 未关闭`
+    + '（检查每个测试是否都在 t.after / finally 里 await close()）。强制退出。');
+  process.exit(1);
+}, HANG_GUARD_MS);
+hangGuard.unref?.();
+
 /** 取一个当前空闲端口（先 listen 0 再释放）。 */
-export async function allocPort() {
-  return await new Promise((resolve, reject) => {
+export async function allocPort({ attempts = 3 } = {}) {
+  return retryOnPortConflict(() => new Promise((resolve, reject) => {
     const srv = net.createServer();
     srv.once('error', reject);
     srv.listen(0, '127.0.0.1', () => {
       const { port } = srv.address();
       srv.close(() => resolve(port));
     });
-  });
+  }), attempts);
+}
+
+/**
+ * bind 冲突（EADDRINUSE）重试包装。
+ *
+ * listen(0)→close() 到调用方真正 bind 之间有一个空窗，端口可能被别的进程（并行跑的
+ * 另一个测试文件、或上一次没退干净的进程）抢走；重试比直接让整个套件闪红更结实。
+ * 其它错误（EACCES/EPERM…）不重试，立刻抛。
+ */
+export async function retryOnPortConflict(alloc, attempts = 3) {
+  const tries = Number.isInteger(attempts) && attempts > 0 ? attempts : 1;
+  let lastError;
+  for (let i = 0; i < tries; i += 1) {
+    try {
+      return await alloc();
+    } catch (e) {
+      lastError = e;
+      if (e?.code !== 'EADDRINUSE') throw e;
+      if (i < tries - 1) await sleep(50 * (i + 1));
+    }
+  }
+  throw lastError;
+}
+
+/**
+ * 收掉测试资源。失败路径与正常收尾共用：起网关失败时必须把已经起来的 mock server
+ * 与临时目录一起回收，否则 node --test 子进程会挂着不退出（假挂起，CI 只能等到超时）。
+ * 任何一步失败都不影响其它步骤，也不掩盖原始错误。
+ */
+export async function cleanupTestResources({ gateway, upstream, dir, keepDir = false } = {}) {
+  await gateway?.stop?.().catch(() => {});
+  await upstream?.close?.().catch(() => {});
+  if (dir && !keepDir) {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* 忽略 */ }
+  }
 }
 
 /** 建一个隔离的临时工作目录（accounts.json / keys.json / data/ 都在里面）。 */
@@ -37,35 +86,51 @@ export async function closeServer(server, timeoutMs = 3000) {
 }
 
 /** 起一个真实网关，上游指向 mock。返回 ctx，测试结束务必 await ctx.close()。 */
-export async function startTestGateway({ accounts, keys, config = {}, plans, behavior, rootDir, noTimers = true, now } = {}) {
+export async function startTestGateway({
+  accounts, keys, config = {}, plans, behavior, rootDir, noTimers = true, now,
+  // 依赖注入点：让「启动失败时的回收」能在不起任何 server 的情况下被单测（batch3-ops.test.mjs）。
+  deps = {},
+} = {}) {
+  const launchUpstream = deps.startUpstream ?? startMockUpstream;
+  const launchGateway = deps.startGateway ?? startGateway;
+  const pickPort = deps.allocPort ?? allocPort;
   const dir = rootDir ?? makeTmpDir();
   const defaultAccounts = accounts ?? [
     { name: '账号A', key: 'user_test_alpha', enabled: true },
     { name: '账号B', key: 'user_test_beta', enabled: true },
   ];
   const defaultKeys = keys ?? [{ name: '测试客户端', key: 'sk-cg-testkey123' }];
-  writeAccountFiles(dir, { accounts: defaultAccounts, keys: defaultKeys });
 
-  const upstream = await startMockUpstream({ plans, behavior });
-  const port = await allocPort();
+  let upstream = null;
+  let gw = null;
+  let port = null;
+  try {
+    writeAccountFiles(dir, { accounts: defaultAccounts, keys: defaultKeys });
+    upstream = await launchUpstream({ plans, behavior });
+    port = await pickPort();
 
-  const gw = await startGateway({
-    rootDir: dir,
-    noTimers,
-    noInitialRefresh: true,
-    now,
-    env: { ...process.env, CC_ACCOUNTS: '', ASSET_NO: '1' },
-    config: {
-      gatewayPort: port,
-      gatewayHost: '127.0.0.1',
-      upstreamProxyUrl: upstream.url,
-      ccApiBase: upstream.url,
-      quotaTimeoutMs: 5000,
-      allowPassthrough: false,
-      logLevel: 'silent',
-      ...config,
-    },
-  });
+    gw = await launchGateway({
+      rootDir: dir,
+      noTimers,
+      noInitialRefresh: true,
+      now,
+      env: { ...process.env, CC_ACCOUNTS: '', ASSET_NO: '1' },
+      config: {
+        gatewayPort: port,
+        gatewayHost: '127.0.0.1',
+        upstreamProxyUrl: upstream.url,
+        ccApiBase: upstream.url,
+        quotaTimeoutMs: 5000,
+        allowPassthrough: false,
+        logLevel: 'silent',
+        ...config,
+      },
+    });
+  } catch (e) {
+    // 起网关失败也要把 mock server / 临时目录收掉（rootDir 是调用方给的就不能删）。
+    await cleanupTestResources({ gateway: gw, upstream, dir, keepDir: !!rootDir });
+    throw e;
+  }
 
   return {
     dir,
@@ -75,9 +140,8 @@ export async function startTestGateway({ accounts, keys, config = {}, plans, beh
     gateway: gw,
     localKey: defaultKeys[0].key,
     async close() {
-      await gw.stop().catch(() => {});
-      await upstream.close().catch(() => {});
-      try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* 忽略 */ }
+      // 保持原语义：close() 一定删掉工作目录（rootDir 由调用方 makeTmpDir() 给出，也一起清）。
+      await cleanupTestResources({ gateway: gw, upstream, dir });
     },
   };
 }

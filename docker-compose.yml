@@ -18,6 +18,17 @@ services:
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
+    # core 无状态：不写 /app，只给 node 留一个可写的 /tmp
+    read_only: true
+    tmpfs:
+      - /tmp
+    # M5：core:3050 无鉴权（任何有效 CC key 都能无限用），因此不能与别的容器同网。
+    #   core-net    —— internal: true，只有 gateway 挂得上（唯一入口）。
+    #   core-egress —— 非 internal 且**只有 core 自己**挂：core 要直连 CC 上游
+    #                  （vendor 内核自己 fetch CC_API_BASE），internal 网络没有出网路由。
+    networks:
+      core-net:
+      core-egress:
     # F25：日志轮转，避免 json-file 无上限把宿主磁盘写满
     logging:
       driver: json-file
@@ -52,12 +63,22 @@ services:
     volumes:
       - ./config:/app/config                           # 凭据目录（可写）：后台账号/CC key/客户端 key
       - cc-manage-data:/app/data                       # 命名卷，避免宿主目录权限坑
-    mem_limit: 256m
+    # L6：192MB 堆 + 8MB(maxBodyBytes)×8(maxInflight)=64MB 堆外 Buffer + SSE/连接开销，
+    # 原来的 256m 在并发大上传时会 OOM，留够余量提到 384m（算式同步写在 .env.example）。
+    mem_limit: 384m
     restart: unless-stopped
+    # M5：core-net 是唯一能访问 core 的网络；default/1panel-network 保留出网与反代接入。
+    networks:
+      core-net:
+      default:
     # F24：同样收紧权限（镜像本身已经是 USER node）
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
+    # gateway 只写 /app/data 卷与 /app/config bind，其余文件系统只读
+    read_only: true
+    tmpfs:
+      - /tmp
     # F25：日志轮转
     logging:
       driver: json-file
@@ -73,3 +94,10 @@ services:
 
 volumes:
   cc-manage-data:
+
+networks:
+  # M5：internal 网络没有出网路由，也没有别的容器能挂上来 → core 只对 gateway 可见。
+  core-net:
+    internal: true
+  # 只有 core 自己挂：给它一条出网路由（CC 上游），但不引入任何同网邻居。
+  core-egress:

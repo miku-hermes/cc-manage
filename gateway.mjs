@@ -22,7 +22,7 @@ import {
   verifyPassword,
 } from './src/auth.mjs';
 import { createScheduler, quotaWindows } from './src/scheduler.mjs';
-import { DEFAULT_TRUSTED_PROXY_CIDRS, resolveClientIp } from './src/client-ip.mjs';
+import { DEFAULT_TRUSTED_PROXY_CIDRS, isSecureRequest as isSecureRequestOf, resolveClientIp } from './src/client-ip.mjs';
 import { createProxy } from './src/proxy.mjs';
 import { createAdaptivePoller } from './src/poll.mjs';
 
@@ -239,10 +239,12 @@ export async function startGateway(overrides = {}) {
     return res;
   }
 
-  /** HTTPS 判断：前面是 1Panel openresty 反代，看 x-forwarded-proto。 */
+  /**
+   * HTTPS 判断：前面是 1Panel openresty 反代，看 x-forwarded-proto。
+   * 口径与 clientIp() 一致（见 src/client-ip.mjs）：socket 来源不可信就无视这个头。
+   */
   function isSecureRequest(req) {
-    const proto = String(req.headers['x-forwarded-proto'] ?? '').split(',')[0].trim().toLowerCase();
-    return proto === 'https';
+    return isSecureRequestOf({ remoteAddress: req.socket?.remoteAddress, headers: req.headers }, trustedProxyCidrs);
   }
 
   /** 当前请求携带的原始 session token（没有则空串）。 */

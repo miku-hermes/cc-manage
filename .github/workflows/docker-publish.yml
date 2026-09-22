@@ -20,7 +20,12 @@ jobs:
         with:
           node-version: '22'
       - name: Run tests
-        run: npm test
+        run: node --test test/*.test.mjs
+
+      # 内核自带测试（vendor/commandcode-proxy/test/）之前从没在 CI 跑过，
+      # 但部署的正是这个内核镜像。它会 spawn 子进程 + 占端口，单独一步便于定位。
+      - name: Run vendor core tests
+        run: npm --prefix vendor/commandcode-proxy test
 
   build:
     needs: test
@@ -68,11 +73,22 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,format=short
 
+      # 可变 tag 的 node:22-alpine 在构建前解析成 digest，锁住实际用的基础镜像。
+      - name: Resolve base image digest
+        id: base
+        run: |
+          DIGEST=$(docker buildx imagetools inspect node:22-alpine --format '{{json .Manifest.Digest}}' | tr -d '"')
+          test -n "$DIGEST"
+          echo "image=node:22-alpine@${DIGEST}" >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
+          build-args: |
+            BASE_IMAGE=${{ steps.base.outputs.image }}
+            REVISION=${{ github.sha }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.docker_meta.outputs.tags }}
           labels: ${{ steps.docker_meta.outputs.labels }}

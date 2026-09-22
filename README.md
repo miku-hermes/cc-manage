@@ -59,6 +59,8 @@ npm start                                            # 监听 127.0.0.1:3051
 
 `docker compose` 会同时拉起两个服务：`gateway`（本仓库，宿主只映射 `127.0.0.1:3051`）与 `core`（`vendor/commandcode-proxy`，**不映射宿主端口**）。宿主上的客户端只跟 `gateway` 说话。
 
+网络与权限：`core:3050` 没有鉴权（拿到任意有效 CC key 就能用），所以它只挂在 `core-net`（`internal: true`）上，**只有 `gateway` 能访问它**；`core` 自己出网走一条只有它挂的 `core-egress`（内核要直连 CC 上游）。两个服务都是只读根文件系统（`read_only: true` + `tmpfs: /tmp`），可写的只有 `gateway` 的 `/app/config`（bind）与 `/app/data`（命名卷）。
+
 ```bash
 # 1. 前置准备：可写目录挂载（容器 uid 1000）
 mkdir -p config && chown 1000:1000 config
@@ -143,7 +145,7 @@ docker compose logs --tail 20 core   # 能看到请求到达 + 被替换成池�
 docker compose up -d --force-recreate gateway   # 恢复默认
 ```
 
-**内存提示**：本机 2GB，已用四重封顶 —— `mem_limit`（core 512m / gateway 256m）+ `CC_MAX_BODY_MB`（默认 20）+ `CC_MAX_INFLIGHT`（默认 8）+ 网关自己的 `maxBodyBytes`（默认 8MB）/ `maxInflight`（默认 8）。公网/高并发还要另加 nginx 侧的连接数限制。
+**内存提示**：本机 2GB，已用四重封顶 —— `mem_limit`（core 512m / gateway 384m）+ `CC_MAX_BODY_MB`（默认 20）+ `CC_MAX_INFLIGHT`（默认 8）+ 网关自己的 `maxBodyBytes`（默认 8MB）/ `maxInflight`（默认 8）。公网/高并发还要另加 nginx 侧的连接数限制。
 
 ### 配置 `config.json`
 
@@ -293,7 +295,7 @@ curl -N -X POST 127.0.0.1:3051/v1/chat/completions \
 ## 测试与自测
 
 ```bash
-npm test          # node:test，全部离线可跑，不打真实网络
+npm test          # node:test：本仓库测试 + vendor/commandcode-proxy 内核测试，离线可跑、不打真实网络
 ```
 
 手工联调（不碰真实 Command Code）：
@@ -330,11 +332,16 @@ ghcr.io/<owner>/cc-manage-core:latest
 ./scripts/run-from-ghcr.sh          # OWNER= VERSION= 可覆盖
 ```
 
+脚本会把 `config/` 与 `data/` 建好并 `chown 1000:1000`（容器以 uid 1000 运行；写不进去时 store 会降级成纯内存、重启即丢 state），
+容器同样带 `--user 1000:1000 --cap-drop ALL --security-opt no-new-privileges:true --read-only --tmpfs /tmp` 与日志轮转。
+`chown` 失败（非 root 调用）只会警告、不阻断启动 —— 但容器内 uid 1000 写不进去时，后台会因凭据目录不可写而拒绝初始化，请先在宿主上手改权限。
+
 ### 自动构建（GHCR）
 
 工作流在 `.github/workflows/docker-publish.yml`，推送即生效：
 
-- 推 `master`/`main` 或打 `v*` 标签 → 先跑 `npm test`，通过后构建并推送两个镜像
+- 推 `master`/`main` 或打 `v*` 标签 → 先跑 `npm test`（本仓库测试 + `vendor/commandcode-proxy` 内核自带测试，两个目录都跑），通过后构建并推送两个镜像
+- 构建时把 `node:22-alpine` 解析成 digest 传 `--build-arg BASE_IMAGE=...@sha256:...`，并传 `REVISION=$(git rev-parse HEAD)` 打成 OCI 标签
 - 镜像：`ghcr.io/miku-hermes/cc-manage-gateway` 与 `ghcr.io/miku-hermes/cc-manage-core`
 - 标签：`latest`（默认分支）、分支名、`v1.2.3` / `1.2`（打 tag 时）、`sha-<短哈希>`
 - PR 只构建不推送；构建缓存走 GitHub Actions cache

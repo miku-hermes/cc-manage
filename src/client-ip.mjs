@@ -110,6 +110,25 @@ export function isTrustedProxy(ip, cidrs = DEFAULT_TRUSTED_PROXY_CIDRS) {
 }
 
 /**
+ * 请求是否真的走 HTTPS（决定 HSTS 与 cookie 的 Secure 属性）。
+ *
+ * 反代（1Panel openresty）用 `x-forwarded-proto` 说明原始协议，但**只有** socket 来源
+ * 属于可信代理时才采信 —— 与 resolveClientIp 完全同口径。否则任何匿名请求自己塞一个
+ * `X-Forwarded-Proto: https`，就能让这次响应带上 HSTS、给 cookie 加 Secure。
+ *
+ * @param {{ remoteAddress?: string, headers?: object }} req
+ * @param {string[]} trustedCidrs
+ */
+export function isSecureRequest(req, trustedCidrs = DEFAULT_TRUSTED_PROXY_CIDRS) {
+  if (!isTrustedProxy(req?.remoteAddress, trustedCidrs)) return false;
+  const headers = req?.headers ?? {};
+  const raw = headers['x-forwarded-proto'];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  const proto = String(value ?? '').split(',')[0].trim().toLowerCase();
+  return proto === 'https';
+}
+
+/**
  * 解析请求的真实来源 IP。
  * - 来源不可信 → 忽略一切代理头，回落 socket 地址（防伪造）。
  * - 来源可信 → **从右往左**取 `x-forwarded-for` 里第一个不在 trustedCidrs 中的地址
