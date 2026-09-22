@@ -541,10 +541,6 @@
       <span class="kpi-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="7.2" y="5" width="3.6" height="14" rx="1.3"/><rect x="13.2" y="5" width="3.6" height="14" rx="1.3"/></svg></span>
       <div class="kpi-body"><b id="kpi-paused">—</b><span>暂停中</span></div>
     </div>
-    <div class="kpi" id="kpi-box-concurrency">
-      <span class="kpi-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></span>
-      <div class="kpi-body"><b id="kpi-concurrency">—</b><span>在途请求</span></div>
-    </div>
     <div class="kpi" id="kpi-box-total">
       <span class="kpi-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg></span>
       <div class="kpi-body"><b id="kpi-total">—</b><span>总请求</span></div>
@@ -696,7 +692,7 @@ function freshness(ts) {
   return { text: '额度更新于 ' + relText(t), stale: false, age };
 }
 
-/* KPI 语义色：错误>0 红、可用<总数 黄、在途>0 粉、0 值弱化 */
+/* KPI 语义色：错误>0 红、可用<总数 黄、0 值弱化 */
 function paintKpi(boxId, numId, value, opts) {
   const box = $(boxId);
   const b = $(numId);
@@ -791,7 +787,6 @@ function card(a, wideLast = false) {
   } else if (a.creditsExhausted) {
     tags.push('<span class="tag bad">余额不足</span>');   // 兼容旧后端
   }
-  tags.push('<span class="tag info">在途 ' + esc(num(a.concurrency)) + '</span>');
   if (q && q.plan) tags.push('<span class="tag">套餐 ' + esc(planLabel(q.plan.planId) ?? '-') + '</span>');
 
   const left = '<div class="card-col-left">'
@@ -845,7 +840,7 @@ function render(d) {
   const accounts = d.accounts || [];
   setStaleFrom(d);   // 阈值跟随后端轮询配置（空闲间隔的 2 倍）
 
-  $('health').textContent = '可用 ' + num(s.available) + ' / ' + num(s.accounts) + ' · 在途 ' + num(s.concurrency);
+  $('health').textContent = '可用 ' + num(s.available) + ' / ' + num(s.accounts);
   $('health').className = 'pill ' + (Number(s.available) > 0 ? 'ok' : 'bad');
   $('updated').textContent = '更新于 ' + timeText(d.now);
   $('cadence').textContent = cadenceText(d.quotaPoll);
@@ -859,7 +854,6 @@ function render(d) {
   paintKpi('kpi-box-accounts', 'kpi-accounts', s.accounts, {});
   paintKpi('kpi-box-available', 'kpi-available', s.available, { kind: 'warning', warnWhen: (v) => Number(s.accounts) > v });
   paintKpi('kpi-box-paused', 'kpi-paused', s.paused, {});
-  paintKpi('kpi-box-concurrency', 'kpi-concurrency', s.concurrency, { kind: 'accent' });
   paintKpi('kpi-box-total', 'kpi-total', st.total, {});
   paintKpi('kpi-box-errors', 'kpi-errors', st.errors, { kind: 'danger' });
 
@@ -877,10 +871,10 @@ function setHint(text, bad) {
   el.className = bad ? 'hint bad' : 'hint';
 }
 function clearKpis() {
-  for (const id of ['kpi-accounts', 'kpi-available', 'kpi-paused', 'kpi-concurrency', 'kpi-total', 'kpi-errors']) {
+  for (const id of ['kpi-accounts', 'kpi-available', 'kpi-paused', 'kpi-total', 'kpi-errors']) {
     $(id).textContent = '—';
   }
-  for (const id of ['kpi-box-accounts', 'kpi-box-available', 'kpi-box-paused', 'kpi-box-concurrency', 'kpi-box-total', 'kpi-box-errors']) {
+  for (const id of ['kpi-box-accounts', 'kpi-box-available', 'kpi-box-paused', 'kpi-box-total', 'kpi-box-errors']) {
     $(id).className = 'kpi';
   }
 }
