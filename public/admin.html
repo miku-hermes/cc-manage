@@ -895,7 +895,7 @@ function renderAccounts() {
     const quota = q && q.ok
       ? quotaBar('5h', q.fiveHour) + quotaBar('周', q.weekly) + quotaBar('月', q.monthly)
         + '<div class="cell-sub">余额 ' + money(q.remaining) + (q.plan && q.plan.planId ? ' · 套餐 ' + esc(q.plan.planId) : '')
-        + (q.displayName ? ' · ' + esc(q.displayName) : '') + '</div>'
+        + (q.displayName ? ' · ' + esc(q.displayName) : '') + (a.lastError ? ' · 最近错误：' + esc(a.lastError) : '') + '</div>'
       : '<div class="cell-sub">' + (q ? '额度查询失败：' + esc(a.lastError || '未知错误') : '尚未获取额度快照') + '</div>';
     const test = testResults.get(a.keyId);
     const testNote = test

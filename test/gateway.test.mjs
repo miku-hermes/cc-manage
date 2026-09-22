@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import vm from 'node:vm';
 import { startTestGateway, request, sleep, createDomShim, runInlineScript } from './helpers.mjs';
 
 test('鉴权：无 key → 401，错的 sk-cg- key → 401，正确 key → 200', async (t) => {
@@ -1450,4 +1451,72 @@ test('顶部余额：拿不到快照的账号当 0，不产生 NaN', async (t) =
   assert.equal(page.document.getElementById('balance').textContent, '0.00',
     '没有快照当 0，不能出现 NaN/—');
   assert.doesNotMatch(html, /id="bal-dead"/, 'bal-dead 节点已删除');
+});
+
+// ── 最近错误：从前台卡片挪到后台，公开面板不再暴露 ─────────────────────
+// 用户要求：公开面板的账号卡片不显示「最近错误」，这条信息只在后台账号行里给出。
+test('前台卡片：不再显示最近错误，状态词/标签照旧', async (t) => {
+  const ctx = await startTestGateway();
+  t.after(() => ctx.close());
+  const html = (await request(`${ctx.baseUrl}/`)).body;
+  const shim = createDomShim({ html, fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({}) }) });
+  const page = await runInlineScript(html, shim);
+  assert.equal(typeof page.card, 'function', '页面里应能取到 card()');
+
+  const periodEndSec = Math.floor(Date.parse('2026-10-11T11:41:14.000Z') / 1000);
+  const out = page.card({ name: '穷号', keyId: 'aaaaaaaa', enabled: true, available: false,
+    creditsExhausted: true, creditsExhaustedAt: Date.now(), concurrency: 0, paused: false,
+    pausedUntil: null, authInvalid: false, lastError: '上游拒付：额度已用完（insufficient credits）',
+    exhausted: { kind: 'monthly', label: '月额度已用完', resetAt: periodEndSec },
+    lastQuota: null });
+  assert.match(out, /月额度已用完/, '状态词照旧');
+  assert.match(out, /不可用/, '标签照旧');
+  assert.doesNotMatch(out, /最近错误/, '卡片不再渲染最近错误');
+  assert.doesNotMatch(out, /class="err"/, '也不应出现 .err 元素');
+});
+
+test('后台：快照正常的账号行要显示最近错误（并转义）', async (t) => {
+  const ctx = await startTestGateway();
+  t.after(() => ctx.close());
+  const adminHtml = (await request(`${ctx.baseUrl}/admin`)).body;
+  const shim = createDomShim({ html: adminHtml, fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({}) }) });
+  const page = await runInlineScript(adminHtml, shim);
+  assert.equal(typeof page.renderAccounts, 'function', '后台页面里应能取到 renderAccounts');
+
+  // state 是页面顶层 const，不挂在 vm 上下文字面量上；在同一 context 里注数据并直接调渲染函数
+  vm.runInContext(`
+    state.accounts = [{
+      keyId: 'abcdef12', name: '甲', enabled: true, paused: false, authInvalid: false,
+      lastError: '上游拒付 <b>balance</b>',
+      lastQuota: { ok: true, remaining: 9.9, plan: null, displayName: 'x',
+        fiveHour: null, weekly: null, monthly: null, usage: {}, percent: {}, fetchedAt: Date.now() },
+    }];
+    renderAccounts();
+  `, page);
+
+  const out = shim.el('accounts').innerHTML;
+  assert.match(out, /最近错误：上游拒付 &lt;b&gt;balance&lt;\/b&gt;/, '快照正常的行要带最近错误且转义');
+  assert.doesNotMatch(out, /<b>balance<\/b>/, '不得输出未转义的错误文本');
+});
+
+test('后台：快照查询失败时只显示一次错误，不重复出现最近错误', async (t) => {
+  const ctx = await startTestGateway();
+  t.after(() => ctx.close());
+  const adminHtml = (await request(`${ctx.baseUrl}/admin`)).body;
+  const shim = createDomShim({ html: adminHtml, fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({}) }) });
+  const page = await runInlineScript(adminHtml, shim);
+
+  vm.runInContext(`
+    state.accounts = [{
+      keyId: 'abcdef12', name: '乙', enabled: true, paused: false, authInvalid: false,
+      lastError: '上游拒付',
+      lastQuota: { ok: false },
+    }];
+    renderAccounts();
+  `, page);
+
+  const out = shim.el('accounts').innerHTML;
+  assert.match(out, /额度查询失败：上游拒付/, '查询失败那支照旧');
+  assert.equal((out.match(/额度查询失败/g) || []).length, 1, '额度查询失败只出现一次');
+  assert.doesNotMatch(out, /最近错误：/, '不重复显示最近错误');
 });

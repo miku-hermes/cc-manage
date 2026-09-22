@@ -429,7 +429,6 @@
   .tag.warn { color: var(--warning); border-color: var(--warning); background: var(--warning-light); }
   .tag.info { color: var(--accent-ink); border-color: var(--accent); background: var(--accent-light); }
 
-  .err { margin-top: 12px; font-size: var(--fs-xs); color: var(--danger); word-break: break-all; }
 
 
   @media (max-width: 640px) {
@@ -787,7 +786,6 @@ function card(a) {
   return '<article class="card ' + cardCls + '">'
     + '<div class="card-grid">' + left + right + '</div>'
     + '<div class="tags">' + tags.join('') + '</div>'
-    + (a.lastError ? '<div class="err">最近错误：' + esc(a.lastError) + '</div>' : '')
     + '</article>';
 }
 
