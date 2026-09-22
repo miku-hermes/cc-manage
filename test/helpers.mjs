@@ -108,67 +108,371 @@ export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * innerHTML / textContent / style / dataset / appendChild / 事件绑定 / fetch / matchMedia。
  */
 export function createDomShim({ html, fetchImpl, localStorageData = {} }) {
-  const ids = new Set();
-  for (const m of html.matchAll(/\bid="([^"]+)"/g)) ids.add(m[1]);
-  const nodes = new Map();
   const store = new Map(Object.entries(localStorageData));
+  // HTML 里的空元素（不会闭合，解析时不能压栈）
+  const VOID_TAGS = new Set([
+    'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta',
+    'param', 'source', 'track', 'wbr',
+  ]);
+  let documentRef = null;
 
-  function makeEl(id = '') {
+  function makeEl(tag = '') {
     const classes = new Set();
+    const attrs = new Map();
+    const handlers = {};
+    let innerHTMLValue = '';
+    let ownText = '';
+    let textOverride = null;
+
     const el = {
-      id,
+      tagName: String(tag).toLowerCase(),
+      nodeType: 1,
+      id: '',
       ownerDocument: null,
-      innerHTML: '',
-      textContent: '',
+      parent: null,
+      children: [],
       value: '',
       title: '',
       disabled: false,
       checked: false,
       hidden: false,
+      selected: false,
+      scrollLeft: 0,
+      scrollWidth: 0,
+      offsetWidth: 0,
       style: {},
       dataset: {},
-      children: [],
-      _handlers: {},
-      className: '',
+      _handlers: handlers,
+      _focusCount: 0,
       classList: {
         add: (...cs) => cs.forEach((c) => classes.add(c)),
         remove: (...cs) => cs.forEach((c) => classes.delete(c)),
         contains: (c) => classes.has(c),
-        toggle: (c) => (classes.has(c) ? classes.delete(c) : classes.add(c)),
+        toggle: (c) => (classes.has(c) ? (classes.delete(c), false) : (classes.add(c), true)),
       },
-      setAttribute(k, v) { this[k] = v; },
-      getAttribute(k) { return this[k] ?? null; },
-      removeAttribute(k) { delete this[k]; },
-      appendChild(c) { this.children.push(c); return c; },
-      addEventListener(type, fn) { (this._handlers[type] ??= []).push(fn); },
-      removeEventListener() {},
-      focus() {},
-      click() { for (const fn of this._handlers.click ?? []) fn({}); },
-      querySelectorAll: () => [],
-      closest: () => null,
-      getBoundingClientRect: () => ({ width: 0, height: 0, top: 0, left: 0 }),
+      setAttribute(k, v) {
+        const key = String(k);
+        const val = String(v);
+        if (key === 'id') { this.id = val; attrs.set('id', val); return; }
+        if (key === 'class') {
+          classes.clear();
+          val.split(/\s+/).filter(Boolean).forEach((c) => classes.add(c));
+          attrs.set('class', val);
+          return;
+        }
+        attrs.set(key, val);
+        if (key.startsWith('data-')) {
+          const camel = key.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+          this.dataset[camel] = val;
+        }
+      },
+      getAttribute(k) {
+        const key = String(k);
+        if (key === 'class') return this.className || null;
+        if (key === 'id') return this.id || null;
+        return attrs.has(key) ? attrs.get(key) : null;
+      },
+      hasAttribute(k) {
+        const key = String(k);
+        if (key === 'class') return classes.size > 0;
+        if (key === 'id') return !!this.id;
+        return attrs.has(key);
+      },
+      removeAttribute(k) {
+        const key = String(k);
+        attrs.delete(key);
+        if (key === 'class') classes.clear();
+        if (key === 'id') this.id = '';
+      },
+      appendChild(c) {
+        if (c.parent) {
+          const i = c.parent.children.indexOf(c);
+          if (i >= 0) c.parent.children.splice(i, 1);
+        }
+        c.parent = this;
+        this.children.push(c);
+        return c;
+      },
+      removeChild(c) {
+        const i = this.children.indexOf(c);
+        if (i >= 0) this.children.splice(i, 1);
+        c.parent = null;
+        return c;
+      },
+      _appendText(t) { if (textOverride !== null) textOverride = null; ownText += String(t); },
+      addEventListener(type, fn) { (handlers[type] ??= []).push(fn); },
+      removeEventListener(type, fn) {
+        if (handlers[type]) handlers[type] = handlers[type].filter((f) => f !== fn);
+      },
+      dispatchEvent(ev) { for (const fn of handlers[ev.type] ?? []) fn(ev); return true; },
+      focus() { this._focusCount++; if (documentRef) documentRef.activeElement = this; },
+      blur() {},
+      click() {
+        for (const fn of handlers.click ?? []) {
+          fn({ target: this, currentTarget: this, preventDefault() {}, stopPropagation() {} });
+        }
+      },
+      closest(sel) {
+        let n = this;
+        while (n) { if (n.matches && n.matches(sel)) return n; n = n.parent; }
+        return null;
+      },
+      contains(n) { let p = n; while (p) { if (p === this) return true; p = p.parent; } return false; },
+      getBoundingClientRect: () => ({ width: 0, height: 0, top: 0, left: 0, right: 0, bottom: 0 }),
+      get childNodes() { return this.children; },
+      get firstChild() { return this.children[0] ?? null; },
+      get firstElementChild() { return this.children.find((c) => c.nodeType === 1) ?? null; },
     };
+
+    Object.defineProperty(el, 'className', {
+      get: () => [...classes].join(' '),
+      set: (v) => {
+        classes.clear();
+        String(v).split(/\s+/).filter(Boolean).forEach((c) => classes.add(c));
+      },
+      enumerable: true, configurable: true,
+    });
+    Object.defineProperty(el, 'innerHTML', {
+      get: () => innerHTMLValue,
+      set: (v) => {
+        innerHTMLValue = String(v);
+        textOverride = null;
+        ownText = '';
+        for (const c of el.children) c.parent = null;
+        el.children = [];
+        for (const c of parseFragment(innerHTMLValue)) el.appendChild(c);
+      },
+      enumerable: true, configurable: true,
+    });
+    Object.defineProperty(el, 'textContent', {
+      get: () => {
+        if (textOverride !== null) return textOverride;
+        let out = ownText;
+        for (const c of el.children) out += c.textContent;
+        return out;
+      },
+      set: (v) => {
+        textOverride = String(v);
+        ownText = '';
+        for (const c of el.children) c.parent = null;
+        el.children = [];
+        innerHTMLValue = '';
+      },
+      enumerable: true, configurable: true,
+    });
+    el.querySelectorAll = (sel) => {
+      const out = [];
+      const seen = new Set();
+      for (const group of parseSelector(sel)) {
+        walk(el.children, (node) => {
+          if (!seen.has(node) && matchesSelector(node, group)) { seen.add(node); out.push(node); }
+        });
+      }
+      return out;
+    };
+    el.querySelector = (sel) => el.querySelectorAll(sel)[0] ?? null;
+    el.matches = (sel) => parseSelector(sel).some((group) => matchesSelector(el, group));
     return el;
   }
 
-  for (const id of ids) nodes.set(id, makeEl(id));
-  const documentElement = makeEl('html');
-  const body = makeEl('body');
+  function walk(nodes, fn) {
+    for (const n of nodes) {
+      // 只遍历元素节点：文本节点（nodeType 3）等不能进选择器匹配。
+      if (n.nodeType !== 1) continue;
+      fn(n);
+      walk(n.children, fn);
+    }
+  }
 
+  function applyAttrs(el, str) {
+    const re = /([a-zA-Z_:][-a-zA-Z0-9_:.]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+    let m;
+    while ((m = re.exec(str))) {
+      const val = m[2] ?? m[3] ?? m[4] ?? '';
+      el.setAttribute(m[1].toLowerCase(), val);
+    }
+  }
+
+  // 极简 HTML 片段解析：只建「元素 + 属性 + 文本」三层够用的树，够选择器遍历即可。
+  function parseFragment(text) {
+    const holder = makeEl('#fragment');
+    const stack = [holder];
+    const top = () => stack[stack.length - 1];
+    let i = 0;
+    while (i < text.length) {
+      const lt = text.indexOf('<', i);
+      if (lt < 0) { top()._appendText(text.slice(i)); break; }
+      if (lt > i) top()._appendText(text.slice(i, lt));
+      if (text.startsWith('<!--', lt)) {
+        const e = text.indexOf('-->', lt + 4);
+        i = e < 0 ? text.length : e + 3;
+        continue;
+      }
+      if (text[lt + 1] === '!' || text[lt + 1] === '?') {
+        const e = text.indexOf('>', lt);
+        i = e < 0 ? text.length : e + 1;
+        continue;
+      }
+      const m = /^<(\/?)([a-zA-Z][a-zA-Z0-9:-]*)((?:"[^"]*"|'[^']*'|[^>"'])*?)(\/?)>/.exec(text.slice(lt));
+      if (!m) { top()._appendText('<'); i = lt + 1; continue; }
+      const full = m[0];
+      const closing = m[1];
+      const tag = m[2].toLowerCase();
+      const attrStr = m[3];
+      const selfClose = m[4];
+      i = lt + full.length;
+      if (closing) {
+        for (let k = stack.length - 1; k >= 1; k--) {
+          if (stack[k].tagName === tag) { stack.length = k; break; }
+        }
+        continue;
+      }
+      const el = makeEl(tag);
+      applyAttrs(el, attrStr);
+      top().appendChild(el);
+      if (tag === 'script' || tag === 'style') {
+        const re = new RegExp('</' + tag + '\\s*>', 'i');
+        const cm = re.exec(text.slice(i));
+        i = cm ? i + cm.index + cm[0].length : text.length;
+        continue;
+      }
+      if (!selfClose && !VOID_TAGS.has(tag)) stack.push(el);
+    }
+    return holder.children.slice();
+  }
+
+  function parseCompound(compound) {
+    const tests = [];
+    let i = 0;
+    while (i < compound.length) {
+      const ch = compound[i];
+      if (ch === '#') {
+        let j = i + 1;
+        while (j < compound.length && /[\w-]/.test(compound[j])) j++;
+        tests.push(['id', compound.slice(i + 1, j)]);
+        i = j;
+      } else if (ch === '.') {
+        let j = i + 1;
+        while (j < compound.length && /[\w-]/.test(compound[j])) j++;
+        tests.push(['class', compound.slice(i + 1, j)]);
+        i = j;
+      } else if (ch === '[') {
+        const j = compound.indexOf(']', i);
+        const inner = compound.slice(i + 1, j < 0 ? compound.length : j);
+        const mm = /^([\w-]+)\s*(?:([~^$*|]?=)\s*(?:"([^"]*)"|'([^']*)'|([^\]]*)))?$/.exec(inner.trim());
+        if (mm) tests.push(['attr', mm[1].toLowerCase(), mm[2], mm[3] ?? mm[4] ?? mm[5] ?? null]);
+        i = j < 0 ? compound.length : j + 1;
+      } else if (ch === '*') {
+        tests.push(['any']);
+        i++;
+      } else {
+        let j = i;
+        while (j < compound.length && /[a-zA-Z0-9-]/.test(compound[j])) j++;
+        if (j === i) i++;
+        else { tests.push(['tag', compound.slice(i, j).toLowerCase()]); i = j; }
+      }
+    }
+    return tests;
+  }
+
+  function parseSelector(sel) {
+    return String(sel).split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map((group) => group.split(/\s+/).filter(Boolean).map(parseCompound).filter((c) => c.length));
+  }
+
+  function matchesCompound(el, tests) {
+    for (const [kind, a, op, b] of tests) {
+      if (kind === 'id') { if (el.id !== a) return false; }
+      else if (kind === 'class') { if (!el.classList.contains(a)) return false; }
+      else if (kind === 'tag') { if (el.tagName !== a) return false; }
+      else if (kind === 'attr') {
+        const v = el.getAttribute(a);
+        if (v === null) return false;
+        if (op) {
+          const s = String(v);
+          const t = b ?? '';
+          if (op === '=' && s !== t) return false;
+          if (op === '^=' && !s.startsWith(t)) return false;
+          if (op === '$=' && !s.endsWith(t)) return false;
+          if (op === '*=' && !s.includes(t)) return false;
+          if (op === '~=' && !s.split(/\s+/).includes(t)) return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  function matchesSelector(el, group) {
+    // 顶层兜底：querySelectorAll('*') 之类的通配选择器绝不能命中文本节点。
+    if (!el || el.nodeType !== 1) return false;
+    let idx = group.length - 1;
+    if (!matchesCompound(el, group[idx])) return false;
+    idx--;
+    let node = el.parent;
+    while (idx >= 0 && node) {
+      if (matchesCompound(node, group[idx])) idx--;
+      node = node.parent;
+    }
+    return idx < 0;
+  }
+
+  const domRoot = makeEl('#document');
+  for (const c of parseFragment(html)) domRoot.appendChild(c);
+  function findById(id) {
+    let found = null;
+    walk(domRoot.children, (n) => { if (!found && n.id === id) found = n; });
+    return found;
+  }
+  function findTag(tag) {
+    let found = null;
+    walk(domRoot.children, (n) => { if (!found && n.tagName === tag) found = n; });
+    return found;
+  }
+
+  const documentElement = findTag('html') ?? makeEl('html');
+  const body = findTag('body') ?? makeEl('body');
+  // 垫片自己合成的 html/body 只给 document.documentElement / document.body 兜底，
+  // 不是页面真实解析出来的节点：标记 _scaffold 后 document.querySelectorAll 不再统计它们。
+  if (!documentElement.parent) { documentElement._scaffold = true; domRoot.appendChild(documentElement); }
+  if (!body.parent) { body._scaffold = true; documentElement.appendChild(body); }
+
+  const docHandlers = {};
   const document = {
     hidden: false,
+    readyState: 'complete',
+    activeElement: body,
     documentElement,
     body,
-    getElementById: (id) => {
-      if (!nodes.has(id)) nodes.set(id, makeEl(id));
-      return nodes.get(id);
+    _handlers: docHandlers,
+    getElementById: (id) => findById(String(id)),
+    querySelectorAll: (sel) => {
+      const out = [];
+      const seen = new Set();
+      for (const group of parseSelector(sel)) {
+        walk(domRoot.children, (n) => {
+          if (n._scaffold) return;
+          if (!seen.has(n) && matchesSelector(n, group)) { seen.add(n); out.push(n); }
+        });
+      }
+      return out;
     },
-    querySelectorAll: () => [],
-    querySelector: () => null,
-    createElement: (tag) => makeEl(tag),
-    addEventListener: () => {},
-    readyState: 'complete',
+    querySelector: (sel) => document.querySelectorAll(sel)[0] ?? null,
+    createElement: (tag) => makeEl(String(tag).toLowerCase()),
+    createTextNode: (t) => {
+      const text = String(t);
+      return { nodeType: 3, nodeName: '#text', data: text, nodeValue: text, textContent: text, parent: null, children: [] };
+    },
+    createRange: () => ({ selectNodeContents() {} }),
+    addEventListener: (type, fn) => { (docHandlers[type] ??= []).push(fn); },
+    removeEventListener: (type, fn) => {
+      if (docHandlers[type]) docHandlers[type] = docHandlers[type].filter((f) => f !== fn);
+    },
+    dispatchEvent: (ev) => { for (const fn of docHandlers[ev.type] ?? []) fn(ev); return true; },
   };
+  documentRef = document;
+  walk(domRoot.children, (el) => { el.ownerDocument = document; });
 
   const calls = [];
   const fetch = async (url, opts) => {

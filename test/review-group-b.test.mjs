@@ -84,7 +84,8 @@ test('回归#10：statusTag 读取 exhausted/creditsExhausted/available/rateLimi
   const out = shim.el('accounts').innerHTML;
   assert.match(out, /class="tag bad"[^>]*data-account-status="invalid"[^>]*>月额度已用完 · 不可用/);
   assert.match(out, /data-account-status="invalid"[^>]*>余额不足 · 不可用/);
-  assert.match(out, /class="tag warn"[^>]*data-account-status="paused"[^>]*>冷却中 · 不可用/);
+  // 普通限流（rateLimited）后台单独说「限流冷却中」，不混进「额度不可用」
+  assert.match(out, /class="tag warn"[^>]*data-account-status="paused"[^>]*>限流冷却中 · 不可用/);
   assert.match(out, /class="tag ok"[^>]*data-account-status="ok"[^>]*>可用 · 可调度/);
   assert.doesNotMatch(out, /class="tag ok"[^>]*>可用<\/span>/, '耗尽/限流账号不得单独显示绿色可用');
 });
@@ -147,10 +148,10 @@ test('视觉#5：删除红描边、停用琥珀警示，三个表格按钮语义
 test('视觉#6：最近错误/查询失败用 cell-error 琥珀红色强调并带前缀', async () => {
   const shim = dom(ADMIN_HTML);
   const page = await runInlineScript(ADMIN_HTML, shim);
-  adminAccounts(page, [account({ lastError: '上游拒付', lastQuota: quota(1) }), account({ lastQuota: { ok: false }, lastError: '探针失败' })]);
+  adminAccounts(page, [account({ lastError: '上游拒付', lastQuota: quota(1) }), account({ lastQuota: null, lastError: '探针失败' })]);
   const out = shim.el('accounts').innerHTML;
   assert.match(out, /class="cell-error">最近错误：上游拒付/);
-  assert.match(out, /class="cell-error">额度查询失败：探针失败/);
+  assert.match(out, /class="cell-error">额度未同步：探针失败/);
   assert.match(ADMIN_HTML, /\.cell-error::before \{ content: '⚠ '; \}/);
 });
 

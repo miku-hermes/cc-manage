@@ -354,6 +354,7 @@ export function createStore({ rootDir = process.cwd(), env = process.env, log = 
     out.errors = normCount(rawStats.errors);
     out.totalTokens = normCount(rawStats.totalTokens);
     if (rawStats.aborted !== undefined) out.aborted = normCount(rawStats.aborted);
+    if (rawStats.clientErrors !== undefined) out.clientErrors = normCount(rawStats.clientErrors);
     const rawBy = rawStats.byAccount;
     if (rawBy && typeof rawBy === 'object' && !Array.isArray(rawBy)) {
       for (const [id, s] of Object.entries(rawBy)) {

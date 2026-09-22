@@ -70,6 +70,10 @@
     --control-h: 36px;
   }
 
+  /* 手动主题切换也要更新原生控件配色（滚动条 / 表单），否则亮色页面配暗色滚动条 */
+  :root[data-theme="light"] { color-scheme: light; }
+  :root[data-theme="dark"] { color-scheme: dark; }
+
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --surface-0: #17111c;
@@ -306,6 +310,7 @@
   .cell-quota { min-width: 220px; padding-top: 8px; padding-bottom: 8px; }
   .qbar { display: flex; align-items: center; gap: 8px; font-size: var(--fs-xs); color: var(--text-secondary); }
   .qbar + .qbar { margin-top: 6px; }
+  .qbar-reset { margin: 2px 0 0 50px; font-size: var(--fs-xs); color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
   .qbar-label { flex: none; width: 42px; color: var(--text-secondary); }
   .qbar-track {
     flex: 1; height: 8px; border-radius: var(--pill); background: var(--surface-2);
@@ -444,6 +449,12 @@
     text-align: center; font-size: var(--fs-xs); color: var(--text-secondary);
   }
 
+  /* 视觉隐藏但保留给屏幕阅读器：后台主区要有可命名的 h1 */
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
+
   @media (max-width: 820px) {
     :root { --gutter: 16px; --card-pad: 16px; }
     .header { padding: 12px var(--gutter); }
@@ -479,6 +490,14 @@
     td.actions::before { display: none; }
     td.actions .btn { height: 34px; margin-left: 0; }
     .cell-quota { min-width: 0; }     /* 关键：解除 220px 最小宽度 */
+
+    /* 触控目标统一 ≥34px：重试按钮 / 级别筛选原来只有 30/32px */
+    .load-error .btn, .filter-select { height: 34px; }
+
+    /* 运行日志：时间 + 级别 pill + 正文三列在 360px 视口会把正文挤到 ~80px。
+       窄屏改为可换行，正文独占一行。 */
+    .event { flex-wrap: wrap; row-gap: 4px; }
+    .event-msg { flex: 1 1 100%; }
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -555,6 +574,7 @@
 </div>
 
 <main id="admin-main" style="display:none">
+  <h1 class="sr-only">后台管理</h1>
   <div id="load-error" class="banner load-error hidden" role="alert">
     <span id="load-error-text"></span>
     <button id="load-retry" class="btn" type="button">重试</button>
@@ -784,12 +804,33 @@ const testResults = new Map();   // keyId → 最近一次连通性测试结果
 
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 function timeText(ts) { const d = new Date(ts); return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString('zh-CN', { hour12: false }); }
+/** 日志时间列短格式 HH:MM:SS（完整时间进 title，窄屏不再挤爆正文）。 */
+function shortTime(ts) {
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return '—';
+  const p = (n) => String(n).padStart(2, '0');
+  return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+/** 上游 resetAt 是秒（< 1e12），统一成毫秒再格式化。 */
+function toMs(ts) {
+  const n = Number(ts);
+  if (!Number.isFinite(n) || n <= 0) return NaN;
+  return n < 1e12 ? n * 1000 : n;
+}
+/** 「9/26 23:21」短日期，与前台 shortDate 同格式。 */
+function shortDate(ts) {
+  const d = new Date(toMs(ts));
+  if (Number.isNaN(d.getTime())) return '';
+  const p = (n) => String(n).padStart(2, '0');
+  return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
 function shortId(id) { return String(id ?? '').slice(0, 8); }
 function maskedKey(prefix) {
   return '<span class="key-mask"><span class="key-prefix">' + esc(prefix) + '</span>'
     + '<span class="key-hidden" title="key 其余部分已遮蔽" aria-label="key 其余部分已遮蔽">••••</span></span>';
 }
-function money(n) { const v = Number(n); return Number.isFinite(v) ? v.toFixed(2) : '—'; }
+// null / undefined 表示「没有数」（如无额度快照）→ —，不要把 null 画成 0.00。
+function money(n) { if (n === null || n === undefined || n === '') return '—'; const v = Number(n); return Number.isFinite(v) ? v.toFixed(2) : '—'; }
 /* 能用多少钱：与前台 usableRemaining 唯一口径完全一致。 */
 function usableRemaining(a) {
   const q = a && a.lastQuota;
@@ -852,6 +893,14 @@ function clearSensitiveData() {
   testResults.clear();
   for (const id of ['accounts', 'keys', 'users', 'events']) $(id).innerHTML = '';
   for (const id of ['acc-count', 'key-count', 'user-count', 'event-count']) $(id).textContent = '—';
+  // 弹窗里的一次性明文 key / 粘贴过的 CC key / 管理员密码框都不能留在 DOM 里：
+  // 共享终端下「生成 key 后退出」或「弹窗开着时 session 401」会把这些内容暴露出去。
+  // 同时复位 .modal.open（z-index 50 的遮罩会盖在登录页上，肉眼可见）。
+  resetNewKeyModal();                       // 清 #k-plain / #k-name，复位 #k-form / #k-result
+  for (const id of ['a-key', 'u-pass', 'p-pass', 'p-current', 'r-name']) $(id).value = '';
+  for (const m of document.querySelectorAll('.modal')) m.classList.remove('open');
+  renameTarget = null;
+  passTarget = null;
   $('who').innerHTML = '';
 }
 
@@ -953,20 +1002,28 @@ function applyWritable(writable, reason) {
 function accountStatus(a) {
   if (a.authInvalid) return { t: '鉴权失效', tone: 'bad', dot: 'invalid', schedulable: false };
   if (!a.enabled) return { t: '已停用', tone: 'warn', dot: 'paused', schedulable: false };
-  if (a.paused || a.rateLimited) return { t: '冷却中', tone: 'warn', dot: 'paused', schedulable: false };
   // 额度耗尽统一口径：周/5 小时窗口用完、月额度用完，都说「已用完」而不是笼统的
   // 「不可调度」——用户要的正是这种可读性（副号1 = 周用完，主号 = 月用完）。
+  // 判序与前台一致：耗尽优先于「冷却中」，避免同卡两色。
   if (a.exhausted && a.exhausted.label) return { t: a.exhausted.label, tone: 'bad', dot: 'invalid', schedulable: false };
   if (a.creditsExhausted) return { t: '余额不足', tone: 'bad', dot: 'invalid', schedulable: false };
+  if (a.paused || a.rateLimited) return { t: '冷却中', tone: 'warn', dot: 'paused', schedulable: false };
   if (!a.available) return { t: '不可调度', tone: 'bad', dot: 'invalid', schedulable: false };
   return { t: '可用', tone: 'ok', dot: '', schedulable: true };
 }
 function statusTag(a) {
   const st = accountStatus(a);
   const availability = st.schedulable ? '可调度' : '不可用';
-  const label = st.t === '不可调度' ? '额度不可用' : st.t;
+  let label = st.t === '不可调度' ? '额度不可用' : st.t;
+  // 「额度不可用」是额度语义；普通限流（429 短冷却）单独说清楚，别混进额度问题。
+  if (label === '冷却中' && a.rateLimited) label = '限流冷却中';
+  // 状态列补上耗尽窗口的恢复时间（周/月都有 resetAt），比只写一个标签有用。
+  const exMs = a.exhausted ? toMs(a.exhausted.resetAt) : NaN;
+  const resetNote = Number.isFinite(exMs) && exMs > 0
+    ? '<span class="cell-sub">' + esc(shortDate(exMs) + (exMs <= Date.now() ? ' 已重置' : ' 重置')) + '</span>'
+    : '';
   return '<span class="tag ' + st.tone + '" data-account-status="' + (st.dot || 'ok') + '">'
-    + esc(st.schedulable ? '可用 · 可调度' : label + ' · ' + availability) + '</span>';
+    + esc(st.schedulable ? '可用 · 可调度' : label + ' · ' + availability) + '</span>' + resetNote;
 }
 
 // ── CC 账号（含额度 + 连通性测试）────────────────────────────────────
@@ -976,9 +1033,12 @@ function quotaBar(label, w, opts) {
   const spent = !!opts && opts.spent === true;
   const pct = spent ? 100 : (w && typeof w.percent === 'number' ? w.percent : null);
   const cls = pct === null ? '' : pct >= 90 ? 'bad' : pct >= 70 ? 'warn' : '';
+  // resetAt 是秒：补一行「重置 M/D HH:MM」，光有百分比看不出窗口什么时候回来。
+  const abs = w ? shortDate(w.resetAt) : '';
+  const reset = abs ? '<div class="qbar-reset">重置 ' + esc(abs) + '</div>' : '';
   return '<div class="qbar"><span class="qbar-label">' + label + '</span>'
     + '<span class="qbar-track ' + cls + '"><i style="width:' + (pct === null ? 0 : Math.max(0, Math.min(100, pct))) + '%"></i></span>'
-    + '<span class="qbar-pct">' + pctText(pct) + '</span></div>';
+    + '<span class="qbar-pct">' + pctText(pct) + '</span></div>' + reset;
 }
 
 function renderAccounts() {
@@ -998,15 +1058,25 @@ function renderAccounts() {
     const dead = ex && (ex.kind === 'monthly' || ex.kind === 'balance');
     const balanceTitle = raw === null ? '账面余额未知' : '账面 ' + money(raw)
       + (dead ? ' · ' + esc(a.exhausted.label || '额度已用完') + '，不可用' : '');
-    const quota = q && q.ok
+    // 额度构成（月度/购买/赠送）——数据后端早就有，只是之前没渲染。
+    const credits = q && q.credits
+      ? '<div class="cell-sub aux-text">月度 ' + money(q.credits.monthlyCredits)
+        + ' · 购买 ' + money(q.credits.purchasedCredits)
+        + ' · 赠送 ' + money(q.credits.freeCredits) + '</div>'
+      : '';
+    // 口径：lastQuota 只来自「成功快照」，没有 q 就是从未同步成功；
+    // 此时把真实 lastError（HTTP 401 / 超时）显示出来，别只留一个红 ⚠。
+    // 不再用 q.ok 判断（生产不可达）。
+    const quota = q
       ? quotaBar('5h', q.fiveHour, { spent: !!ex && ex.kind === 'window' && ex.window === 'fiveHour' })
         + quotaBar('周', q.weekly, { spent: !!ex && ex.kind === 'window' && ex.window === 'weekly' })
         + quotaBar('月', q.monthly, { spent: !!ex && ex.kind === 'monthly' })
         + '<div class="cell-sub aux-text">余额 <span class="usable-balance" title="' + balanceTitle + '">' + money(usable) + '</span>'
         + (q.plan && q.plan.planId ? ' · 套餐 ' + esc(planLabel(q.plan.planId)) : '')
         + (q.displayName ? ' · ' + esc(q.displayName) : '') + '</div>'
+        + credits
         + (a.lastError ? '<div class="cell-error">最近错误：' + esc(a.lastError) + '</div>' : '')
-      : '<div class="cell-error">' + (q ? '额度查询失败：' + esc(a.lastError || '未知错误') : '尚未获取额度快照') + '</div>';
+      : '<div class="cell-error">' + (a.lastError ? '额度未同步：' + esc(a.lastError) : '尚未获取额度快照') + '</div>';
     const test = testResults.get(a.keyId);
     const testNote = test
       ? '<div class="test-note ' + (test.ok ? 'ok' : 'bad') + '">'
@@ -1057,6 +1127,7 @@ function renderUsers() {
   $('user-count').textContent = list.length + ' 个';
   if (!list.length) {
     $('users').innerHTML = '<tr><td colspan="3" class="empty">还没有管理员</td></tr>';
+    applyWritable(state.writable, state.readonlyReason);
     return;
   }
   $('users').innerHTML = list.map((u) => {
@@ -1072,6 +1143,7 @@ function renderUsers() {
         : '<button class="btn danger" type="button" disabled title="至少保留一个管理员">删除</button>')
       + '</td></tr>';
   }).join('');
+  applyWritable(state.writable, state.readonlyReason);
 }
 
 function renderEvents() {
@@ -1086,7 +1158,7 @@ function renderEvents() {
     const dot = lvl === 'error' ? 'lv-bad' : lvl === 'warn' ? 'lv-warn' : lvl === 'debug' ? '' : 'lv-ok';
     const text = lvl === 'error' ? 'bad' : lvl === 'warn' ? 'warn' : lvl === 'debug' ? '' : 'ok';
     return '<div class="event">'
-      + '<span class="event-time">' + esc(timeText(e.at)) + '</span>'
+      + '<span class="event-time" title="' + esc(timeText(e.at)) + '">' + esc(shortTime(e.at)) + '</span>'
       + '<span class="event-level ' + dot + '"><span class="tag ' + text + '">' + esc(lvl) + '</span></span>'
       + '<span class="event-msg">' + esc(e.message) + '</span>'
       + '</div>';
@@ -1148,8 +1220,26 @@ async function loadAll() {
 }
 
 // ── 弹窗 ────────────────────────────────────────────────────────────
-function openModal(id) { $(id).classList.add('open'); }
-function closeModal(id) { $(id).classList.remove('open'); }
+let modalFocusReturn = null;
+function openModal(id) {
+  // 打开前记下焦点，关闭时归还 —— 键盘 / 屏幕阅读器用户不会丢上下文。
+  modalFocusReturn = document.activeElement && document.activeElement.focus ? document.activeElement : null;
+  $(id).classList.add('open');
+}
+function closeModal(id) {
+  $(id).classList.remove('open');
+  if (modalFocusReturn && modalFocusReturn.focus) modalFocusReturn.focus();
+  modalFocusReturn = null;
+}
+// Esc 关闭当前打开的弹窗（并归还焦点）
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  const open = document.querySelectorAll('.modal.open');
+  if (!open.length) return;
+  for (const m of open) m.classList.remove('open');
+  if (modalFocusReturn && modalFocusReturn.focus) modalFocusReturn.focus();
+  modalFocusReturn = null;
+});
 
 /**
  * 打开「修改密码」弹窗。

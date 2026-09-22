@@ -381,9 +381,6 @@ test('并发请求会按在途数分散到不同账号', async (t) => {
 });
 
 test('错误统计：上游 5xx 且无可重试账号时计入 errors', async (t) => {
-  const ctx = await startTestGateway({ behavior: { failNext500: 0 } });
-  t.after(() => ctx.close());
-
   // 单账号池 + 上游持续 503 → 换号无门，最终 502
   const solo = await startTestGateway({
     accounts: [{ name: '独苗', key: 'user_test_alpha' }],
@@ -815,10 +812,13 @@ test('keyPrefix 只在已登录的后台视图出现，公开接口与前台页�
   assert.equal(typeof admin.accounts[0].keyPrefix, 'string', '后台视图应保留 keyPrefix');
   assert.equal(admin.accounts[0].keyPrefix.length, 9);
 
-  // ④ 前台页面不得渲染 key 片段
+  // ④ 前台页面不得渲染 key 内容/前缀（keyPrefix）；keyId 只是内部标识，
+  //    仅允许出现在 data-key-id 属性里（批次 2 用它做卡片滚动位置回填）。
   const html = (await request(`${ctx.baseUrl}/`)).body;
   assert.ok(!html.includes('keyPrefix'), '前台页面不得引用 keyPrefix');
-  assert.ok(!html.includes('keyId'), '前台页面不得渲染 keyId');
+  const withoutDataKeyId = html.replace(/data-key-id="[^"]*"/g, '');
+  assert.ok(!withoutDataKeyId.includes('keyId'),
+    'keyId 只允许出现在 data-key-id 属性中，不得以其它形式渲染到前台');
 });
 
 // ── 回归：畸形 Host / 请求行不得打挂进程（匿名远程 DoS）────────────
@@ -1012,8 +1012,10 @@ test('重置时间文案：未来 / 空闲 / 已过期 / 没有数据，四种�
   assert.ok(Math.abs(absMs - want) < 600_000,
     `文案里的时刻应≈2 小时后，实际 ${new Date(absMs).toISOString()}`);
 
-  // 已过期 → 即将重置
-  assert.match(page.resetText({ resetAt: at(-60) }), /即将重置/);
+  // 已过期 → 说明窗口已重置，不能拼出「（还有 即将重置）」病句
+  const expired = page.resetText({ resetAt: at(-60) });
+  assert.match(expired, /窗口已重置/);
+  assert.doesNotMatch(expired, /还有 即将重置/, '过期时间戳不得出现「还有 即将重置」');
 
   // 上游不给 resetAt（老数据）→ 宁可什么都不显示，也不编一个假时间
   assert.equal(page.resetText({}), '', '没有 resetAt 时不得显示任何时间');
@@ -1282,7 +1284,7 @@ test('额度已用完的账号卡片显示 0.00，window 卡住的钱照常显�
     '周窗口超限只是排队，钱没坏，必须显示 4.00');
 });
 
-test('usableRemaining 规则：monthly/balance 算 0，window 照常，无快照算 0', async (t) => {
+test('usableRemaining 规则：monthly/balance 算 0，window 照常，无快照为 null', async (t) => {
   const ctx = await startTestGateway();
   t.after(() => ctx.close());
   const html = (await request(`${ctx.baseUrl}/`)).body;
@@ -1294,7 +1296,7 @@ test('usableRemaining 规则：monthly/balance 算 0，window 照常，无快照
   assert.equal(page.usableRemaining(acc(0.5, { kind: 'balance' })), 0, 'balance 死账号 → 0');
   assert.equal(page.usableRemaining(acc(4.00, { kind: 'window', window: 'weekly' })), 4.00, 'window 只是排队 → 真实余额');
   assert.equal(page.usableRemaining(acc(9.62, null)), 9.62, '没 exhausted → 真实余额');
-  assert.equal(page.usableRemaining({ lastQuota: null, exhausted: null }), 0, '拿不到快照 → 0，不产生 NaN');
+  assert.equal(page.usableRemaining({ lastQuota: null, exhausted: null }), null, '拿不到快照 → null（不计入合计、卡片显示 —），不产生 NaN');
 });
 
 test('顶部与卡片用同一个 usableRemaining：死账号两处都体现为 0', async (t) => {
@@ -1432,7 +1434,7 @@ test('顶部余额：没有死账号时全额计入', async (t) => {
   assert.doesNotMatch(html, /id="bal-dead"/, 'bal-dead 节点已删除');
 });
 
-test('顶部余额：拿不到快照的账号当 0，不产生 NaN', async (t) => {
+test('顶部余额：拿不到快照的账号不计入合计（显示 —），不产生 NaN', async (t) => {
   const ctx = await startTestGateway();
   t.after(() => ctx.close());
   const html = (await request(`${ctx.baseUrl}/`)).body;
@@ -1452,8 +1454,10 @@ test('顶部余额：拿不到快照的账号当 0，不产生 NaN', async (t) =
   };
 
   page.render(d);
-  assert.equal(page.document.getElementById('balance').textContent, '0.00',
-    '没有快照当 0，不能出现 NaN/—');
+  assert.equal(page.document.getElementById('balance').textContent, '—',
+    '两个账号都没有快照：合计应为 —（不是 0.00，也不能是 NaN）');
+  assert.match(page.document.getElementById('bal-label').textContent, /含 2 个未同步账号/,
+    '要注明有几个账号没同步');
   assert.doesNotMatch(html, /id="bal-dead"/, 'bal-dead 节点已删除');
 });
 
@@ -1514,14 +1518,14 @@ test('后台：快照查询失败时只显示一次错误，不重复出现最�
     state.accounts = [{
       keyId: 'abcdef12', name: '乙', enabled: true, paused: false, authInvalid: false,
       lastError: '上游拒付',
-      lastQuota: { ok: false },
+      lastQuota: null,
     }];
     renderAccounts();
   `, page);
 
   const out = shim.el('accounts').innerHTML;
-  assert.match(out, /额度查询失败：上游拒付/, '查询失败那支照旧');
-  assert.equal((out.match(/额度查询失败/g) || []).length, 1, '额度查询失败只出现一次');
+  assert.match(out, /额度未同步：上游拒付/, '从未同步成功时要把真实原因显示出来');
+  assert.equal((out.match(/额度未同步/g) || []).length, 1, '额度未同步只出现一次');
   assert.doesNotMatch(out, /最近错误：/, '不重复显示最近错误');
 });
 

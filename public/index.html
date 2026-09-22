@@ -78,6 +78,11 @@
     --header-h: 58px;
   }
 
+  /* 手动主题切换也要更新原生控件配色（滚动条 / 表单 / 日期选择器）。
+     只写 data-theme 不改 color-scheme，会出现「亮色页面配暗色滚动条」。 */
+  :root[data-theme="light"] { color-scheme: light; }
+  :root[data-theme="dark"] { color-scheme: dark; }
+
   /* 暗色（跟随系统，或手动 data-theme="dark" 覆盖） */
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
@@ -472,6 +477,11 @@
       scrollbar-color: var(--border-strong) transparent;
     }
     .tags .tag { flex: 0 0 auto; }
+    /* 渐隐遮罩只在「确实还能往右滚」时显示：滚到最右 or 内容不溢出就撤掉，
+       否则最右一枚 pill 的关键信息（重置时间）会被渐隐吃掉。 */
+    .tags:not(.is-scrollable), .tags.at-end {
+      -webkit-mask-image: none; mask-image: none;
+    }
     .tags::-webkit-scrollbar { height: 4px; }
     .tags::-webkit-scrollbar-track { background: transparent; }
     .tags::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: var(--pill); }
@@ -529,9 +539,9 @@
       <h1 id="greeting" class="greeting">下午好</h1>
       <div class="hero-balance">
         <b id="balance">—</b>
-        <span class="bal-label">剩余额度（USD）</span>
+        <span id="bal-label" class="bal-label">剩余额度（USD）</span>
       </div>
-      <p class="hero-sub">网关运行中 <span id="health" class="pill">加载中…</span></p>
+      <p class="hero-sub">网关状态 <span id="health" class="pill">加载中…</span></p>
       <p class="hero-meta aux-text"><span id="upstream"></span><span id="updated"></span><span id="cadence" class="hero-cadence"></span></p>
     </div>
     <div class="hero-aside">
@@ -557,13 +567,19 @@
       <span class="kpi-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="7.2" y="5" width="3.6" height="14" rx="1.3"/><rect x="13.2" y="5" width="3.6" height="14" rx="1.3"/></svg></span>
       <div class="kpi-body"><b id="kpi-paused">—</b><span>暂停中</span></div>
     </div>
+    <div class="kpi" id="kpi-box-unavailable">
+      <span class="kpi-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg></span>
+      <div class="kpi-body"><b id="kpi-unavailable">—</b><span>不可用</span></div>
+    </div>
     <div class="kpi" id="kpi-box-total">
       <span class="kpi-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg></span>
       <div class="kpi-body"><b id="kpi-total">—</b><span>总请求</span></div>
     </div>
     <div class="kpi" id="kpi-box-errors">
       <span class="kpi-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/></svg></span>
-      <div class="kpi-body"><b id="kpi-errors">—</b><span>错误数</span></div>
+      <!-- 口径：errors 只统计上游/网关故障（5xx/中断/鉴权），客户端 4xx（模型名错等）单独计
+           clientErrors，不再把「客户端用错模型」算成网关变红。 -->
+      <div class="kpi-body"><b id="kpi-errors">—</b><span>上游错误数</span></div>
     </div>
   </section>
 
@@ -577,7 +593,8 @@ const state = { data: null, filter: '' };
 
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 function num(n) { const v = Number(n); return Number.isFinite(v) ? v.toLocaleString('zh-CN') : '0'; }
-function money(n) { const v = Number(n); return Number.isFinite(v) ? v.toFixed(2) : '—'; }
+// null / undefined / 空串都表示「没有数」，一律显示 —（Number(null)===0 会把「无快照」画成 0.00）。
+function money(n) { if (n === null || n === undefined || n === '') return '—'; const v = Number(n); return Number.isFinite(v) ? v.toFixed(2) : '—'; }
 /* 套餐 planId → 人看的名字。映射表见任务书；未知值原样返回，不猜、不吞。 */
 function planLabel(planId) {
   if (planId === null || planId === undefined) return null;
@@ -674,9 +691,12 @@ function resetText(w, { zeroMeansIdle = false } = {}) {
   if (!Number.isFinite(ts) || ts <= 0) {
     return zeroMeansIdle ? '空闲中 · 首次使用后 5 小时重置' : '';
   }
+  const abs = shortDate(ts);
+  // 时间戳已是过去 → 窗口其实已经重置（上游快照没跟上）。不能再拼「（还有 即将重置）」，
+  // 那会变成「重置于 9/22 19:51（还有 即将重置）」这种病句。
+  if (ts <= Date.now()) return '重置于 ' + abs + ' · 窗口已重置，等待额度刷新';
   const until = untilText(ts);
   if (!until) return '';
-  const abs = shortDate(ts);
   return '重置于 ' + abs + '（还有 ' + until + '）';
 }
 /** 把毫秒写成「1 分钟」这种话。 */
@@ -744,7 +764,9 @@ function bar(label, w, opts) {
     ? money(w.used) + ' / ' + money(w.cap) : null;
   const reset = has ? resetText(w, { zeroMeansIdle: label.indexOf('5 小时') === 0 }) : '';
   const empty = pct === null || pct <= 0;
-  return '<div class="bar-group"' + (amounts ? ' title="' + esc(label + '：已用 ' + amounts) + '"' : '') + '>'
+  // 金额不再只藏在 title 里：触屏 / 键盘用户拿不到 title，同步给 aria-label。
+  const amountText = amounts ? label + '：已用 ' + amounts : '';
+  return '<div class="bar-group"' + (amountText ? ' title="' + esc(amountText) + '" aria-label="' + esc(amountText) + '"' : '') + '>'
     + '<div class="bar-head"><span class="bar-label">' + label + '</span>'
     + '<span class="bar-pct">' + pctText(pct) + '</span></div>'
     + '<div class="bar ' + cls(pct) + (empty ? ' is-empty' : '') + '"><i style="width:' + (pct === null ? 0 : Math.max(0, Math.min(100, pct))) + '%"></i></div>'
@@ -755,11 +777,13 @@ function bar(label, w, opts) {
 function accountStatus(a) {
   if (a.authInvalid) return { t: '鉴权失效', tone: 'bad', dot: 'invalid', schedulable: false };
   if (!a.enabled) return { t: '已停用', tone: 'warn', dot: 'paused', schedulable: false };
-  if (a.paused || a.rateLimited) return { t: '冷却中', tone: 'warn', dot: 'paused', schedulable: false };
   // 额度耗尽统一口径：周/5 小时窗口用完、月额度用完，都说「已用完」而不是笼统的
   // 「不可调度」——用户要的正是这种可读性（副号1 = 周用完，主号 = 月用完）。
+  // 判序：耗尽优先于「冷却中」。否则「周额度用完 + 冷却」会出现头部黄点「冷却中」、
+  // 底部红标「周额度已用完」的同卡两色自相矛盾。
   if (a.exhausted && a.exhausted.label) return { t: a.exhausted.label, tone: 'bad', dot: 'invalid', schedulable: false };
   if (a.creditsExhausted) return { t: '余额不足', tone: 'bad', dot: 'invalid', schedulable: false };
+  if (a.paused || a.rateLimited) return { t: '冷却中', tone: 'warn', dot: 'paused', schedulable: false };
   if (!a.available) return { t: '不可调度', tone: 'bad', dot: 'invalid', schedulable: false };
   return { t: '可用', tone: 'ok', dot: '', schedulable: true };
 }
@@ -777,10 +801,12 @@ function freshHTML(fetchedAt) {
 }
 
 /* 能用多少钱：额度已经用尽的账号（kind = monthly / balance）一律算 0 —— 规则见
-   用户要求"他用不了的就是0"；window 只是排队，钱没死，照常返回真实余额。 */
+   用户要求"他用不了的就是0"；window 只是排队，钱没死，照常返回真实余额。
+   q == null（没有快照）返回 null：既不能在卡片上显示成 0.00（会和「尚未获取额度快照」
+   矛盾），也不能在 hero 合计里被当成 0 累加（低估池余额）——由调用方单独处理。 */
 function usableRemaining(a) {
   const q = a && a.lastQuota;
-  if (!q || !Number.isFinite(q.remaining)) return 0;      // 拿不到快照就当 0，避免 NaN
+  if (!q || !Number.isFinite(q.remaining)) return null;   // 拿不到快照 → null，不计入合计
   const k = a.exhausted && a.exhausted.kind;
   if (k === 'monthly' || k === 'balance') return 0;       // 钱已经死了，上游实测付不了
   return q.remaining;                                     // 含 window：只是排队，钱没死
@@ -798,13 +824,21 @@ function card(a, wideLast = false) {
   const schedulable = a.available && a.enabled !== false && !a.paused && !a.rateLimited && !a.authInvalid;
   const stateBadge = (a.enabled ? '已启用' : '已停用') + ' · ' + (schedulable ? '可调度' : '不可用');
   tags.push('<span class="tag ' + (schedulable ? 'ok' : a.enabled ? 'bad' : 'warn') + '">' + stateBadge + '</span>');
-  if (a.paused) tags.push('<span class="tag warn">暂停至 ' + esc(timeText(a.pausedUntil)) + '</span>');
+  // 暂停可能到 7 天后，必须带日期；只给时分会被读成「今天」。
+  if (a.paused) tags.push('<span class="tag warn">暂停至 ' + esc(shortDate(a.pausedUntil)) + '</span>');
+  // 普通限流（429）是短冷却：给出「还剩多久」，而不是只写「冷却中」让人干等。
+  if (a.rateLimited) {
+    const left = Number(a.rateLimitedUntil) > Date.now() ? untilText(Number(a.rateLimitedUntil)) : '';
+    tags.push('<span class="tag warn">限流冷却中' + (left ? ' · 剩 ' + esc(left) : '') + '</span>');
+  }
   if (a.authInvalid) tags.push('<span class="tag bad">鉴权失效</span>');
   // 余额不足和「额度打满」不一样：5h 窗口等了会自己回来，钱不会 —— 说清楚要充值
   if (a.exhausted && a.exhausted.label) {
     // 带上恢复时间（窗口/月度都有）——比「需充值」有用得多，也不逼人花钱
-    const reset = Number(a.exhausted.resetAt) > 0
-      ? ' · ' + shortDate(Number(a.exhausted.resetAt)) + ' 重置'
+    // resetAt 已过期说明窗口其实已经重置，写「已重置」而不是「过去时间 重置」。
+    const exMs = toMs(a.exhausted.resetAt);
+    const reset = Number.isFinite(exMs) && exMs > 0
+      ? ' · ' + shortDate(exMs) + (exMs <= Date.now() ? ' 已重置' : ' 重置')
       : '';
     tags.push('<span class="tag bad">' + esc(a.exhausted.label + reset) + '</span>');
   } else if (a.creditsExhausted) {
@@ -836,12 +870,16 @@ function card(a, wideLast = false) {
 
   return '<article class="card ' + cardCls + '">'
     + '<div class="card-grid">' + left + right + '</div>'
-    + '<div class="tags">' + tags.join('') + '</div>'
+    // data-key-id 让 renderCards 重建后能把每个账号标签条的原滚动位置回填（手机端 5s 刷新不跳回最左）
+    + '<div class="tags" data-key-id="' + esc(a.keyId) + '">' + tags.join('') + '</div>'
     + '</article>';
 }
 
 function renderCards() {
-  const all = state.data ? state.data.accounts : [];
+  // 隐私模式（showPrivate 已把 state.data 置 null 并写下「请先登录后台」卡片）：
+  // 搜索框 input 会走到这里，绝不能把那段提示覆盖成「账号池为空」。
+  if (!state.data) return;
+  const all = state.data.accounts;
   const f = state.filter.trim().toLowerCase();
   const list = f
     ? all.filter((a) => [a.name, a.lastQuota && a.lastQuota.displayName]
@@ -851,9 +889,32 @@ function renderCards() {
     $('cards').innerHTML = '<div class="card empty">' + (all.length
       ? '没有匹配「' + esc(state.filter) + '」的账号。'
       : '账号池为空。请在 accounts.json 里配置账号，或用 CC_ACCOUNTS 环境变量注入。') + '</div>';
+    syncTagMasks();
     return;
   }
+  // 手机端 .tags 是唯一横向滚动容器；innerHTML 整块重建会把 scrollLeft 归零，
+  // 5s 轮询下用户永远读不到第 2/3 枚 pill（含重置时间）。按账号 data-key-id 记录后回填。
+  const scrollOf = new Map();
+  for (const el of document.querySelectorAll('#cards .tags[data-key-id]')) {
+    scrollOf.set(el.getAttribute('data-key-id'), el.scrollLeft);
+  }
   $('cards').innerHTML = list.map((a, i) => card(a, i === list.length - 1 && list.length % 2 === 1)).join('');
+  for (const el of document.querySelectorAll('#cards .tags[data-key-id]')) {
+    const key = el.getAttribute('data-key-id');
+    if (scrollOf.has(key)) el.scrollLeft = scrollOf.get(key);
+  }
+  syncTagMasks();
+}
+
+/* 标签条渐隐遮罩只在「还能向右滚」时保留：滚到最右或内容没溢出就撤掉，
+   否则最后一枚 pill 的最右侧 24px 会被 mask 吃掉。 */
+function syncTagMasks() {
+  for (const el of document.querySelectorAll('#cards .tags')) {
+    const max = Math.max(0, (el.scrollWidth || 0) - (el.clientWidth || 0));
+    const scrollable = max > 1;
+    el.classList.toggle('is-scrollable', scrollable);
+    el.classList.toggle('at-end', scrollable && (el.scrollLeft || 0) >= max - 1);
+  }
 }
 
 function render(d) {
@@ -871,13 +932,19 @@ function render(d) {
   $('upstream').textContent = '内网上游' + (d.allowPassthrough ? ' · 已开启直连透传' : '');
   $('tokens').textContent = num(st.totalTokens);
 
-  // 余额：全页最大字号的主角（用不了的钱算 0，见 usableRemaining）
-  const remaining = accounts.reduce((sum, a) => sum + usableRemaining(a), 0);
-  $('balance').textContent = accounts.length ? money(remaining) : '—';
+  // 余额：全页最大字号的主角（用不了的钱算 0，见 usableRemaining）。
+  // 没有快照的账号 usableRemaining 返回 null：从合计里排除（不是当 0 低估池余额），并注明数量。
+  const synced = accounts.filter((a) => Number.isFinite(usableRemaining(a)));
+  const unsynced = accounts.length - synced.length;
+  const remaining = synced.reduce((sum, a) => sum + usableRemaining(a), 0);
+  $('balance').textContent = synced.length ? money(remaining) : '—';
+  $('bal-label').textContent = '剩余额度（USD）' + (unsynced ? ' · 含 ' + unsynced + ' 个未同步账号' : '');
 
   paintKpi('kpi-box-accounts', 'kpi-accounts', s.accounts, {});
   paintKpi('kpi-box-available', 'kpi-available', s.available, { kind: 'warning', warnWhen: (v) => Number(s.accounts) > v });
   paintKpi('kpi-box-paused', 'kpi-paused', s.paused, {});
+  // 不可用 = accounts - available：暂停/冷却只是部分口径，这个数才补齐「账号 3 / 可用 2」的缺口。
+  paintKpi('kpi-box-unavailable', 'kpi-unavailable', Number.isFinite(Number(s.unavailable)) ? s.unavailable : Number(s.accounts) - Number(s.available), {});
   paintKpi('kpi-box-total', 'kpi-total', st.total, {});
   paintKpi('kpi-box-errors', 'kpi-errors', st.errors, { kind: 'danger' });
 
@@ -895,10 +962,10 @@ function setHint(text, bad) {
   el.className = bad ? 'hint bad' : 'hint';
 }
 function clearKpis() {
-  for (const id of ['kpi-accounts', 'kpi-available', 'kpi-paused', 'kpi-total', 'kpi-errors']) {
+  for (const id of ['kpi-accounts', 'kpi-available', 'kpi-paused', 'kpi-unavailable', 'kpi-total', 'kpi-errors']) {
     $(id).textContent = '—';
   }
-  for (const id of ['kpi-box-accounts', 'kpi-box-available', 'kpi-box-paused', 'kpi-box-total', 'kpi-box-errors']) {
+  for (const id of ['kpi-box-accounts', 'kpi-box-available', 'kpi-box-paused', 'kpi-box-unavailable', 'kpi-box-total', 'kpi-box-errors']) {
     $(id).className = 'kpi';
   }
 }
@@ -936,6 +1003,8 @@ async function load() {
 }
 
 $('search').addEventListener('input', (e) => { state.filter = e.target.value || ''; renderCards(); });
+// 标签条滚动时更新渐隐遮罩状态（scroll 不冒泡，用 capture 在 #cards 上代收）。
+$('cards').addEventListener('scroll', syncTagMasks, true);
 
 // ── 主题：默认跟随系统，按钮手动切换 ────────────────────────────────
 function storedTheme() {

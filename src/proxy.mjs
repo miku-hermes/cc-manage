@@ -345,18 +345,24 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
      * 全局统计只记一次（一个客户端请求 == 一行）：err 为真才算错误，
      * 换号过程中的内部失败绝不能重复累加全局 errors（历史上会出现 errors > total）。
      */
-    const bump = (err) => {
+    // opts.clientError=true：客户端 4xx（模型名写错等）单独计 clientErrors，
+    // 不写 stats.errors —— 「错误数」KPI 只反映上游/网关故障，不再被客户端误用染红。
+    const bump = (err, opts = {}) => {
       try { touchActivity?.(); } catch { /* 活动标记失败不影响转发 */ }
       stats.total++;
       const s = accountStatsOf(account);
       s.requests++;
-      if (err) {
-        s.errors++;
-        stats.errors++;
-        // 审查#15：记下「这账号有多少错误计入了全局 stats.errors」。
-        // pruneState 删账号时只扣这一部分 —— 换号重试产生的账号级错误（见 bumpAccountError）
-        // 从没进过全局，按 s.errors 全额扣会把全局错误统计改错。
-        s.globalErrors = (Number.isFinite(s.globalErrors) ? s.globalErrors : 0) + 1;
+      if (err || opts.clientError) {
+        if (opts.clientError) {
+          stats.clientErrors = (stats.clientErrors ?? 0) + 1;
+        } else {
+          s.errors++;
+          stats.errors++;
+          // 审查#15：记下「这账号有多少错误计入了全局 stats.errors」。
+          // pruneState 删账号时只扣这一部分 —— 换号重试产生的账号级错误（见 bumpAccountError）
+          // 从没进过全局，按 s.errors 全额扣会把全局错误统计改错。
+          s.globalErrors = (Number.isFinite(s.globalErrors) ? s.globalErrors : 0) + 1;
+        }
       }
       stats.totalTokens += tokens;
       s.tokens += tokens;
@@ -515,7 +521,10 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
           clientGone.signal.removeEventListener('abort', abortEarly);
           const buf = await readBody(upstreamRes);
           const text = buf.toString('utf8');
-          if (isCreditsExhausted(status, text)) {
+          // 先分类：额度/余额类是账号级状态，401 是鉴权，429 是限流冷却 —— 都不算「客户端错误」。
+          const creditErr = isCreditsExhausted(status, text);
+          const quotaErr = isQuotaError(status, text);
+          if (creditErr) {
             // 余额不足是账号级状态（与 5h 窗口无关，钱不会自己回来）：
             // ① 标记后该账号立刻退出调度，面板显示「余额不足」而不是「可用」；
             // ② 未写出任何字节时换号重试 —— 否则轮到这种号就白给客户端一个 400。
@@ -536,7 +545,7 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
               attempt++;
               continue;
             }
-          } else if (isQuotaError(status, text)) {
+          } else if (quotaErr) {
             // 只有明确额度语义（quota / windowLimits / 周期额度）才暂停；
             // 暂停到**实际耗尽窗口**的 resetAt（weekly 就按周窗口，不再一律扣 5h）
             const windowHint = quotaWindowHint(text);
@@ -607,7 +616,12 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
           } else {
             scheduler.recordError(current, `上游 HTTP ${status}`);
           }
-          bump(true);
+          // 403（模型名错/套餐不含）等普通 4xx 是客户端用错模型，单独计 clientErrors，
+          // 不再把「客户端问题」算进「上游错误数」KPI（429 限流 / 401 鉴权除外）。
+          // 只有 4xx 才算客户端错误：上游 5xx 是上游/网关故障，必须进 stats.errors。
+          const clientError = status >= 400 && status < 500
+            && !creditErr && !quotaErr && status !== 401 && status !== 429;
+          bump(true, { clientError });
           release();
           res.writeHead(status, { 'content-type': upstreamRes.headers['content-type'] ?? 'application/json' });
           res.end(redact(text, secrets));

@@ -710,6 +710,7 @@ export async function startGateway(overrides = {}) {
 
   function statusView() {
     const accounts_ = accounts.map(accountView);
+    const availableCount = accounts.filter((a) => scheduler.isAvailable(a)).length;
     return {
       ok: true,
       now: Date.now(),
@@ -719,7 +720,9 @@ export async function startGateway(overrides = {}) {
       summary: {
         accounts: accounts.length,
         enabled: accounts.filter((a) => a.enabled).length,
-        available: accounts.filter((a) => scheduler.isAvailable(a)).length,
+        available: availableCount,
+        // 不可用 = 总数 - 可用：暂停/冷却只是部分口径，这个数才补齐「账号 3 / 可用 2」的缺口。
+        unavailable: accounts.length - availableCount,
         // 注意：pausedUntil 在运行期状态（rt）上，不在账号对象本身。
         // 早期写成 a.pausedUntil（恒为 undefined）→「暂停中」永远显示 0。
         paused: accounts.filter((a) => {
@@ -731,6 +734,8 @@ export async function startGateway(overrides = {}) {
       stats: {
         total: stats.total,
         errors: stats.errors,
+        // 客户端 4xx（模型名错 / 请求非法等）单独计，不污染「上游错误数」KPI。
+        clientErrors: stats.clientErrors ?? 0,
         // 客户端主动中止（Ctrl-C 长回答）：单独口径，不计入 errors（F10）
         aborted: stats.aborted ?? 0,
         totalTokens: stats.totalTokens,

@@ -5,6 +5,24 @@ import http from 'node:http';
 
 const UA_EXPECTED = 'commandcode-cli/1.53.1';
 
+// 允许的 behavior 开关白名单。之前直接 spread，拼错 key（如 failNext500）会静默失效，
+// 测试假绿（本仓库实例：gateway.test.mjs 的 failNext500 从未生效）。
+const BEHAVIOR_KEYS = new Set([
+  'failNext5xx', 'quotaError', 'delayMs', 'rateLimitError', 'quotaErrorKeys', 'quotaErrorBody',
+  'notFound404', 'authErrorStatus', 'authErrorBody', 'alphaDelayMs', 'abortAfterChunks',
+  'delayBeforeBodyMs', 'bodyBytesSeen', 'immediate5xx', 'chunkDelayMs', 'firstDataAt',
+  'usageBody', 'sseChunks',
+]);
+
+/** 校验 behavior patch 里没有未知开关；有则抛错（绝不静默忽略）。 */
+export function assertBehaviorKeys(patch) {
+  for (const k of Object.keys(patch ?? {})) {
+    if (!BEHAVIOR_KEYS.has(k)) {
+      throw new Error(`未知的 mock behavior 开关: ${k}（拼错的 key 会静默失效，必须显式报错）`);
+    }
+  }
+}
+
 // key → 该 key 的额度设定
 // exhausted: true 表示 5h 窗口已打满
 const DEFAULT_PLANS = {
@@ -46,6 +64,7 @@ function mergePlan(base, override) {
  * @returns {Promise<{server, port, url, seen, setPlan, setBehavior, close}>}
  */
 export async function startMockUpstream(opts = {}) {
+  assertBehaviorKeys(opts.behavior);
   // 传入的 plans 覆盖默认设定（默认设定里含 §9 面板演示账号与测试账号）
   const plans = new Map(Object.entries(DEFAULT_PLANS));
   for (const [key, override] of Object.entries(opts.plans ?? {})) {
@@ -255,6 +274,7 @@ export async function startMockUpstream(opts = {}) {
       plans.set(key, mergePlan(plans.get(key) ?? {}, plan));
     },
     setBehavior(patch) {
+      assertBehaviorKeys(patch);
       Object.assign(behavior, patch);
     },
     requestsTo(predicate) {
