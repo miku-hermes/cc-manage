@@ -33,7 +33,8 @@ function fsyncDir(dir) {
  * mode > 0 视为凭据文件：写前 chmod 临时文件、rename 后再 chmod 目标文件，
  * 且失败直接抛错（不静默降级），由调用方转成明确的 HTTP 错误。
  */
-function atomicWrite(file, data, { log = null, mode = 0 } = {}) {
+// 导出供 auth.mjs 复用：吊销记录同样必须原子写（tmp + fsync + rename + fsync 目录）
+export function atomicWrite(file, data, { log = null, mode = 0 } = {}) {
   const dir = path.dirname(file);
   const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
   try {
@@ -297,6 +298,37 @@ export function createStore({ rootDir = process.cwd(), env = process.env, log = 
     };
   }
 
+  /** 计数字段归一成有限数字，脏值（'9' / null / 'x' / NaN）不当场把算术变成 NaN。 */
+  function normCount(v) {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  /**
+   * 规范化 stats（审查#13）：stats / byAccount 必须是普通对象，条目必须是对象。
+   * null / 字符串 / 数组 / 条目不是对象 → 丢弃并退回默认值，绝不让 Object.entries() 在
+   * 启动或 /api/status 里抛错。aborted / globalErrors 是可选计数，只在原本存在时保留。
+   */
+  function normalizeStats(rawStats) {
+    const out = { total: 0, errors: 0, totalTokens: 0, byAccount: {} };
+    if (!rawStats || typeof rawStats !== 'object' || Array.isArray(rawStats)) return out;
+    out.total = normCount(rawStats.total);
+    out.errors = normCount(rawStats.errors);
+    out.totalTokens = normCount(rawStats.totalTokens);
+    if (rawStats.aborted !== undefined) out.aborted = normCount(rawStats.aborted);
+    const rawBy = rawStats.byAccount;
+    if (rawBy && typeof rawBy === 'object' && !Array.isArray(rawBy)) {
+      for (const [id, s] of Object.entries(rawBy)) {
+        if (!s || typeof s !== 'object' || Array.isArray(s)) continue;   // 非法条目直接丢
+        const e = { ...s, requests: normCount(s.requests), errors: normCount(s.errors), tokens: normCount(s.tokens) };
+        if (s.aborted !== undefined) e.aborted = normCount(s.aborted);
+        if (s.globalErrors !== undefined) e.globalErrors = normCount(s.globalErrors);
+        out.byAccount[id] = e;
+      }
+    }
+    return out;
+  }
+
   /**
    * 清理已从 accounts.json 删掉的账号残留：state.accounts 与 stats.byAccount 里
    * 凡是不在当前账号池 keyId 集合中的条目一律删除，并把它们的请求数从全局合计里扣掉，
@@ -316,7 +348,11 @@ export function createStore({ rootDir = process.cwd(), env = process.env, log = 
       if (alive.has(id)) continue;
       const s = byAccount[id] ?? {};
       state.stats.total = Math.max(0, (state.stats.total ?? 0) - (s.requests ?? 0));
-      state.stats.errors = Math.max(0, (state.stats.errors ?? 0) - (s.errors ?? 0));
+      // 审查#15：byAccount.errors 里还包含「换号重试的账号级错误」（proxy.bumpAccountError），
+      // 那部分从来没进过全局 stats.errors。只扣「计入全局」的贡献（globalErrors）；
+      // 旧 state.json 没有这个字段 → 退化为旧口径（errors 全额扣）。
+      const globalErrors = Number.isFinite(s.globalErrors) ? s.globalErrors : (s.errors ?? 0);
+      state.stats.errors = Math.max(0, (state.stats.errors ?? 0) - globalErrors);
       state.stats.totalTokens = Math.max(0, (state.stats.totalTokens ?? 0) - (s.tokens ?? 0));
       // 中止计数（F10）同样要扣掉，否则删账号后 byAccount 之和与全局 aborted 对不上
       state.stats.aborted = Math.max(0, (state.stats.aborted ?? 0) - (s.aborted ?? 0));
@@ -343,14 +379,14 @@ export function createStore({ rootDir = process.cwd(), env = process.env, log = 
       persistAfterLoad = true;
       return state;
     }
-    if (raw && typeof raw === 'object') {
-      if (raw.accounts && typeof raw.accounts === 'object') {
-        for (const [id, rt] of Object.entries(raw.accounts)) state.accounts[id] = { ...blankRuntime(), ...rt, concurrency: 0 };
-      }
-      if (raw.stats && typeof raw.stats === 'object') {
-        state.stats = { total: 0, errors: 0, totalTokens: 0, byAccount: {}, ...raw.stats };
+    if (raw && typeof raw.accounts === 'object' && raw.accounts !== null && !Array.isArray(raw.accounts)) {
+      for (const [id, rt] of Object.entries(raw.accounts)) {
+        if (!rt || typeof rt !== 'object' || Array.isArray(rt)) continue;   // 脏条目丢弃，不炸启动
+        state.accounts[id] = { ...blankRuntime(), ...rt, concurrency: 0 };
       }
     }
+    // stats / byAccount 必须规范化成对象（审查#13）：null / 字符串会让 Object.entries() 直接抛错
+    state.stats = normalizeStats(raw?.stats);
     if (Array.isArray(accounts)) {
       const removed = pruneState(accounts);
       if (removed.accounts.length > 0 || removed.stats.length > 0) {

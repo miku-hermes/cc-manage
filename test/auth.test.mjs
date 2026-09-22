@@ -35,18 +35,19 @@ async function setupGateway(opts = {}) {
 }
 
 // ── 密码哈希原语 ────────────────────────────────────────────────────
-test('密码哈希：scrypt 格式、加盐、timingSafeEqual 校验', () => {
-  const a = hashPassword('hunter2-secret');
-  const b = hashPassword('hunter2-secret');
+// 契约变更（审查#3）：hashPassword/verifyPassword 改异步（返回 Promise），这里全部 await
+test('密码哈希：scrypt 格式、加盐、timingSafeEqual 校验', async () => {
+  const a = await hashPassword('hunter2-secret');
+  const b = await hashPassword('hunter2-secret');
   assert.match(a, /^scrypt\$\d+\$\d+\$\d+\$[A-Za-z0-9+/=]+\$[A-Za-z0-9+/=]+$/, '必须是 scrypt$N$r$p$salt$hash');
   assert.notEqual(a, b, '同一密码两次哈希必须不同（随机盐）');
-  assert.ok(verifyPassword('hunter2-secret', a));
-  assert.ok(verifyPassword('hunter2-secret', b));
-  assert.ok(!verifyPassword('hunter2-secreu', a), '错一位必须失败');
-  assert.ok(!verifyPassword('', a));
+  assert.ok(await verifyPassword('hunter2-secret', a));
+  assert.ok(await verifyPassword('hunter2-secret', b));
+  assert.ok(!(await verifyPassword('hunter2-secreu', a)), '错一位必须失败');
+  assert.ok(!(await verifyPassword('', a)));
   // 坏输入不抛错
   for (const bad of ['', 'plain', 'scrypt$1$1$1$zz$zz', 'scrypt$x$1$1$aa$bb', null, undefined]) {
-    assert.equal(verifyPassword('hunter2-secret', bad), false);
+    assert.equal(await verifyPassword('hunter2-secret', bad), false);
   }
 });
 
@@ -111,7 +112,7 @@ test('初始化：无 users.json → /admin 显示初始化页，setup 创建首
   const data = JSON.parse(raw);
   assert.equal(data.users.length, 1);
   assert.equal(data.users[0].username, USER.name);
-  assert.ok(verifyPassword(USER.pass, data.users[0].passwordHash));
+  assert.ok(await verifyPassword(USER.pass, data.users[0].passwordHash));
 });
 
 test('初始化：cookie 属性正确（HttpOnly/SameSite=Lax/Path=/），HTTPS 下加 Secure', async (t) => {

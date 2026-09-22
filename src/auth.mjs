@@ -5,7 +5,9 @@
 //   - 客户端 API key：sk-cg-*（config/keys.json）→ 只用于 /v1/* 反代调用
 import fs from 'node:fs';
 import path from 'node:path';
-import { createHash, createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
+// 复用 store 的原子写（tmp + fsync + rename + fsync 目录）：吊销记录绝不能被半截写坏
+import { atomicWrite } from './store.mjs';
 
 export const SESSION_COOKIE = 'cc_session';
 // session 有效期 7 天（别每次重启都换密钥，否则用户被登出）
@@ -36,22 +38,45 @@ function b64(buf) {
 }
 
 /**
+ * scrypt 一律走 **异步 + 串行队列**：
+ *  - 早先的 scryptSync 每次登录把事件循环卡死 200ms+，轮换用户名刷登录就能让整个网关
+ *    （含所有反代流量）一起卡顿 —— 这是审查#3 的核心问题，必须改成不阻塞；
+ *  - 只丢给异步 scrypt 还不够：N 个并发登录就是 N 个 64MB 的派生任务，256m 容体会被打爆。
+ * 队列保证同一时刻只算一个 scrypt（CPU / 内存都有硬上限），事件循环全程可调度。
+ */
+let scryptQueue = Promise.resolve();
+function scryptAsync(password, salt, keylen, opts) {
+  const task = () => new Promise((resolve, reject) => {
+    scrypt(String(password), salt, keylen, opts, (err, derived) => (err ? reject(err) : resolve(derived)));
+  });
+  const run = scryptQueue.then(task, task);   // 前一个无论成败，这一个照跑
+  scryptQueue = run.then(() => undefined, () => undefined);
+  return run;
+}
+
+/**
  * 生成密码哈希：`scrypt$N$r$p$<salt-b64>$<hash-b64>`。绝不存明文。
+ * **异步**（返回 Promise，调用方必须 await）：绝不在事件循环里同步算哈希。
  * @param {string} password
  * @param {{ N?: number, r?: number, p?: number, keylen?: number, salt?: Buffer }} [opts]
+ * @returns {Promise<string>}
  */
-export function hashPassword(password, opts = {}) {
+export async function hashPassword(password, opts = {}) {
   const N = opts.N ?? SCRYPT_N;
   const r = opts.r ?? SCRYPT_R;
   const p = opts.p ?? SCRYPT_P;
   const keylen = opts.keylen ?? SCRYPT_KEYLEN;
   const salt = opts.salt ?? randomBytes(SCRYPT_SALT_BYTES);
-  const hash = scryptSync(String(password), salt, keylen, { N, r, p, maxmem: SCRYPT_MAX_MEM });
+  const hash = await scryptAsync(password, salt, keylen, { N, r, p, maxmem: SCRYPT_MAX_MEM });
   return `scrypt$${N}$${r}$${p}$${b64(salt)}$${b64(hash)}`;
 }
 
-/** 校验密码。参数非法 / 哈希损坏一律返回 false，不抛错。 */
-export function verifyPassword(password, stored) {
+/**
+ * 校验密码（异步）。参数非法 / 哈希损坏一律返回 false，不抛错。
+ * 白名单校验是纯字符串比较（廉价）：恶意 N/r/p 连 scrypt 队列都进不去。
+ * @returns {Promise<boolean>}
+ */
+export async function verifyPassword(password, stored) {
   if (typeof password !== 'string' || typeof stored !== 'string') return false;
   const parts = stored.split('$');
   if (parts.length !== 6 || parts[0] !== 'scrypt') return false;
@@ -68,7 +93,7 @@ export function verifyPassword(password, stored) {
   if (salt.length === 0 || expected.length === 0) return false;
   let actual;
   try {
-    actual = scryptSync(password, salt, expected.length, { N, r, p, maxmem: SCRYPT_MAX_MEM });
+    actual = await scryptAsync(password, salt, expected.length, { N, r, p, maxmem: SCRYPT_MAX_MEM });
   } catch {
     return false;
   }
@@ -146,23 +171,59 @@ export function createSessionSigner({ secret, ttlMs = SESSION_TTL_MS, now = () =
   const byUser = new Map();               // username → Map<sid, exp>，改密码时整批吊销
   const versions = new Map();             // username → 会话版本号 sv
 
+  /**
+   * 吊销记录不可读时的 **fail-closed 语义**（审查#12）：
+   *
+   * 我们已经不知道哪些 sid 被吊销过、哪些用户改过密码。若照旧「损坏就忽略」，
+   * 已登出 / 已改密的 cookie 会在重启后复活（签名是自包含的 7 天 TTL）。
+   * 选定的语义：
+   *   - **拒绝损坏被发现之前签发的一切 token**（连同重启也拒绝 —— corruptBefore 落盘）；
+   *   - 放行损坏之后新签发的会话 —— 后台不会被锁死，也不需要人工删文件；
+   *   - 宁可让几个有效会话重新登录，也绝不让已吊销会话复活。
+   */
+  let rejectIssuedBefore = 0;
+  function poisonStore(reason) {
+    const t = now();
+    rejectIssuedBefore = Math.max(rejectIssuedBefore, t);
+    log?.error?.(`会话吊销记录不可读（${reason}）：已 fail-closed，拒绝 ${new Date(t).toISOString()} 之前签发的所有会话`);
+    persist();   // 把 corruptBefore 落盘，重启后继续保持「旧 token 一律拒绝」
+  }
+
   function load() {
     if (!storePath) return;
+    if (!fs.existsSync(storePath)) return;
+    let raw;
     try {
-      if (!fs.existsSync(storePath)) return;
-      const raw = JSON.parse(fs.readFileSync(storePath, 'utf8'));
-      const t = now();
-      for (const [sid, exp] of Object.entries(raw?.sids ?? {})) {
-        if (Number.isFinite(exp) && exp > t) revoked.set(sid, exp);
+      raw = JSON.parse(fs.readFileSync(storePath, 'utf8'));
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('顶层不是对象');
+    } catch (e) {
+      poisonStore(e.message);
+      return;
+    }
+    const t = now();
+    if (Number.isFinite(raw.corruptBefore) && raw.corruptBefore > 0) {
+      rejectIssuedBefore = Math.max(rejectIssuedBefore, raw.corruptBefore);
+    }
+    // sids / versions 的值形状非法同样按「不可读」处理：挑着信就可能漏掉一条吊销 → 复活
+    try {
+      const sids = raw.sids ?? {};
+      const vers = raw.versions ?? {};
+      if (!sids || typeof sids !== 'object' || Array.isArray(sids)) throw new Error('sids 结构非法');
+      if (!vers || typeof vers !== 'object' || Array.isArray(vers)) throw new Error('versions 结构非法');
+      for (const [sid, exp] of Object.entries(sids)) {
+        if (!Number.isFinite(exp)) throw new Error(`sids[${sid}] 不是有效时间戳`);
+        if (exp > t) revoked.set(sid, exp);
       }
-      for (const [u, v] of Object.entries(raw?.versions ?? {})) {
-        if (Number.isInteger(v) && v > 0) versions.set(u, v);
+      for (const [u, v] of Object.entries(vers)) {
+        if (!Number.isInteger(v) || v < 0) throw new Error(`versions[${u}] 不是整数`);
+        if (v > 0) versions.set(u, v);
       }
     } catch (e) {
-      log?.warn?.(`会话吊销记录损坏，已忽略（${e.message}）`);
+      poisonStore(e.message);
     }
   }
 
+  /** 原子写（复用 store.atomicWrite：tmp + fsync + rename + fsync 目录），掉电不会留半截文件。 */
   function persist() {
     if (!storePath) return;
     try {
@@ -170,11 +231,10 @@ export function createSessionSigner({ secret, ttlMs = SESSION_TTL_MS, now = () =
       for (const [sid, exp] of revoked) sids[sid] = exp;
       const rawVersions = {};
       for (const [u, v] of versions) rawVersions[u] = v;
-      const tmp = `${storePath}.tmp-${process.pid}-${Date.now()}`;
-      fs.mkdirSync(path.dirname(storePath), { recursive: true });
-      fs.writeFileSync(tmp, JSON.stringify({ sids, versions: rawVersions }, null, 2), { mode: 0o600 });
-      fs.chmodSync(tmp, 0o600);
-      fs.renameSync(tmp, storePath);
+      const payload = { sids, versions: rawVersions };
+      if (rejectIssuedBefore > 0) payload.corruptBefore = rejectIssuedBefore;
+      atomicWrite(storePath, `${JSON.stringify(payload, null, 2)}
+`, { log, mode: 0o600 });
     } catch (e) {
       log?.warn?.(`会话吊销记录无法持久化（${e.message}），本次运行的吊销在重启后会失效`);
     }
@@ -234,6 +294,8 @@ export function createSessionSigner({ secret, ttlMs = SESSION_TTL_MS, now = () =
     if (typeof payload.u !== 'string' || !payload.u) return null;
     if (typeof payload.exp !== 'number' || payload.exp <= now()) return null;
     if (payload.sid && revoked.has(payload.sid)) return null;
+    // 吊销记录曾损坏（fail-closed）：损坏之前签发的 token 无法自证未被吊销，一律拒绝
+    if (rejectIssuedBefore > 0 && (!Number.isFinite(payload.iat) || payload.iat < rejectIssuedBefore)) return null;
     // 会话版本：改密码 / 删用户后旧 token 一律作废（重启后依然作废）
     if ((payload.sv ?? 0) !== (versions.get(payload.u) ?? 0)) return null;
     return payload;
@@ -294,12 +356,15 @@ export function clearCookieHeader({ secure = false } = {}) {
  * 分桶 = 全公网共用一个桶：任意匿名者发 5 次错密码就能把管理员锁在门外（F14）。
  *
  * 现在的口径：
- *  - **只有「用户名」维度会锁定**：针对某个账号的连续失败只锁那个账号；
+ *  - **用户名维度**会锁定：针对某个账号的连续失败只锁那个账号；
  *    其它用户名（含不存在的）失败再多也不会锁住真实管理员；
  *  - 锁定时间指数退避：lockMs * 2^(连续锁定轮次-1)，上限 maxLockMs；
  *  - 来源（socket 地址）只做统计与日志，**不参与锁定** —— 否则反代后的单一 socket
  *    桶又能被匿名者用来把全体管理员锁死，等于没修；
- *  - 仍然**不信任 X-Forwarded-For**（调用方只传 socket 地址），伪造头无法绕过限速。
+ *  - 仍然**不信任 X-Forwarded-For**（调用方只传 socket 地址），伪造头无法绕过限速；
+ *  - 另有**不分用户名的全局登录令牌桶**（审查#3）：每次「真的要算一次 scrypt」的尝试都从
+ *    来源桶里扣一个令牌（每来源每分钟 attemptMax 次，与用户名无关）—— 轮换用户名刷登录
+ *    同样会被限速，不能再无限触发哈希计算。用户被锁时不扣令牌（那次根本不跑哈希）。
  *
  * 锁定的用户名在锁定期内直接 429（连 scrypt 都不跑），所以刷锁定名不会吃 CPU。
  */
@@ -309,9 +374,14 @@ export function createLoginLimiter({
   maxLockMs = 60 * 60 * 1000,
   now = () => Date.now(),
   maxEntries = 2048,
+  // 全局尝试预算（审查#3）：每个来源每分钟 attemptMax 次登录尝试，**不看用户名**。
+  // 默认 60/min 与「同 IP 连错 5 次锁账号」的 F14 口径兼容（合法管理员远用不满）。
+  attemptMax = 60,
+  attemptWindowMs = 60 * 1000,
 } = {}) {
   const users = new Map();     // username → { count, lockedUntil, at, round }
-  const sources = new Map();   // source   → { failures, at }（只统计，不锁定）
+  // source → { failures, at, tokens, tokensAt }：失败统计 + 尝试令牌桶（复用一张有界的表）
+  const sources = new Map();
 
   /** 硬上限：表永远不会无界增长（locked 条目也要能淘汰）。 */
   function prune() {
@@ -327,26 +397,55 @@ export function createLoginLimiter({
     while (sources.size > maxEntries) sources.delete(sources.keys().next().value);
   }
 
+  /**
+   * 从来源桶里取一个「登录尝试」令牌（令牌按时间线性补充，桶容量 attemptMax）。
+   * 不足则返回还需等多久 —— 这一层**与用户名无关**，轮换用户名绕不过去。
+   */
+  function takeAttemptToken(source) {
+    const t = now();
+    const rate = attemptMax / attemptWindowMs;      // 个/毫秒
+    const s = sources.get(source) ?? { failures: 0, at: t, tokens: attemptMax, tokensAt: t };
+    s.tokens = Math.min(attemptMax, (Number.isFinite(s.tokens) ? s.tokens : attemptMax) + Math.max(0, t - (s.tokensAt ?? t)) * rate);
+    s.tokensAt = t;
+    s.at = t;
+    sources.set(source, s);
+    if (s.tokens >= 1) {
+      s.tokens -= 1;
+      return { allowed: true };
+    }
+    return { allowed: false, retryAfterMs: Math.max(1, Math.ceil((1 - s.tokens) / rate)) };
+  }
+
   function backoffMs(round) {
     return Math.min(maxLockMs, lockMs * 2 ** Math.max(0, round - 1));
   }
 
   return {
     maxFails,
-    /** 是否处于锁定状态；返回 retryAfterMs 供 Retry-After 用。 */
-    check(_source, username = null) {
-      if (!username) return { locked: false };
-      const s = users.get(String(username));
-      if (!s) return { locked: false };
-      if (s.lockedUntil && s.lockedUntil > now()) return { locked: true, retryAfterMs: s.lockedUntil - now(), scope: 'user' };
-      if (s.lockedUntil) { s.lockedUntil = 0; s.count = 0; s.at = now(); }
+    /**
+     * 是否放行这一次登录尝试；返回 retryAfterMs 供 Retry-After 用。
+     * 顺序：用户名锁 → 全局尝试令牌桶（真正要跑 scrypt 的尝试都要扣令牌）。
+     */
+    check(source = '-', username = null) {
+      const t = now();
+      if (username) {
+        const s = users.get(String(username));
+        if (s) {
+          if (s.lockedUntil && s.lockedUntil > t) return { locked: true, retryAfterMs: s.lockedUntil - t, scope: 'user' };
+          if (s.lockedUntil) { s.lockedUntil = 0; s.count = 0; s.at = t; }
+        }
+      }
+      const gate = takeAttemptToken(source);
+      if (!gate.allowed) return { locked: true, retryAfterMs: gate.retryAfterMs, scope: 'source' };
       return { locked: false };
     },
     /** 记一次失败（按用户名计锁；来源只计数）。 */
     fail(source = '-', username = null) {
       const t = now();
-      const src = sources.get(source) ?? { failures: 0, at: t };
-      sources.set(source, { failures: src.failures + 1, at: t });
+      const src = sources.get(source) ?? { failures: 0, at: t, tokens: attemptMax, tokensAt: t };
+      src.failures = (src.failures ?? 0) + 1;
+      src.at = t;
+      sources.set(source, src);
       if (!username) { prune(); return { locked: false, remaining: maxFails }; }
 
       const key = String(username);

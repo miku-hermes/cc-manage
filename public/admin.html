@@ -22,8 +22,8 @@
     --border-strong: #d8cce4;
 
     --text-primary: #2d1b3d;
-    --text-secondary: #5f4d72;
-    --text-tertiary: #6f5d82;
+    --text-secondary: #554365;
+    --text-tertiary: #5f4d72;
 
     --accent: #e8668a;
     --accent-hover: #d44a72;
@@ -42,6 +42,9 @@
     --danger: #c8303f;
     --danger-light: #fde9eb;
     --info: #2f6ab3;
+    --success-ink: #17633f;
+    --warning-ink: #704300;
+    --danger-ink: #a3182b;
 
     --fs-xs: 11px;
     --fs-sm: 13px;
@@ -76,8 +79,8 @@
       --border-strong: #4d3d58;
 
       --text-primary: #ece6f0;
-      --text-secondary: #c3b8cd;
-      --text-tertiary: #ab9fb8;
+      --text-secondary: #d4c9dd;
+      --text-tertiary: #bcb0c8;
 
       --accent: #f2a0b5;
       --accent-hover: #e8668a;
@@ -96,6 +99,9 @@
       --danger: #ff8095;
       --danger-light: #3d2029;
       --info: #7fb3f5;
+      --success-ink: #79e2aa;
+      --warning-ink: #ffd082;
+      --danger-ink: #ff9aaa;
 
       --shadow-soft: 0 1px 2px rgba(0, 0, 0, .3);
       --shadow-lift: 0 12px 34px rgba(0, 0, 0, .5);
@@ -109,8 +115,8 @@
     --border-strong: #4d3d58;
 
     --text-primary: #ece6f0;
-    --text-secondary: #c3b8cd;
-    --text-tertiary: #ab9fb8;
+    --text-secondary: #d4c9dd;
+    --text-tertiary: #bcb0c8;
 
     --accent: #f2a0b5;
     --accent-hover: #e8668a;
@@ -129,6 +135,9 @@
     --danger: #ff8095;
     --danger-light: #3d2029;
     --info: #7fb3f5;
+    --success-ink: #79e2aa;
+    --warning-ink: #ffd082;
+    --danger-ink: #ff9aaa;
 
     --shadow-soft: 0 1px 2px rgba(0, 0, 0, .3);
     --shadow-lift: 0 12px 34px rgba(0, 0, 0, .5);
@@ -146,6 +155,7 @@
   }
   h1, h2, h3 { line-height: var(--lh-heading); }
   .mono { font-family: var(--font-mono); }
+  .aux-text { color: var(--text-secondary); }
   .hidden { display: none !important; }
 
   :focus-visible {
@@ -201,9 +211,12 @@
     border-color: transparent; color: var(--on-accent-solid); font-weight: 600;
   }
   .btn.primary:hover:not(:disabled) { background: var(--accent-solid-hover); border-color: transparent; }
-  /* 危险操作：平时只是红描边，hover 才填红 */
-  .btn.danger { color: var(--text-secondary); border-color: var(--border-strong); background: var(--surface-1); }
+  /* 危险操作：红色文字 + 红描边，hover 才填红 */
+  .btn.danger { color: var(--danger-ink); border-color: var(--danger); background: var(--surface-1); }
   .btn.danger:hover:not(:disabled) { color: var(--on-danger-fill); border-color: var(--danger-fill); background: var(--danger-fill); }
+  .btn.warning { color: var(--warning-ink); border-color: var(--warning); background: var(--warning-light); }
+  .btn.warning:hover:not(:disabled) { color: var(--warning-ink); border-color: var(--warning); background: var(--warning-light); filter: brightness(.96); }
+  .btn.outline { color: var(--accent-ink); border-color: var(--accent); background: var(--surface-1); }
   .icon-btn {
     display: grid; place-items: center; cursor: pointer; width: var(--control-h); height: var(--control-h);
     border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
@@ -219,7 +232,7 @@
     :root:not([data-theme="light"]) .ico-sun { display: block; }
     :root:not([data-theme="light"]) .ico-moon { display: none; }
   }
-  .hint { font-size: var(--fs-xs); color: var(--warning); }
+  .hint { font-size: var(--fs-xs); color: var(--warning-ink); }
 
   /* ── 主区域 ───────────────────────────────────────────── */
   main {
@@ -232,7 +245,10 @@
     margin-bottom: var(--gutter); padding: 12px 16px; border-radius: var(--radius-sm);
     border: 1px solid var(--danger); color: var(--danger); background: var(--danger-light); font-size: var(--fs-sm);
   }
-  .banner.warn { border-color: var(--warning); color: var(--warning); background: var(--warning-light); }
+  .banner.warn { border-color: var(--warning); color: var(--warning-ink); background: var(--warning-light); }
+  .banner.load-error { color: var(--danger-ink); border-color: var(--danger); background: var(--danger-light); }
+  .load-error::before { content: '⚠'; font-weight: 800; }
+  .load-error .btn { height: 30px; margin-left: auto; }
 
   /* ── 面板 ─────────────────────────────────────────────── */
   section.panel {
@@ -276,6 +292,17 @@
   td.actions .btn { height: 28px; padding: 0 10px; font-size: var(--fs-xs); margin-left: 6px; border-radius: 8px; }
   .cell-name { font-weight: 600; }
   .cell-sub { font-size: var(--fs-xs); color: var(--text-secondary); word-break: break-all; }
+  .cell-error {
+    margin-top: 5px; color: var(--danger-ink); font-size: var(--fs-xs); font-weight: 600;
+    word-break: break-all;
+  }
+  .cell-error::before { content: '⚠ '; }
+  .key-mask { display: inline-flex; align-items: baseline; gap: 5px; }
+  .key-prefix { color: var(--text-secondary); }
+  .key-hidden {
+    color: var(--text-primary); letter-spacing: .12em; user-select: none;
+    background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 5px; padding: 0 4px;
+  }
   .cell-quota { min-width: 220px; padding-top: 8px; padding-bottom: 8px; }
   .qbar { display: flex; align-items: center; gap: 8px; font-size: var(--fs-xs); color: var(--text-secondary); }
   .qbar + .qbar { margin-top: 6px; }
@@ -316,9 +343,9 @@
     background: var(--surface-2); border: 1px solid var(--border-strong); color: var(--text-secondary);
     white-space: nowrap;
   }
-  .tag.ok { color: var(--success); border-color: var(--success); background: var(--success-light); }
-  .tag.bad { color: var(--danger); border-color: var(--danger); background: var(--danger-light); }
-  .tag.warn { color: var(--warning); border-color: var(--warning); background: var(--warning-light); }
+  .tag.ok { color: var(--success-ink); border-color: var(--success); background: var(--success-light); }
+  .tag.bad { color: var(--danger-ink); border-color: var(--danger); background: var(--danger-light); }
+  .tag.warn { color: var(--warning-ink); border-color: var(--warning); background: var(--warning-light); }
   .tag.info { color: var(--accent-ink); border-color: var(--accent); background: var(--accent-light); }
 
   .empty { color: var(--text-secondary); text-align: center; padding: 30px var(--card-pad); }
@@ -362,7 +389,7 @@
   .field { margin-bottom: 14px; }
   .field label { display: block; font-size: var(--fs-xs); color: var(--text-secondary); margin-bottom: 6px; }
   .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
-  .err-text { color: var(--danger); font-size: var(--fs-xs); min-height: 18px; word-break: break-all; }
+  .err-text { color: var(--danger-ink); font-size: var(--fs-xs); min-height: 18px; word-break: break-all; }
 
   /* ── 登录 / 初始化页 ──────────────────────────────────── */
   body.gate { background-image: radial-gradient(760px 460px at 50% -10%, var(--accent-light), transparent 70%); }
@@ -385,7 +412,7 @@
   .gate-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 18px; }
   .gate-err {
     margin-top: 14px; padding: 10px 12px; border-radius: var(--radius-sm); font-size: var(--fs-sm);
-    color: var(--danger); background: var(--danger-light); border: 1px solid var(--danger);
+    color: var(--danger-ink); background: var(--danger-light); border: 1px solid var(--danger);
   }
 
   /* ── 一次性 key 展示 ──────────────────────────────────── */
@@ -410,7 +437,7 @@
     z-index: 60; max-width: min(560px, 90vw);
   }
   .toast.show { opacity: 1; transform: translate(-50%, 0); }
-  .toast.bad { border-color: var(--danger); color: var(--danger); }
+  .toast.bad { border-color: var(--danger); color: var(--danger-ink); }
 
   footer {
     max-width: var(--page-max); margin: 0 auto; padding: 20px var(--gutter) 40px;
@@ -528,6 +555,10 @@
 </div>
 
 <main id="admin-main" style="display:none">
+  <div id="load-error" class="banner load-error hidden" role="alert">
+    <span id="load-error-text"></span>
+    <button id="load-retry" class="btn" type="button">重试</button>
+  </div>
   <div id="readonly" class="banner hidden"></div>
   <div id="autherr" class="banner hidden"></div>
 
@@ -750,7 +781,19 @@ const testResults = new Map();   // keyId → 最近一次连通性测试结果
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 function timeText(ts) { const d = new Date(ts); return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString('zh-CN', { hour12: false }); }
 function shortId(id) { return String(id ?? '').slice(0, 8); }
+function maskedKey(prefix) {
+  return '<span class="key-mask"><span class="key-prefix">' + esc(prefix) + '</span>'
+    + '<span class="key-hidden" title="key 其余部分已遮蔽" aria-label="key 其余部分已遮蔽">••••</span></span>';
+}
 function money(n) { const v = Number(n); return Number.isFinite(v) ? v.toFixed(2) : '—'; }
+/* 能用多少钱：与前台 usableRemaining 唯一口径完全一致。 */
+function usableRemaining(a) {
+  const q = a && a.lastQuota;
+  if (!q || !Number.isFinite(q.remaining)) return 0;
+  const k = a.exhausted && a.exhausted.kind;
+  if (k === 'monthly' || k === 'balance') return 0;
+  return q.remaining;
+}
 /* 套餐 planId → 人看的名字。映射表见任务书；未知值原样返回，不猜、不吞。 */
 function planLabel(planId) {
   if (planId === null || planId === undefined) return null;
@@ -831,6 +874,15 @@ function gateError(message) {
   el.textContent = message;
   el.className = 'gate-err';
 }
+function showLoadError(e) {
+  const message = (e && e.message) || '未知错误';
+  $('load-error-text').textContent = '数据加载失败：' + message + '，可点击「重试」恢复。';
+  $('load-error').className = 'banner load-error';
+}
+function clearLoadError() {
+  $('load-error-text').textContent = '';
+  $('load-error').className = 'banner load-error hidden';
+}
 
 $('gate-submit').onclick = async () => {
   const username = $('gate-user').value.trim();
@@ -880,11 +932,23 @@ function applyWritable(writable, reason) {
   $('readonly').className = locked ? 'banner warn' : 'banner hidden';
 }
 
+function accountStatus(a) {
+  if (a.authInvalid) return { t: '鉴权失效', tone: 'bad', dot: 'invalid', schedulable: false };
+  if (!a.enabled) return { t: '已停用', tone: 'warn', dot: 'paused', schedulable: false };
+  if (a.paused || a.rateLimited) return { t: '冷却中', tone: 'warn', dot: 'paused', schedulable: false };
+  // 额度耗尽统一口径：周/5 小时窗口用完、月额度用完，都说「已用完」而不是笼统的
+  // 「不可调度」——用户要的正是这种可读性（副号1 = 周用完，主号 = 月用完）。
+  if (a.exhausted && a.exhausted.label) return { t: a.exhausted.label, tone: 'bad', dot: 'invalid', schedulable: false };
+  if (a.creditsExhausted) return { t: '余额不足', tone: 'bad', dot: 'invalid', schedulable: false };
+  if (!a.available) return { t: '不可调度', tone: 'bad', dot: 'invalid', schedulable: false };
+  return { t: '可用', tone: 'ok', dot: '', schedulable: true };
+}
 function statusTag(a) {
-  if (a.authInvalid) return '<span class="tag bad">鉴权失效</span>';
-  if (!a.enabled) return '<span class="tag warn">已停用</span>';
-  if (a.paused) return '<span class="tag warn">暂停中</span>';
-  return '<span class="tag ok">可用</span>';
+  const st = accountStatus(a);
+  const availability = st.schedulable ? '可调度' : '不可用';
+  const label = st.t === '不可调度' ? '额度不可用' : st.t;
+  return '<span class="tag ' + st.tone + '" data-account-status="' + (st.dot || 'ok') + '">'
+    + esc(st.schedulable ? '可用 · 可调度' : label + ' · ' + availability) + '</span>';
 }
 
 // ── CC 账号（含额度 + 连通性测试）────────────────────────────────────
@@ -907,11 +971,18 @@ function renderAccounts() {
   $('accounts').innerHTML = list.map((a) => {
     const id = esc(a.keyId);
     const q = a.lastQuota;
+    const usable = usableRemaining(a);
+    const raw = q && Number.isFinite(q.remaining) ? q.remaining : null;
+    const dead = a.exhausted && (a.exhausted.kind === 'monthly' || a.exhausted.kind === 'balance');
+    const balanceTitle = raw === null ? '账面余额未知' : '账面 ' + money(raw)
+      + (dead ? ' · ' + esc(a.exhausted.label || '额度已用完') + '，不可用' : '');
     const quota = q && q.ok
       ? quotaBar('5h', q.fiveHour) + quotaBar('周', q.weekly) + quotaBar('月', q.monthly)
-        + '<div class="cell-sub">余额 ' + money(q.remaining) + (q.plan && q.plan.planId ? ' · 套餐 ' + esc(planLabel(q.plan.planId)) : '')
-        + (q.displayName ? ' · ' + esc(q.displayName) : '') + (a.lastError ? ' · 最近错误：' + esc(a.lastError) : '') + '</div>'
-      : '<div class="cell-sub">' + (q ? '额度查询失败：' + esc(a.lastError || '未知错误') : '尚未获取额度快照') + '</div>';
+        + '<div class="cell-sub aux-text">余额 <span class="usable-balance" title="' + balanceTitle + '">' + money(usable) + '</span>'
+        + (q.plan && q.plan.planId ? ' · 套餐 ' + esc(planLabel(q.plan.planId)) : '')
+        + (q.displayName ? ' · ' + esc(q.displayName) : '') + '</div>'
+        + (a.lastError ? '<div class="cell-error">最近错误：' + esc(a.lastError) + '</div>' : '')
+      : '<div class="cell-error">' + (q ? '额度查询失败：' + esc(a.lastError || '未知错误') : '尚未获取额度快照') + '</div>';
     const test = testResults.get(a.keyId);
     const testNote = test
       ? '<div class="test-note ' + (test.ok ? 'ok' : 'bad') + '">'
@@ -923,13 +994,13 @@ function renderAccounts() {
       : '';
     return '<tr>'
       + '<td data-label="备注名"><div class="cell-name">' + esc(a.name) + '</div>' + testNote + '</td>'
-      + '<td data-label="keyId / keyPrefix" class="mono cell-sub">' + id + '<br>' + esc(a.keyPrefix) + '…</td>'
+      + '<td data-label="keyId / keyPrefix" class="mono cell-sub">' + id + '<br>' + maskedKey(a.keyPrefix) + '</td>'
       + '<td data-label="额度" class="cell-quota">' + quota + '</td>'
       + '<td data-label="状态">' + statusTag(a) + '</td>'
       + '<td data-label="操作" class="actions">'
-      + '<button class="btn" type="button" data-act="test" data-id="' + id + '">测试连通性</button>'
-      + '<button class="btn" type="button" data-act="toggle" data-id="' + id + '">' + (a.enabled ? '停用' : '启用') + '</button>'
-      + '<button class="btn" type="button" data-act="rename" data-id="' + id + '">改备注</button>'
+      + '<button class="btn outline" type="button" data-act="test" data-id="' + id + '">测试连通性</button>'
+      + '<button class="btn ' + (a.enabled ? 'warning' : 'outline') + '" type="button" data-act="toggle" data-id="' + id + '">' + (a.enabled ? '停用' : '启用') + '</button>'
+      + '<button class="btn outline" type="button" data-act="rename" data-id="' + id + '">改备注</button>'
       + '<button class="btn danger" type="button" data-act="del" data-id="' + id + '">删除</button>'
       + '</td></tr>';
   }).join('');
@@ -949,7 +1020,7 @@ function renderKeys() {
     return '<tr>'
       + '<td data-label="名称"><div class="cell-name">' + esc(k.name) + '</div></td>'
       + '<td data-label="keyId" class="mono cell-sub">' + id + '</td>'
-      + '<td data-label="keyPrefix" class="mono cell-sub">' + esc(k.keyPrefix) + '…</td>'
+      + '<td data-label="keyPrefix" class="mono cell-sub">' + maskedKey(k.keyPrefix) + '</td>'
       + '<td data-label="创建时间" class="cell-sub">' + esc(k.createdAt ? timeText(k.createdAt) : '—') + '</td>'
       + '<td data-label="操作" class="actions"><button class="btn danger" type="button" data-act="delkey" data-id="' + id + '">删除</button></td>'
       + '</tr>';
@@ -971,10 +1042,10 @@ function renderUsers() {
       + '<td data-label="用户名"><div class="cell-name">' + name + (isSelf ? ' <span class="tag info">当前登录</span>' : '') + '</div></td>'
       + '<td data-label="创建时间" class="cell-sub">' + esc(u.createdAt ? timeText(u.createdAt) : '—') + '</td>'
       + '<td data-label="操作" class="actions">'
-      + '<button class="btn" type="button" data-act="pass" data-name="' + name + '">改密码</button>'
+      + '<button class="btn outline" type="button" data-act="pass" data-name="' + name + '">改密码</button>'
       + (list.length > 1
         ? '<button class="btn danger" type="button" data-act="deluser" data-name="' + name + '">删除</button>'
-        : '<button class="btn" type="button" disabled title="至少保留一个管理员">删除</button>')
+        : '<button class="btn danger" type="button" disabled title="至少保留一个管理员">删除</button>')
       + '</td></tr>';
   }).join('');
 }
@@ -1032,13 +1103,16 @@ async function loadEvents() {
 }
 
 async function loadAll() {
-  await loadAccounts();
-  $('autherr').className = 'banner hidden';
-  await Promise.all([
-    loadKeys().catch((e) => { if (e.status !== 401) toast('客户端 key 加载失败：' + e.message, true); }),
-    loadUsers().catch((e) => { if (e.status !== 401) toast('管理员加载失败：' + e.message, true); }),
-    loadEvents().catch((e) => { if (e.status !== 401) toast('事件加载失败：' + e.message, true); }),
-  ]);
+  try {
+    await loadAccounts();
+    $('autherr').className = 'banner hidden';
+    await Promise.all([loadKeys(), loadUsers(), loadEvents()]);
+    clearLoadError();
+    return true;
+  } catch (e) {
+    if (!e || e.status !== 401) showLoadError(e);
+    return false;
+  }
 }
 
 // ── 弹窗 ────────────────────────────────────────────────────────────
@@ -1278,13 +1352,18 @@ async function boot() {
   state.auth = me;
   if (!me.authenticated) return showGate(me.setupRequired ? 'setup' : 'login');
   showAdmin();
-  await loadAll();
+  try {
+    await loadAll();
+  } catch (e) {
+    showLoadError(e);   // loadAll 正常会自吞；这里兜底保证 boot 也绝不漏 rejection
+  }
   if (!me.setupRequired && me.user && me.user.username) $('who').innerHTML = '已登录 <b>' + esc(me.user.username) + '</b>';
 }
 
+$('load-retry').onclick = () => boot().catch(showLoadError);
 const savedTheme = storedTheme();
 if (savedTheme) document.documentElement.setAttribute('data-theme', savedTheme);
-boot();
+boot().catch(showLoadError);
 setInterval(() => {
   if (!document.hidden && document.body.className !== 'gate') loadEvents().catch(() => {});
 }, 10000);

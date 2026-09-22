@@ -63,7 +63,8 @@ class HttpError extends Error {
 
 // 取 session id 只需 body 首块（F11）：读满这么多或 body 结束就立刻开始转发，
 // 不再等整个 body 收完才建立上游连接（SPEC §7 要求流式透传）。
-const BODY_PEEK_BYTES = 8192;
+// 导出供回归测试直接验证 peek 的缓冲上限与监听器清理（审查#1）
+export const BODY_PEEK_BYTES = 8192;
 // 收到首块后最多再等这么久找 session id（毫秒），到点就放行开始转发。
 const BODY_PEEK_IDLE_MS = 150;
 // docker stop 默认宽限期 10s，这里留一半余量给在途请求自然结束（F3）
@@ -123,10 +124,14 @@ export async function startGateway(overrides = {}) {
     lockMs: LOGIN_LOCK_MS,
     maxLockMs: LOGIN_MAX_LOCK_MS,
     now: () => Date.now(),
+    // 全局尝试预算（不分用户名）：轮换用户名刷登录也会被限速，不再无限触发 scrypt
+    attemptMax: Number(config.loginAttemptsPerMinute) > 0 ? Number(config.loginAttemptsPerMinute) : 60,
+    attemptWindowMs: 60 * 1000,
   });
   let users = [];
   let setupInProgress = false;
-  // 用户不存在时也做一次等价开销的哈希校验，避免用响应时间探测出「哪些用户名存在」
+  // 用户不存在时也做一次等价开销的哈希校验，避免用响应时间探测出「哪些用户名存在」。
+  // hashPassword 是异步的，这里缓存的是 Promise（只算一次，之后各次失败登录 await 同一份）。
   let dummyHash = null;
   const dummyPasswordHash = () => {
     dummyHash ??= hashPassword(randomBytes(16).toString('hex'));
@@ -291,7 +296,7 @@ export async function startGateway(overrides = {}) {
         const username = validateUsername(body.username);
         const password = validatePassword(body.password);
         if (users.length > 0) throw new HttpError(403, '已完成初始化，初始化接口已永久关闭');
-        users = store.saveUsers([{ username, passwordHash: hashPassword(password), createdAt: Date.now() }]);
+        users = store.saveUsers([{ username, passwordHash: await hashPassword(password), createdAt: Date.now() }]);
         note('info', `后台初始化完成：创建管理员「${username}」（${ip}）`);
         setSession(res, username, secure);
         return sendJSON(res, 201, { ok: true, user: { username } });
@@ -311,7 +316,7 @@ export async function startGateway(overrides = {}) {
       if (gate.locked) return rateLimited(res, gate.retryAfterMs);
 
       const user = findUser(username);
-      const passwordOk = verifyPassword(password, user ? user.passwordHash : dummyPasswordHash());
+      const passwordOk = await verifyPassword(password, user ? user.passwordHash : await dummyPasswordHash());
 
       if (!user || !passwordOk) {
         const r = loginLimiter.fail(ip, username || null);
@@ -397,10 +402,16 @@ export async function startGateway(overrides = {}) {
     return { account, snapshot };
   }
 
-  // 进行中的一轮刷新（含手动点「刷新额度」触发的）：轮询要据此跳过，避免叠起来
+  // 进行中的一轮刷新（含手动点「刷新额度」触发的）：轮询据此跳过，避免叠起来
   let refreshInFlight = null;
 
+  /**
+   * 审查#5：进行中的刷新直接复用同一个 Promise —— 手动刷新 / 轮询 / 启动刷新
+   * 全部走这一个入口。早先每次调用都新开一轮 doRefreshAll()，refreshInFlight 只挡住了
+   * 轮询，手动连点就会叠加多轮全账号查询（每轮每账号 4 个上游请求）。
+   */
   function refreshAll() {
+    if (refreshInFlight) return refreshInFlight;
     const p = doRefreshAll().finally(() => { if (refreshInFlight === p) refreshInFlight = null; });
     refreshInFlight = p;
     return p;
@@ -855,7 +866,7 @@ export async function startGateway(overrides = {}) {
       const username = validateUsername(body.username);
       const password = validatePassword(body.password);
       if (findUser(username)) throw new HttpError(400, `管理员「${username}」已存在`);
-      users = store.saveUsers([...users, { username, passwordHash: hashPassword(password), createdAt: Date.now() }]);
+      users = store.saveUsers([...users, { username, passwordHash: await hashPassword(password), createdAt: Date.now() }]);
       note('info', `新增管理员「${username}」（${actorOf(req)}）`);
       return sendJSON(res, 201, { ok: true, users: usersView() });
     }
@@ -874,14 +885,15 @@ export async function startGateway(overrides = {}) {
         const actorUser = findUser(actor);
         const confirm = typeof body.currentPassword === 'string' ? body.currentPassword : '';
         const ok = !!actorUser && confirm.length > 0
-          && verifyPassword(confirm, actorUser.passwordHash);
+          && await verifyPassword(confirm, actorUser.passwordHash);
         if (!ok) {
           throw new HttpError(403, `修改他人（「${username}」）的密码需要提供当前管理员「${actor}」的密码`);
         }
       }
       const password = validatePassword(body.password);
+      const newHash = await hashPassword(password);
       users = store.saveUsers(users.map((u) => (safeEqualText(u.username, username)
-        ? { ...u, passwordHash: hashPassword(password) }
+        ? { ...u, passwordHash: newHash }
         : u)));
       // 改密码 = 踢掉该管理员的所有旧会话（含自己之外的其它浏览器）
       const killed = sessions.revokeUser(username);
@@ -906,6 +918,11 @@ export async function startGateway(overrides = {}) {
       const body = await readJSONBody(req);
       const name = cleanName(body.name);
       const key = cleanAccountKey(body.key);
+      // 审查#11：enabled 只接受严格布尔（JSON 里的 true/false）。
+      // 早先 `!== false` 会把字符串 "false" 当成启用（前端/脚本传错类型就被静默反转）。
+      if (body.enabled !== undefined && typeof body.enabled !== 'boolean') {
+        throw new HttpError(400, 'enabled 必须是布尔值（true/false）');
+      }
       if (accounts.some((a) => a.key === key)) throw new HttpError(400, '账号 key 已存在，不能重复添加');
       store.saveAccounts([...credentialAccounts(), { name, key, enabled: body.enabled !== false }]);
       reloadNow();
@@ -932,6 +949,13 @@ export async function startGateway(overrides = {}) {
         log,
       });
       const view = { ...result, keyId: keyIdOf(key), keyPrefix: keyPrefixOf(key), checkedAt: Date.now(), name };
+      // 明确的鉴权恢复路径（审查#3）：whoami 就是「上游鉴权类请求」，它成功 = 这把 key 的
+      // 鉴权确认恢复。额度刷新（recordQuota）无权清 markAuthInvalid，只有这里能清。
+      const poolAccount = accounts.find((a) => a.key === key) ?? null;
+      if (result.ok && poolAccount) {
+        scheduler.clearAuthInvalid(poolAccount);
+        note('info', `连通性测试确认鉴权恢复：keyId=${view.keyId}（${actorOf(req)}）`);
+      }
       testHistory.unshift(view);
       while (testHistory.length > TEST_HISTORY_MAX) testHistory.pop();
       note(result.ok
@@ -948,7 +972,11 @@ export async function startGateway(overrides = {}) {
       const body = await readJSONBody(req);
       if (body.name === undefined && body.enabled === undefined) throw new HttpError(400, '至少要提供 name 或 enabled');
       const name = body.name === undefined ? target.name : cleanName(body.name);
-      const enabled = body.enabled === undefined ? target.enabled !== false : !!body.enabled;
+      // 审查#11：同上，严格布尔校验；非法类型直接 400，不许静默转换
+      if (body.enabled !== undefined && typeof body.enabled !== 'boolean') {
+        throw new HttpError(400, 'enabled 必须是布尔值（true/false）');
+      }
+      const enabled = body.enabled === undefined ? target.enabled !== false : body.enabled;
       const next = credentialAccounts().map((a) => (a.key === target.key ? { ...a, name, enabled } : a));
       store.saveAccounts(next);
       reloadNow();
@@ -1249,15 +1277,27 @@ export async function startGateway(overrides = {}) {
  *   4. 收到首块后 idleMs 内没有新的 session id 线索（兜底，不无限等）
  * 放行时总是先 pause()，由 pipingBody 接手并 resume()，保证不丢字节。
  */
-function peekBody(req, limit, { idleMs = BODY_PEEK_IDLE_MS, match = null } = {}) {
+export function peekBody(req, limit, { idleMs = BODY_PEEK_IDLE_MS, match = null } = {}) {
   return new Promise((resolve) => {
     const chunks = [];
     let size = 0;
     let done = false;
     let idleTimer = null;
+    const onEnd = () => finish(true);
+    const onError = () => finish(false);
+    const onAborted = () => finish(false);
+    const onClose = () => finish(false);
     const cleanup = () => {
       if (idleTimer) clearTimeout(idleTimer);
       idleTimer = null;
+      // 审查#1：放行时必须摘掉**全部**请求监听器（尤其 data）。
+      // 早先只清 timer，data 监听器继续 chunks.push —— peek 已经放行了，chunks 却还在
+      // 随整个请求体增长，与 pipingBody() 的重试缓冲各驻留一份完整 body（大上传直接翻倍内存）。
+      req.off('data', onData);
+      req.off('end', onEnd);
+      req.off('error', onError);
+      req.off('aborted', onAborted);
+      req.off('close', onClose);
     };
     const finish = (ended) => {
       if (done) return;
@@ -1272,8 +1312,11 @@ function peekBody(req, limit, { idleMs = BODY_PEEK_IDLE_MS, match = null } = {})
       idleTimer.unref?.();
     };
     const onData = (chunk) => {
-      // 整块收下（不做 subarray 截断），保证 peek 出去的字节能被原样重放给上游。
-      // 代价是最多多读一个 chunk，超出 limit 的部分无关紧要。
+      if (done) return;
+      // 硬上限（审查#1）：缓冲到 limit 就停止收集并立刻放行，后面的字节交给 pipingBody。
+      // 已收下的 chunk 整块保留（不做 subarray 截断），保证 peek 出去的字节能被原样重放给上游；
+      // 代价是最多多读**一个** chunk，绝不会随请求体继续膨胀。
+      if (size >= limit) return finish(false);
       chunks.push(chunk);
       size += chunk.length;
       if (match && match(chunks)) return finish(false);
@@ -1282,10 +1325,10 @@ function peekBody(req, limit, { idleMs = BODY_PEEK_IDLE_MS, match = null } = {})
       armIdle();
     };
     req.on('data', onData);
-    req.once('end', () => finish(true));
-    req.once('error', () => finish(false));
-    req.once('aborted', () => finish(false));
-    req.once('close', () => finish(false));
+    req.once('end', onEnd);
+    req.once('error', onError);
+    req.once('aborted', onAborted);
+    req.once('close', onClose);
   });
 }
 

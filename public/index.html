@@ -26,8 +26,8 @@
 
     /* 文字（小字至少 4.5:1） */
     --text-primary: #2d1b3d;
-    --text-secondary: #5f4d72;
-    --text-tertiary: #6f5d82;
+    --text-secondary: #554365;
+    --text-tertiary: #5f4d72;
 
     /* 语义色 */
     --accent: #e8668a;
@@ -47,6 +47,9 @@
     --danger: #c8303f;
     --danger-light: #fde9eb;
     --info: #2f6ab3;
+    --success-ink: #17633f;
+    --warning-ink: #704300;
+    --danger-ink: #a3182b;
 
     /* 字阶 */
     --fs-2xs: 10.5px;
@@ -85,8 +88,8 @@
       --border-strong: #4d3d58;
 
       --text-primary: #ece6f0;
-      --text-secondary: #c3b8cd;
-      --text-tertiary: #ab9fb8;
+      --text-secondary: #d4c9dd;
+      --text-tertiary: #bcb0c8;
 
       --accent: #f2a0b5;
       --accent-hover: #e8668a;
@@ -105,6 +108,9 @@
       --danger: #ff8095;
       --danger-light: #3d2029;
       --info: #7fb3f5;
+      --success-ink: #79e2aa;
+      --warning-ink: #ffd082;
+      --danger-ink: #ff9aaa;
 
       --shadow-soft: 0 1px 2px rgba(0, 0, 0, .3);
       --shadow-lift: 0 8px 24px rgba(0, 0, 0, .45);
@@ -118,8 +124,8 @@
     --border-strong: #4d3d58;
 
     --text-primary: #ece6f0;
-    --text-secondary: #c3b8cd;
-    --text-tertiary: #ab9fb8;
+    --text-secondary: #d4c9dd;
+    --text-tertiary: #bcb0c8;
 
     --accent: #f2a0b5;
     --accent-hover: #e8668a;
@@ -138,6 +144,9 @@
     --danger: #ff8095;
     --danger-light: #3d2029;
     --info: #7fb3f5;
+    --success-ink: #79e2aa;
+    --warning-ink: #ffd082;
+    --danger-ink: #ff9aaa;
 
     --shadow-soft: 0 1px 2px rgba(0, 0, 0, .3);
     --shadow-lift: 0 8px 24px rgba(0, 0, 0, .45);
@@ -156,6 +165,7 @@
   }
   h1, h2, h3 { line-height: var(--lh-heading); }
   .mono { font-family: var(--font-mono); }
+  .aux-text { color: var(--text-secondary); }
 
   /* ── 极淡的左上角粉色光晕（永远在内容之下）────────────────── */
   body::before {
@@ -311,8 +321,8 @@
     font-size: var(--fs-xs); color: var(--text-secondary);
     background: var(--surface-2); border: 1px solid var(--border-strong);
   }
-  .pill.ok { color: var(--success); border-color: var(--success); background: var(--success-light); }
-  .pill.bad { color: var(--danger); border-color: var(--danger); background: var(--danger-light); }
+  .pill.ok { color: var(--success-ink); border-color: var(--success); background: var(--success-light); }
+  .pill.bad { color: var(--danger-ink); border-color: var(--danger); background: var(--danger-light); }
 
   /* KPI：语义色 + 收紧高度 + 极小图标 */
   .kpis {
@@ -349,8 +359,13 @@
 
   /* ── 账号卡片网格：自适应铺满 ─────────────────────────── */
   .grid {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
-    gap: 16px; align-items: start;
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px; align-items: stretch;
+  }
+  .card-wide { grid-column: 1 / -1; }
+  @media (max-width: 860px) {
+    .grid { grid-template-columns: minmax(0, 1fr); }
+    .card-wide { grid-column: auto; }
   }
   .card {
     padding: var(--card-pad); border-radius: var(--radius-card);
@@ -361,9 +376,10 @@
   .card.empty { grid-column: 1 / -1; color: var(--text-secondary); text-align: center; padding: 34px var(--card-pad); }
 
   /* 卡片内部双栏：左信息+余额 / 右进度条 */
-  .card-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 20px; }
-  .card-col-left { min-width: 0; }
-  .card-col-right { min-width: 0; }
+  .card-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 20px; align-items: stretch; }
+  .card-col-left { min-width: 0; height: 100%; display: flex; flex-direction: column; }
+  .card-col-right { min-width: 0; height: 100%; display: flex; flex-direction: column; }
+  .card-col-left .card-fresh { margin-top: auto; padding-top: 6px; }
   @media (max-width: 620px) { .card-grid { grid-template-columns: minmax(0, 1fr); gap: 16px; } }
 
   .card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
@@ -407,10 +423,11 @@
     font-variant-numeric: tabular-nums; min-width: 52px; text-align: right;
   }
   .bar {
-    height: 8px; border-radius: var(--pill); background: var(--surface-2);
-    border: 1px solid var(--border); overflow: hidden;
+    height: 6px; min-height: 6px; border: 0; border-radius: var(--pill);
+    background: var(--border-strong); overflow: hidden;
   }
-  .bar > i { display: block; height: 100%; border-radius: var(--pill); transition: width .45s ease; }
+  .bar.is-empty { height: 6px; min-height: 6px; }
+  .bar > i { display: block; height: 100%; min-height: 6px; border-radius: var(--pill); transition: width .45s ease; }
   .s-ok > i { background: var(--success); }
   .s-warn > i { background: var(--warning); }
   .s-bad > i { background: var(--danger); }
@@ -418,15 +435,15 @@
   .card-usage { margin-top: 12px; font-size: var(--fs-xs); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 
   /* 底部标签统一成 pill */
-  .tags { margin-top: 14px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .tags { margin-top: 14px; display: flex; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
   .tag {
     display: inline-block; font-size: var(--fs-xs); padding: 3px 10px; border-radius: var(--pill);
     background: var(--surface-2); border: 1px solid var(--border-strong); color: var(--text-secondary);
     white-space: nowrap;
   }
-  .tag.ok { color: var(--success); border-color: var(--success); background: var(--success-light); }
-  .tag.bad { color: var(--danger); border-color: var(--danger); background: var(--danger-light); }
-  .tag.warn { color: var(--warning); border-color: var(--warning); background: var(--warning-light); }
+  .tag.ok { color: var(--success-ink); border-color: var(--success); background: var(--success-light); }
+  .tag.bad { color: var(--danger-ink); border-color: var(--danger); background: var(--danger-light); }
+  .tag.warn { color: var(--warning-ink); border-color: var(--warning); background: var(--warning-light); }
   .tag.info { color: var(--accent-ink); border-color: var(--accent); background: var(--accent-light); }
 
 
@@ -499,7 +516,7 @@
         <span class="bal-label">剩余额度（USD）</span>
       </div>
       <p class="hero-sub">网关运行中 <span id="health" class="pill">加载中…</span></p>
-      <p class="hero-meta"><span id="upstream"></span><span id="updated"></span><span id="cadence" class="hero-cadence"></span></p>
+      <p class="hero-meta aux-text"><span id="upstream"></span><span id="updated"></span><span id="cadence" class="hero-cadence"></span></p>
     </div>
     <div class="hero-aside">
       <div class="hero-clock">
@@ -707,33 +724,34 @@ function bar(label, w, opts) {
   const amounts = has && typeof w.used === 'number' && typeof w.cap === 'number'
     ? money(w.used) + ' / ' + money(w.cap) : null;
   const reset = has ? resetText(w, { zeroMeansIdle: label.indexOf('5 小时') === 0 }) : '';
+  const empty = pct === null || pct <= 0;
   return '<div class="bar-group"' + (amounts ? ' title="' + esc(label + '：已用 ' + amounts) + '"' : '') + '>'
     + '<div class="bar-head"><span class="bar-label">' + label + '</span>'
     + '<span class="bar-pct">' + pctText(pct) + '</span></div>'
-    + '<div class="bar ' + cls(pct) + '"><i style="width:' + (pct === null ? 0 : Math.max(0, Math.min(100, pct))) + '%"></i></div>'
+    + '<div class="bar ' + cls(pct) + (empty ? ' is-empty' : '') + '"><i style="width:' + (pct === null ? 0 : Math.max(0, Math.min(100, pct))) + '%"></i></div>'
     + (reset ? '<div class="bar-reset">' + esc(reset) + '</div>' : '')
     + '</div>';
 }
 
-function statusText(a) {
-  if (a.authInvalid) return { t: '鉴权失效', dot: 'invalid' };
-  if (!a.enabled) return { t: '已停用', dot: 'paused' };
-  if (a.paused) return { t: '暂停中', dot: 'paused' };
+function accountStatus(a) {
+  if (a.authInvalid) return { t: '鉴权失效', tone: 'bad', dot: 'invalid', schedulable: false };
+  if (!a.enabled) return { t: '已停用', tone: 'warn', dot: 'paused', schedulable: false };
+  if (a.paused || a.rateLimited) return { t: '冷却中', tone: 'warn', dot: 'paused', schedulable: false };
   // 额度耗尽统一口径：周/5 小时窗口用完、月额度用完，都说「已用完」而不是笼统的
   // 「不可调度」——用户要的正是这种可读性（副号1 = 周用完，主号 = 月用完）。
-  if (a.exhausted && a.exhausted.label) return { t: a.exhausted.label, dot: 'invalid' };
-  if (a.creditsExhausted) return { t: '余额不足', dot: 'invalid' };   // 兼容旧后端
-  if (a.authInvalid) return { t: '鉴权失效', dot: 'invalid' };
-  if (!a.available) return { t: '不可调度', dot: 'invalid' };
-  return { t: '可用', dot: '' };
+  if (a.exhausted && a.exhausted.label) return { t: a.exhausted.label, tone: 'bad', dot: 'invalid', schedulable: false };
+  if (a.creditsExhausted) return { t: '余额不足', tone: 'bad', dot: 'invalid', schedulable: false };
+  if (!a.available) return { t: '不可调度', tone: 'bad', dot: 'invalid', schedulable: false };
+  return { t: '可用', tone: 'ok', dot: '', schedulable: true };
 }
+function statusText(a) { return accountStatus(a); }
 
 /** 额度新鲜度行：带 data-fetched-at，交给每秒的 tickFreshness() 重算。 */
 function freshHTML(fetchedAt) {
   const t = Number(fetchedAt);
   const known = Number.isFinite(t) && t > 0;
   const f = freshness(known ? t : NaN);
-  return '<div class="card-fresh' + (f.stale ? ' is-stale' : '') + '"'
+  return '<div class="card-fresh aux-text' + (f.stale ? ' is-stale' : '') + '"'
     + (known ? ' data-fetched-at="' + t + '"' : '')
     + (f.stale ? ' title="额度快照已超过 10 分钟未更新"' : '')
     + '>' + esc(f.text) + '</div>';
@@ -749,18 +767,18 @@ function usableRemaining(a) {
   return q.remaining;                                     // 含 window：只是排队，钱没死
 }
 
-function card(a) {
+function card(a, wideLast = false) {
   const ex = a.exhausted || null;   // 统一口径的「额度已用完」（含恢复时间）
   const q = a.lastQuota;
   const c = q && q.credits ? q.credits : null;
   const st = statusText(a);
-  const cardCls = st.dot;
+  const cardCls = st.dot + (wideLast ? ' card-wide' : '');
   const tags = [];
-  tags.push(a.enabled ? '<span class="tag ok">已启用</span>' : '<span class="tag warn">手动停用</span>');
   // 防御性：暂停/停用的账号绝不能同时标「可调度」。后端 isAvailable 已保证
   // （now 有默认值），但前端不该依赖单一数据源——历史 bug 就是这里露出矛盾的。
-  const schedulable = a.available && a.enabled !== false && !a.paused && !a.authInvalid;
-  tags.push(schedulable ? '<span class="tag ok">可调度</span>' : '<span class="tag bad">不可用</span>');
+  const schedulable = a.available && a.enabled !== false && !a.paused && !a.rateLimited && !a.authInvalid;
+  const stateBadge = (a.enabled ? '已启用' : '已停用') + ' · ' + (schedulable ? '可调度' : '不可用');
+  tags.push('<span class="tag ' + (schedulable ? 'ok' : a.enabled ? 'bad' : 'warn') + '">' + stateBadge + '</span>');
   if (a.paused) tags.push('<span class="tag warn">暂停至 ' + esc(timeText(a.pausedUntil)) + '</span>');
   if (a.authInvalid) tags.push('<span class="tag bad">鉴权失效</span>');
   // 余额不足和「额度打满」不一样：5h 窗口等了会自己回来，钱不会 —— 说清楚要充值
@@ -783,8 +801,8 @@ function card(a) {
     // 前台只显示备注名（h2 里）+ 上游显示名，不下发也不渲染 key 的任何片段
     + '<div class="card-money"><b>' + money(usableRemaining(a)) + '</b><small>剩余额度</small></div>'
     + (c
-      ? '<div class="card-credits">月度 ' + money(usableRemaining(a) && c.monthlyCredits) + ' · 购买 ' + money(usableRemaining(a) && c.purchasedCredits) + ' · 赠送 ' + money(usableRemaining(a) && c.freeCredits) + '</div>'
-      : '<div class="card-credits">尚未获取额度快照</div>')
+      ? '<div class="card-credits aux-text">月度 ' + money(usableRemaining(a) && c.monthlyCredits) + ' · 购买 ' + money(usableRemaining(a) && c.purchasedCredits) + ' · 赠送 ' + money(usableRemaining(a) && c.freeCredits) + '</div>'
+      : '<div class="card-credits aux-text">尚未获取额度快照</div>')
     + (q ? freshHTML(q.fetchedAt) : '')
     + '</div>';
 
@@ -794,7 +812,7 @@ function card(a) {
     + bar('本周窗口', q && q.weekly, { spent: ex && ex.kind === 'window' && ex.window === 'weekly' })
     + bar('本月周期', q && q.monthly, { spent: ex && ex.kind === 'monthly' })
     + '</div>'
-    + (q && q.usage ? '<div class="card-usage">本周期 token ' + esc(num(q.usage.totalTokens))
+    + (q && q.usage ? '<div class="card-usage aux-text">本周期 token ' + esc(num(q.usage.totalTokens))
       + (q.usage.totalCost === undefined ? '' : ' · 花费 ' + money(q.usage.totalCost)) + '</div>' : '')
     + '</div>';
 
@@ -817,7 +835,7 @@ function renderCards() {
       : '账号池为空。请在 accounts.json 里配置账号，或用 CC_ACCOUNTS 环境变量注入。') + '</div>';
     return;
   }
-  $('cards').innerHTML = list.map(card).join('');
+  $('cards').innerHTML = list.map((a, i) => card(a, i === list.length - 1 && list.length % 2 === 1)).join('');
 }
 
 function render(d) {
@@ -880,14 +898,20 @@ function showPrivate() {
     + '请先<a href="/admin">登录后台</a>再查看面板数据。</div>';
 }
 
+let loadGeneration = 0;
 async function load() {
+  const generation = ++loadGeneration;
   try {
     const r = await apiFetch('/api/status');
+    if (generation !== loadGeneration) return;   // 过期请求直接丢弃
     if (r.status === 401) { showPrivate(); return; }
     if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    if (generation !== loadGeneration) return;   // 慢响应不得覆盖新响应
     setHint('', false);
-    render(await r.json());
+    render(data);
   } catch (e) {
+    if (generation !== loadGeneration) return;
     $('health').textContent = '加载失败：' + e.message;
     $('health').className = 'pill bad';
   }

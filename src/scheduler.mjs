@@ -14,7 +14,10 @@ const RATE_LIMIT_COOLDOWN_MS = 60 * 1000;
 export function quotaWindows(quota) {
   const out = [];
   for (const w of [quota?.fiveHour, quota?.weekly]) {
-    if (w && typeof w.usedRatio === 'number') out.push(w);
+    // 审查#7：缺有效 cap 的窗口 usedRatio=null，早先直接被这里过滤掉 ——
+    // 于是上游**明确**的 exceeded=true 反而不参与可用性判断。判定条件：
+    // 有 usedRatio（可算比例）**或** 上游点了 exceeded（权威超限标记）。
+    if (w && (typeof w.usedRatio === 'number' || w.exceeded === true)) out.push(w);
   }
   return out;
 }
@@ -30,8 +33,9 @@ export function ratioWindow(quota) {
   return worst;
 }
 
-/** 单个窗口的剩余比例：1 - used/cap；cap 无效按 1.0。 */
+/** 单个窗口的剩余比例：1 - used/cap；cap 无效按 1.0（但上游点了 exceeded 就是 0）。 */
 function ratioOf(w) {
+  if (w?.exceeded === true) return 0.0;   // 权威超限标记 = 一滴不剩，哪怕 cap 缺失
   const used = Number(w.used) || 0;
   const cap = Number(w.cap) || 0;
   if (!(cap > 0)) return 1.0;
@@ -88,17 +92,31 @@ export function isCreditsExhausted(status, bodyText = '') {
 
 export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffinity = 2000, log } = {}) {
   // 运行期状态：state.accounts[keyId]
+  const blankRuntime = () => ({
+    concurrency: 0, pausedUntil: null, lastQuota: null, lastError: null, lastErrorAt: null,
+    // 普通限流（429 但非额度耗尽）的短冷却，绝不变成 5 小时停用
+    rateLimitedUntil: null,
+    // 上游明确说「余额不足」：账号级状态，{ at, remaining, message }
+    creditsExhausted: null,
+    // 鉴权失效：状态 + 原因 + 发现时间（额度刷新不得撤销，见 recordQuota）
+    authInvalid: false, authInvalidReason: null, authInvalidAt: null,
+  });
+
+  /** 账号是否还在池子里（热删除后即为 false）。 */
+  const isLive = (account) => !!account && accounts.some((a) => a.keyId === account.keyId);
+
+  /**
+   * 取运行期状态（审查#6）。
+   *
+   * 账号已从池子里删掉（或本来就不在池里，如透传伪账号）→ 返回一份**游离**的空状态对象：
+   * 读路径照常不炸，写路径写进这份一次性对象对持久化状态等价于 no-op。于是删除账号后
+   * 迟到的额度刷新 / 代理回调不会再调用 runtime() 把已删 keyId 重建回来并被 saveState() 落盘。
+   */
   const runtime = (account) => {
-    if (!state.accounts[account.keyId]) {
-      state.accounts[account.keyId] = {
-        concurrency: 0, pausedUntil: null, lastQuota: null, lastError: null, lastErrorAt: null,
-        // 普通限流（429 但非额度耗尽）的短冷却，绝不变成 5 小时停用
-        rateLimitedUntil: null,
-        // 上游明确说「余额不足」：账号级状态，{ at, remaining }
-        creditsExhausted: null,
-      };
-    }
-    return state.accounts[account.keyId];
+    const id = account?.keyId;
+    if (!id || !isLive(account)) return blankRuntime();
+    if (!state.accounts[id]) state.accounts[id] = blankRuntime();
+    return state.accounts[id];
   };
   for (const a of accounts) runtime(a);
 
@@ -157,6 +175,8 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
    */
   function isAvailable(account, now = Date.now()) {
     if (account.enabled === false) return false;
+    // 已删除 / 不在池里的账号（含透传伪账号）不参与调度（审查#6）
+    if (!isLive(account)) return false;
     const rt = runtime(account);
     if (rt.pausedUntil && rt.pausedUntil > now) return false;
     if (rt.rateLimitedUntil && rt.rateLimitedUntil > now) return false;
@@ -224,8 +244,10 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
       rt.lastQuota = snapshot;
       rt.lastError = null;
       rt.lastErrorAt = null;
-      rt.authInvalid = false;
       rt.rateLimitedUntil = null;
+      // 审查#3：**绝不**在这里动 authInvalid。额度查询成功不代表出错的那条鉴权路径恢复了，
+      // 失败更不能把它重置成 false —— 两者都会让 markAuthInvalid() 的停用被下一轮额度
+      // 刷新悄悄撤销。恢复只走明确路径：clearAuthInvalid()（上游鉴权类请求成功时调用）。
       // 余额不足的自动解除：只看「剩余额度**变多**了」= 充值到账或周期刷新。
       // 不能只看 remaining > 0 —— 实测主号 remaining=$0.098 仍然付不起最小请求，
       // 那样会立刻解除标记再撞一次 400。额度只降不升就说明还没充值，继续停用。
@@ -247,11 +269,25 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
           rt.lastErrorAt = flag.at ?? null;
         }
       }
+      // 鉴权失效同理：状态与原因都保留，面板还要能说出「为什么停用」
+      if (rt.authInvalid) {
+        rt.lastError = rt.authInvalidReason || '账号鉴权失效（已停止调度）';
+        rt.lastErrorAt = rt.authInvalidAt ?? null;
+      }
     } else if (snapshot) {
-      rt.authInvalid = !!snapshot.authInvalid;
+      // 只有上游明确报鉴权错误才置位；不许把已有的 markAuthInvalid 重置回 false
+      if (snapshot.authInvalid) {
+        rt.authInvalid = true;
+        rt.authInvalidReason = String(snapshot.error ?? '账号鉴权失效').slice(0, 300);
+        rt.authInvalidAt = rt.authInvalidAt ?? Date.now();
+      }
       rt.lastError = snapshot.error ?? '额度查询失败';
       rt.lastErrorAt = Date.now();
       rt.lastQuota = rt.lastQuota ?? null;
+      if (rt.authInvalid) {
+        rt.lastError = rt.authInvalidReason || '账号鉴权失效（已停止调度）';
+        rt.lastErrorAt = rt.authInvalidAt ?? null;
+      }
     }
   }
 
@@ -269,8 +305,30 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
   function markAuthInvalid(account, message = null, now = Date.now()) {
     const rt = runtime(account);
     rt.authInvalid = true;
+    rt.authInvalidReason = message !== null
+      ? String(message).slice(0, 300)
+      : (rt.authInvalidReason ?? '账号鉴权失效');
+    rt.authInvalidAt = rt.authInvalidAt ?? now;
     if (message !== null) recordError(account, message, now);
     return rt.authInvalid;
+  }
+
+  /**
+   * 明确的鉴权恢复路径（审查#3）：**上游鉴权类请求成功**（whoami 连通性测试）后由调用方
+   * 显式调用。额度刷新（recordQuota）无权清这个标记 —— 它证明不了出错的那条路径恢复了。
+   */
+  function clearAuthInvalid(account) {
+    const rt = runtime(account);
+    const had = rt.authInvalid;
+    const reason = rt.authInvalidReason;
+    rt.authInvalid = false;
+    rt.authInvalidReason = null;
+    rt.authInvalidAt = null;
+    if (had && reason && rt.lastError === reason) {
+      rt.lastError = null;
+      rt.lastErrorAt = null;
+    }
+    return had;
   }
 
   /**
@@ -299,11 +357,39 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
     return runtime(account).creditsExhausted ?? null;
   }
 
-  /** 额度耗尽 → 暂停到 5h resetAt（无则 now+5h）。 */
-  function pauseForQuota(account, now = Date.now()) {
+  /**
+   * 挑「实际耗尽的窗口」（审查#4）：调用方点名（402/429 报文里的措辞）> 上游点名的
+   * exceededWindow > 已经超限的窗口里最受限的那个 > 最受限窗口。
+   */
+  function exhaustedWindowOf(quota, hint = null) {
+    const known = ['fiveHour', 'weekly'];
+    if (known.includes(hint) && quota?.[hint]) return hint;
+    if (known.includes(quota?.exceededWindow) && quota[quota.exceededWindow]) return quota.exceededWindow;
+    const exhausted = known.filter((k) => {
+      const w = quota?.[k];
+      return w && (w.exceeded === true || (Number(w.cap) > 0 && Number(w.used) >= Number(w.cap)));
+    });
+    const pool = exhausted.length > 0 ? exhausted : known.filter((k) => quota?.[k]);
+    if (pool.length === 0) return null;
+    let worst = pool[0];
+    for (const k of pool.slice(1)) if (ratioOf(quota[k]) < ratioOf(quota[worst])) worst = k;
+    return worst;
+  }
+
+  /**
+   * 额度耗尽 → 暂停到**实际耗尽窗口**的 resetAt（审查#4）。
+   * 历史 bug：永远按 fiveHour.resetAt 算，weekly 耗尽时暂停/复查时间跟着 5h 窗口走。
+   * resetAt 缺失 / 0 / 已过期 → 兜底 now + 5h（宁可到点重查一次，也不盲睡一周；
+   * 复查确认仍未恢复会继续顺延）。
+   */
+  function pauseForQuota(account, now = Date.now(), windowHint = null) {
     const rt = runtime(account);
-    const reset = rt.lastQuota?.fiveHour?.resetAt ?? null;
-    const until = reset && reset * 1000 > now ? reset * 1000 : now + FIVE_HOUR_MS;
+    const key = exhaustedWindowOf(rt.lastQuota, windowHint);
+    const w = key ? rt.lastQuota?.[key] : null;
+    const reset = Number(w?.resetAt);
+    const until = Number.isFinite(reset) && reset > 0 && reset * 1000 > now
+      ? reset * 1000
+      : now + FIVE_HOUR_MS;
     rt.pausedUntil = until;
     return until;
   }
@@ -335,7 +421,11 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
       }
       recordQuota(account, snapshot);
       const q = rt.lastQuota;
-      const recovered_ok = snapshot?.ok && (!q?.fiveHour || q.fiveHour.cap <= 0 || q.fiveHour.used < q.fiveHour.cap);
+      // 审查#4：恢复判定要看**所有**窗口（含 exceeded 标记）：只看 fiveHour 会让
+      // weekly 仍耗尽的账号被提前恢复，然后又撞一次上游 429。
+      const recovered_ok = snapshot?.ok && quotaWindows(q).every(
+        (w) => w.exceeded !== true && !(Number(w.cap) > 0 && Number(w.used) >= Number(w.cap)),
+      );
       if (recovered_ok) {
         rt.pausedUntil = null;
         recovered.push(account.keyId);
@@ -363,6 +453,8 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
     recordQuota,
     markRateLimited,
     markAuthInvalid,
+    clearAuthInvalid,
+    isLive,
     markCreditsExhausted,
     clearCreditsExhausted,
     creditsExhaustedState,

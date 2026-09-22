@@ -7,16 +7,21 @@ import { startMockUpstream } from '../mocks/mock-cc-upstream.mjs';
 
 // ── 单元：什么时候值得去问上游 ────────────────────────────────────────
 test('shouldProbeCredits：官方 belowThreshold 为真必探；余额低于阈值才探；正常账号一次都不探', () => {
-  // 官方标记（creditThreshold 在账号上配过才会为真）
-  assert.equal(shouldProbeCredits({ ok: true, remaining: 50, belowThreshold: true }, 1.0), true);
+  // 数据契约按**真实嵌套结构**（parseSnapshot 的输出）：官方标记在 credits.belowThreshold。
+  // 审查#8 的历史 bug：读的是顶层 belowThreshold → 官方低余额信号永远不触发探针。
+  assert.equal(shouldProbeCredits({ ok: true, remaining: 50, credits: { belowThreshold: true } }, 1.0), true);
 
   // 余额见底：主号线上就是这个样子（$0.098）
-  assert.equal(shouldProbeCredits({ ok: true, remaining: 0.098, belowThreshold: false }, 1.0), true);
-  assert.equal(shouldProbeCredits({ ok: true, remaining: 0.999, belowThreshold: false }, 1.0), true);
+  assert.equal(shouldProbeCredits({ ok: true, remaining: 0.098, credits: { belowThreshold: false } }, 1.0), true);
+  assert.equal(shouldProbeCredits({ ok: true, remaining: 0.999, credits: { belowThreshold: false } }, 1.0), true);
 
   // 正常账号：绝不能去打扰上游（每次探针都是真花钱的请求）
-  assert.equal(shouldProbeCredits({ ok: true, remaining: 9.9, belowThreshold: false }, 1.0), false);
-  assert.equal(shouldProbeCredits({ ok: true, remaining: 1.0, belowThreshold: false }, 1.0), false, '恰好等于阈值不算见底');
+  assert.equal(shouldProbeCredits({ ok: true, remaining: 9.9, credits: { belowThreshold: false } }, 1.0), false);
+  assert.equal(shouldProbeCredits({ ok: true, remaining: 1.0, credits: { belowThreshold: false } }, 1.0), false, '恰好等于阈值不算见底');
+
+  // 兼容旧快照：顶层 belowThreshold 也认（credits 缺失时的回落）
+  assert.equal(shouldProbeCredits({ ok: true, remaining: 50, belowThreshold: true }, 1.0), true, '顶层旧字段也要认');
+  assert.equal(shouldProbeCredits({ ok: true, remaining: 50, credits: {} }, 1.0), false, '两个位置都没有就不能乱探');
 
   // 边界：没有快照 / 查询失败 / 开关关掉（floor<=0）
   assert.equal(shouldProbeCredits(null, 1.0), false);
@@ -143,4 +148,39 @@ test('探针开关关掉时：一次都不打上游，标记也不产生', async
   assert.equal(ctx.upstream.seen.filter((s) => s.url.startsWith('/v1/')).length, 0, '关掉就不该打任何推理请求');
   const d = JSON.parse((await request(`${ctx.baseUrl}/api/status`)).body);
   assert.equal(d.accounts.find((a) => a.name === '账号A').creditsExhausted, false);
+});
+
+
+// ── 集成（审查#8）：官方 belowThreshold 信号要真的把探针打出去 ─────────────────
+test('集成：官方 credits.belowThreshold=true 必须触发一次余额探针（真实嵌套契约）', async (t) => {
+  // 余额本身很健康：这次探针只可能由官方低余额信号触发（金额/比例两条都不满足）
+  const ctx = await startTestGateway({
+    plans: { user_test_alpha: { monthlyCredits: 50, purchasedCredits: 0, freeCredits: 0, totalCost: 1 } },
+  });
+  t.after(() => ctx.close());
+
+  // 伪装上游 /alpha/billing/credits 把真实嵌套的官方低余额信号带给 parseSnapshot
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    const res = await realFetch(url, opts);
+    const auth = opts?.headers?.authorization ?? '';
+    if (String(url).includes('/alpha/billing/credits') && auth === 'Bearer user_test_alpha') {
+      const body = await res.json();
+      body.credits.belowThreshold = true;
+      body.credits.creditThreshold = 60;
+      return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+    }
+    return res;
+  };
+  try {
+    await ctx.gateway.refreshAll();
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+
+  const probes = ctx.upstream.seen.filter((s) => s.url === '/v1/chat/completions');
+  assert.equal(probes.length, 1, `官方低余额信号必须触发一次探针，实际 ${probes.length}`);
+  assert.equal(probes[0].headers.authorization, 'Bearer user_test_alpha', '探针要用该账号自己的 key');
+  const d = JSON.parse((await request(`${ctx.baseUrl}/api/status`)).body);
+  assert.equal(d.accounts.find((a) => a.name === '账号A').creditsExhausted, false, '探针成功（上游可付）不得标记没钱');
 });

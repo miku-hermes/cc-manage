@@ -16,6 +16,18 @@ function clientFor(url) {
   return url.protocol === 'https:' ? https : http;
 }
 
+/**
+ * 从 402/429 报文措辞里认出**被点名的额度窗口**（审查#4）：
+ * `weekly limit reached` / `weekly quota exceeded` → weekly；`5 hour limit` → fiveHour。
+ * 点不出来返回 null，交给调度器按「最受限窗口」挑，绝不默认扣在 fiveHour 上。
+ */
+function quotaWindowHint(text) {
+  const t = String(text ?? '');
+  if (/weekly[\s_-]*(?:limit|quota|window|exceed|exhaust|reached)|周额度|每周额度/i.test(t)) return 'weekly';
+  if (/(?:five[\s_-]*hour|5[\s_-]*hour|5h)[\s_-]*(?:limit|quota|window|exceed|exhaust|reached)/i.test(t)) return 'fiveHour';
+  return null;
+}
+
 /** 读完整响应体（仅用于错误路径，便于脱敏后回给客户端）。 */
 function readBody(stream, cap = ERROR_BODY_CAP) {
   return new Promise((resolve) => {
@@ -276,9 +288,13 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
 
     // 单独记某账号的一次尝试失败：换号重试时原账号的这次尝试也算它的错误，
     // 但**只计账号维度**，不进全局 total/errors —— 一个客户端请求只占一行统计。
+    // 注意这里**不加 globalErrors**：全局 stats.errors 没为它加过，删账号时也不能从全局扣。
+    // 显式把 globalErrors 落成数字（哪怕 0）：pruneState 才分得清「老版本留下的数据」
+    // 与「新数据但确实没有全局贡献」，否则会退化成按 errors 全额扣（审查#15）。
     const bumpAccountError = (acct) => {
       const s = stats.byAccount[acct.keyId] ?? (stats.byAccount[acct.keyId] = { requests: 0, errors: 0, tokens: 0, aborted: 0 });
       s.errors++;
+      s.globalErrors = Number.isFinite(s.globalErrors) ? s.globalErrors : 0;
     };
 
     const accountStatsOf = (acct) => stats.byAccount[acct.keyId]
@@ -296,6 +312,10 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
       if (err) {
         s.errors++;
         stats.errors++;
+        // 审查#15：记下「这账号有多少错误计入了全局 stats.errors」。
+        // pruneState 删账号时只扣这一部分 —— 换号重试产生的账号级错误（见 bumpAccountError）
+        // 从没进过全局，按 s.errors 全额扣会把全局错误统计改错。
+        s.globalErrors = (Number.isFinite(s.globalErrors) ? s.globalErrors : 0) + 1;
       }
       stats.totalTokens += tokens;
       s.tokens += tokens;
@@ -465,9 +485,11 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
               continue;
             }
           } else if (isQuotaError(status, text)) {
-            // 只有明确额度语义（quota / windowLimits / 周期额度）才暂停到 5h resetAt
-            const until = scheduler.pauseForQuota(current);
-            log?.warn?.(`账号「${current.name}」额度耗尽，暂停到 ${new Date(until).toISOString()}`);
+            // 只有明确额度语义（quota / windowLimits / 周期额度）才暂停；
+            // 暂停到**实际耗尽窗口**的 resetAt（weekly 就按周窗口，不再一律扣 5h）
+            const windowHint = quotaWindowHint(text);
+            const until = scheduler.pauseForQuota(current, Date.now(), windowHint);
+            log?.warn?.(`账号「${current.name}」额度耗尽（${windowHint ?? '按最受限窗口'}），暂停到 ${new Date(until).toISOString()}`);
             scheduler.recordError(current, '额度耗尽');
             if (refreshAccount) await refreshAccount(current).catch(() => {});
           } else if (status === 429) {

@@ -26,6 +26,9 @@ export const DEFAULTS = {
   creditsProbeModel: 'deepseek/deepseek-v4-flash',
   creditsProbeTimeoutMs: 20000,
   sessionAffinityTtlMs: 1800000,
+  // 登录尝试令牌桶（审查#3）：每来源每分钟最多多少次「真的要算 scrypt」的登录尝试，**不看用户名**。
+  // 轮换用户名刷登录会被同一个桶挡住；用户名锁定（5 次连错）仍然单独生效。
+  loginAttemptsPerMinute: 60,
   allowPassthrough: false,
   // 请求体上限（F18）：每个在途请求都会把 body tee 进内存供换号重放，
   // 20MB × 并发会直接吃掉容器 256m 的额度。收到 8MB，够放长 prompt。
@@ -58,6 +61,7 @@ const ENV_MAP = {
   CREDITS_PROBE_MODEL: ['creditsProbeModel', 'string'],
   CREDITS_PROBE_TIMEOUT_MS: ['creditsProbeTimeoutMs', 'number'],
   SESSION_AFFINITY_TTL_MS: ['sessionAffinityTtlMs', 'number'],
+  LOGIN_ATTEMPTS_PER_MINUTE: ['loginAttemptsPerMinute', 'number'],
   MAX_BODY_BYTES: ['maxBodyBytes', 'number'],
   MAX_INFLIGHT: ['maxInflight', 'number'],
   ALLOW_PASSTHROUGH: ['allowPassthrough', 'boolean'],

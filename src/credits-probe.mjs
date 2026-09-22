@@ -74,7 +74,10 @@ export async function probeAccountCredits(key, opts = {}) {
  */
 export function shouldProbeCredits(snapshot, floorUsd, floorRatio = DEFAULT_FLOOR_RATIO) {
   if (!snapshot?.ok) return false;
-  if (snapshot.belowThreshold === true) return true;
+  // 审查#8：parseSnapshot 把官方低余额信号放在 credits.belowThreshold（真实报文的嵌套位置），
+  // 早先这里却只读顶层 → 官方信号永远不触发探针。两个位置都认（顶层兼容老快照）。
+  const belowThreshold = snapshot.credits?.belowThreshold ?? snapshot.belowThreshold;
+  if (belowThreshold === true) return true;
   const remaining = Number(snapshot.remaining);
   if (!Number.isFinite(remaining)) return false;
 

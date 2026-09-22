@@ -44,7 +44,10 @@ export function parseWindow(w) {
   if (!w || typeof w !== 'object') return null;
   const hasUsed = w.used !== undefined && w.used !== null;
   const hasCap = w.cap !== undefined && w.cap !== null;
-  if (!hasUsed && !hasCap) return null;
+  // 审查#7：只带 exceeded=true（没有 used/cap）的窗口也要保留 —— 上游的权威超限标记
+  // 不能因为缺 cap 就被解析层丢掉，否则下游永远不会因为它而停用账号。
+  const exceeded = w.exceeded === true;
+  if (!hasUsed && !hasCap && !exceeded) return null;
   const used = num(w.used, 0);
   const cap = num(w.cap, 0);
   const ratio = cap > 0 ? used / cap : null;
@@ -56,7 +59,7 @@ export function parseWindow(w) {
     resetAt: normalizeResetAt(w.resetAt),
     // 上游自带的「这个窗口超了」标记 —— 比我们自己用 used>=cap 反推更权威
     // （实测副号 weekly used=6.003>cap=6 时上游给 exceeded=true）。
-    exceeded: w.exceeded === true,
+    exceeded,
   };
 }
 

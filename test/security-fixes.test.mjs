@@ -324,20 +324,21 @@ test('F15：登出 / 改密码在真实网关里跨重启依然失效（端到�
 });
 
 // ── F16：scrypt 参数与白名单 ─────────────────────────────────────────
-test('F16：新哈希用更高成本参数（N≥2^15），且旧档位仍可校验', () => {
-  const fresh = hashPassword('hunter2-secret');
+// 契约变更（审查#3）：hashPassword/verifyPassword 改异步，这里全部 await
+test('F16：新哈希用更高成本参数（N≥2^15），且旧档位仍可校验', async () => {
+  const fresh = await hashPassword('hunter2-secret');
   const N = Number(fresh.split('$')[1]);
   assert.ok(N >= 1 << 15, `N 必须提到 2^15 以上，实际 ${N}`);
-  assert.ok(verifyPassword('hunter2-secret', fresh));
+  assert.ok(await verifyPassword('hunter2-secret', fresh));
 
   // 旧部署里 N=2^14 的哈希必须仍能登录（兼容性）
-  const legacy = hashPassword('hunter2-secret', { N: 1 << 14, r: 8, p: 1 });
-  assert.ok(verifyPassword('hunter2-secret', legacy), '旧的 N=16384 哈希必须继续可用');
-  const legacy15 = hashPassword('hunter2-secret', { N: 1 << 15 });
-  assert.ok(verifyPassword('hunter2-secret', legacy15));
+  const legacy = await hashPassword('hunter2-secret', { N: 1 << 14, r: 8, p: 1 });
+  assert.ok(await verifyPassword('hunter2-secret', legacy), '旧的 N=16384 哈希必须继续可用');
+  const legacy15 = await hashPassword('hunter2-secret', { N: 1 << 15 });
+  assert.ok(await verifyPassword('hunter2-secret', legacy15));
 });
 
-test('F16：被投毒的 users.json（超大 N/r/p）一律拒绝，绝不按它分配内存', () => {
+test('F16：被投毒的 users.json（超大 N/r/p）一律拒绝，绝不按它分配内存', async () => {
   const salt = Buffer.alloc(16, 1).toString('base64');
   const hash = Buffer.alloc(64, 2).toString('base64');
   const poison = [
@@ -350,15 +351,15 @@ test('F16：被投毒的 users.json（超大 N/r/p）一律拒绝，绝不按它
   ];
   for (const stored of poison) {
     const t0 = Date.now();
-    assert.equal(verifyPassword('hunter2-secret', stored), false, `必须拒绝 ${stored.slice(0, 24)}…`);
+    assert.equal(await verifyPassword('hunter2-secret', stored), false, `必须拒绝 ${stored.slice(0, 24)}…`);
     assert.ok(Date.now() - t0 < 500, `拒绝必须是廉价的，不能真的去算（耗时 ${Date.now() - t0}ms）`);
   }
 });
 
-test('F16：正常档位的白名单参数校验仍然通过', () => {
-  const stored = hashPassword('pw-12345678', { N: 1 << 16, r: 8, p: 1 });
-  assert.ok(verifyPassword('pw-12345678', stored));
-  assert.ok(!verifyPassword('wrong-password', stored));
+test('F16：正常档位的白名单参数校验仍然通过', async () => {
+  const stored = await hashPassword('pw-12345678', { N: 1 << 16, r: 8, p: 1 });
+  assert.ok(await verifyPassword('pw-12345678', stored));
+  assert.ok(!(await verifyPassword('wrong-password', stored)));
 });
 
 // ── F17：会话表 / 限速表不无界增长 ───────────────────────────────────
