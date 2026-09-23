@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { createDomShim, runInlineScript } from './helpers.mjs';
+import { createDomShim, runInlineScript, styleText } from './helpers.mjs';
 
 const INDEX_HTML = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
 const ADMIN_HTML = fs.readFileSync(new URL('../public/admin.html', import.meta.url), 'utf8');
@@ -135,8 +135,8 @@ test('视觉#5：删除红描边、停用琥珀警示，三个表格按钮语义
   const accounts = shim.el('accounts').innerHTML;
   const keys = shim.el('keys').innerHTML;
   const users = shim.el('users').innerHTML;
-  assert.match(ADMIN_HTML, /\.btn\.danger \{ color: var\(--danger-ink\); border-color: var\(--danger\);/);
-  assert.match(ADMIN_HTML, /\.btn\.warning \{ color: var\(--warning-ink\);/);
+  assert.match(styleText(ADMIN_HTML), /\.btn\.danger \{ color: var\(--danger-ink\); border-color: var\(--danger\);/);
+  assert.match(styleText(ADMIN_HTML), /\.btn\.warning \{ color: var\(--warning-ink\);/);
   assert.match(accounts, /class="btn warning"[^>]*data-act="toggle"[^>]*>停用/);
   assert.match(accounts, /class="btn outline"[^>]*data-act="test"[^>]*>测试连通性/);
   assert.match(accounts, /class="btn danger"[^>]*data-act="del"[^>]*>删除/);
@@ -152,7 +152,7 @@ test('视觉#6：最近错误/查询失败用 cell-error 琥珀红色强调并�
   const out = shim.el('accounts').innerHTML;
   assert.match(out, /class="cell-error">最近错误：上游拒付/);
   assert.match(out, /class="cell-error">额度未同步：探针失败/);
-  assert.match(ADMIN_HTML, /\.cell-error::before \{ content: '⚠ '; \}/);
+  assert.match(styleText(ADMIN_HTML), /\.cell-error::before \{ content: '⚠ '; \}/);
 });
 
 // ── UI 7：0% 进度条不是 2px 细线 ──
@@ -161,8 +161,8 @@ test('视觉#7：0% 进度条保留完整 6px 空轨道，填充条与轨道同�
   const page = await runInlineScript(INDEX_HTML, shim);
   const empty = page.bar('5 小时窗口', { used: 0, cap: 3, percent: 0, usedRatio: 0, resetAt: 0 }, { spent: false });
   assert.match(empty, /class="bar s-ok is-empty"><i style="width:0%"><\/i>/);
-  assert.match(INDEX_HTML, /\.bar \{\s*height: 6px; min-height: 6px;/);
-  assert.match(INDEX_HTML, /\.bar\.is-empty \{ height: 6px; min-height: 6px; \}/);
+  assert.match(styleText(INDEX_HTML), /\.bar \{\s*height: 6px; min-height: 6px;/);
+  assert.match(styleText(INDEX_HTML), /\.bar\.is-empty \{ height: 6px; min-height: 6px; \}/);
 });
 
 // ── UI 8：启用/不可用合并为一个清晰主徽章 ──
@@ -173,7 +173,7 @@ test('视觉#8：卡片状态徽章合并层级，不可用不再是暗灰低对
   assert.match(out, /<span class="tag bad">已启用 · 不可用<\/span>/);
   assert.doesNotMatch(out, /<span class="tag ok">已启用<\/span>/, '不再并排两个语义冲突徽章');
   assert.doesNotMatch(out, /<span class="tag bad">不可用<\/span>/, '可用性并入主徽章');
-  assert.match(INDEX_HTML, /\.tag\.bad \{ color: var\(--danger-ink\);/);
+  assert.match(styleText(INDEX_HTML), /\.tag\.bad \{ color: var\(--danger-ink\);/);
 });
 
 // ── UI 9：辅助小灰字与浅灰徽章文字达到 AA 对比度 ──
@@ -184,11 +184,11 @@ test('视觉#9：额度/更新时间/内核辅助文字统一 aux-text，小字�
   assert.match(INDEX_HTML, /class="hero-meta aux-text"/);
   assert.match(out, /class="card-credits aux-text"/);
   assert.match(out, /class="card-fresh aux-text/);
-  assert.match(INDEX_HTML, /\.aux-text \{ color: var\(--text-secondary\); \}/);
-  assert.match(INDEX_HTML, /--text-secondary: #554365;/);
-  assert.match(INDEX_HTML, /--text-secondary: #d4c9dd;/);
-  assert.match(INDEX_HTML, /\.tag\.warn \{ color: var\(--warning-ink\);/);
-  assert.match(INDEX_HTML, /\.tag\.bad \{ color: var\(--danger-ink\);/);
+  assert.match(styleText(INDEX_HTML), /\.aux-text \{ color: var\(--text-secondary\); \}/);
+  assert.match(styleText(INDEX_HTML), /--text-secondary: #554365;/);
+  assert.match(styleText(INDEX_HTML), /--text-secondary: #d4c9dd;/);
+  assert.match(styleText(INDEX_HTML), /\.tag\.warn \{ color: var\(--warning-ink\);/);
+  assert.match(styleText(INDEX_HTML), /\.tag\.bad \{ color: var\(--danger-ink\);/);
 });
 
 // ── UI 10：3 张卡最后一张跨整行，4 张恢复 2×2 ──
@@ -200,7 +200,7 @@ test('视觉#10：三卡时最后一张 card-wide 跨整行，四卡时恢复两
   assert.equal((shim.el('cards').innerHTML.match(/class="card[^\"]*card-wide/g) || []).length, 1);
   page.render(make(4));
   assert.equal((shim.el('cards').innerHTML.match(/class="card[^\"]*card-wide/g) || []).length, 0);
-  assert.match(INDEX_HTML, /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(styleText(INDEX_HTML), /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
 });
 
 // ── UI 11：key 前缀明确遮蔽，keyId 仍完整 ──

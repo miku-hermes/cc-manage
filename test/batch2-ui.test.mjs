@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { createDomShim, runInlineScript } from './helpers.mjs';
+import { createDomShim, runInlineScript, styleText } from './helpers.mjs';
 
 const INDEX_HTML = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
 const ADMIN_HTML = fs.readFileSync(new URL('../public/admin.html', import.meta.url), 'utf8');
@@ -40,11 +40,7 @@ function adminAccounts(page, accounts) {
   vm.runInContext(`state.accounts = ${JSON.stringify(accounts)}; renderAccounts();`, page);
 }
 
-// ── 静态 CSS 工具（沿用 mobile-tags.test.mjs 契约测试风格）────────────
-function styleText(html) {
-  const m = html.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
-  return m ? m[1] : '';
-}
+// ── 静态 CSS 工具（styleText：内联 <style> + 外链 css 合并，见 helpers.mjs）──
 function braceBlock(css, start) {
   const open = css.indexOf('{', start);
   assert.ok(open >= 0, '找到 {');

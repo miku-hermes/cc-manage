@@ -1279,6 +1279,11 @@ export async function startGateway(overrides = {}) {
       return res.end(html);
     }
 
+    // 面板静态资源：public 下的 css/js（同源，无构建）；CSP 头已由 applySecurityHeaders 统一加上
+    if (req.method === 'GET' && (url.pathname.startsWith('/css/') || url.pathname.startsWith('/js/'))) {
+      return serveStatic(res, url.pathname);
+    }
+
     // 健康检查（无需 key）
     if (req.method === 'GET' && url.pathname === '/health') {
       return sendJSON(res, 200, { ok: true, accounts: accounts.length, available: scheduler.availableCount() });
@@ -1411,6 +1416,33 @@ export async function startGateway(overrides = {}) {
 
   function readAdmin() {
     return fs.readFileSync(path.join(ROOT, 'public', 'admin.html'), 'utf8');
+  }
+
+  // 静态资源 MIME：只放行面板用到的两种扩展名
+  const STATIC_MIME = {
+    '.css': 'text/css; charset=utf-8',
+    '.js': 'text/javascript; charset=utf-8',
+  };
+
+  /**
+   * 只读地吐 public/ 下的静态文件（面板的 css/js）。
+   * 严格限制在 ROOT/public 内：拒绝 `..`、反斜杠、空字节与未知扩展名，
+   * 解析后的绝对路径也必须仍在 public 内（防路径穿越）。宁 404 不吐越界文件。
+   */
+  function serveStatic(res, pathname) {
+    const notFound = () => sendJSON(res, 404, { error: { message: 'Not found', type: 'not_found' } });
+    const rel = String(pathname).replace(/^\/+/, '');
+    if (!rel || rel.includes('..') || rel.includes('\\') || rel.includes('\0')) return notFound();
+    const mime = STATIC_MIME[path.extname(rel).toLowerCase()];
+    if (!mime) return notFound();
+    const publicDir = path.join(ROOT, 'public');
+    const full = path.resolve(publicDir, rel);
+    if (full !== publicDir && !full.startsWith(publicDir + path.sep)) return notFound();
+    let stat;
+    try { stat = fs.statSync(full); } catch { return notFound(); }
+    if (!stat.isFile()) return notFound();
+    res.writeHead(200, { 'content-type': mime, 'x-content-type-options': 'nosniff', 'cache-control': 'no-cache' });
+    return res.end(fs.readFileSync(full));
   }
 
   // 后端-M5：Node 默认 keepAliveTimeout=5s，反代 upstream keepalive 大于它会复用到

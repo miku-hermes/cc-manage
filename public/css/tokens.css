@@ -1,0 +1,144 @@
+/* ── 设计令牌（与前台共用同一套 gene）────────────────────────
+   栅格：--gutter / --card-pad 统一内边距，所有块左边缘对齐。     */
+:root {
+  color-scheme: light dark;
+
+  --page-max: 1280px;
+  --gutter: 24px;
+  --card-pad: 20px;
+
+  --surface-0: #f8f6f9;
+  --surface-1: #ffffff;
+  --surface-2: #faf8fc;
+  --border: #e8e0f0;
+  --border-strong: #d8cce4;
+
+  --text-primary: #2d1b3d;
+  --text-secondary: #554365;
+  --text-tertiary: #5f4d72;
+
+  --accent: #e8668a;
+  --accent-hover: #d44a72;
+  --accent-light: #fce4ec;
+  --accent-ink: #b03a5c;
+  --accent-solid: #c5395f;
+  --accent-solid-hover: #b03a5c;
+  --on-accent-solid: #ffffff;
+  --danger-fill: #c8303f;
+  --on-danger-fill: #ffffff;
+  --focus: #c5395f;
+  --success: #257a50;
+  --success-light: #e4f5ec;
+  --warning: #96600a;
+  --warning-light: #fdf1dd;
+  --danger: #c8303f;
+  --danger-light: #fde9eb;
+  --info: #2f6ab3;
+  --success-ink: #17633f;
+  --warning-ink: #704300;
+  --danger-ink: #a3182b;
+
+  --fs-xs: 11px;
+  --fs-sm: 13px;
+  --fs-base: 14px;
+  --fs-md: 16px;
+  --fs-lg: 20px;
+  --fs-xl: 28px;
+  --fs-2xs: 10.5px;
+  --fs-hero: clamp(40px, 6vw, 64px);
+  --lh-hero: 1;
+
+  --lh-body: 1.6;
+  --lh-heading: 1.25;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", ui-sans-serif, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Cascadia Mono", monospace;
+
+  --shadow-soft: 0 1px 2px rgba(45, 27, 61, .06);
+  --shadow-lift: 0 10px 30px rgba(45, 27, 61, .16);
+  --radius-card: 14px;
+  --radius-sm: 10px;
+  --pill: 999px;
+
+  --header-h: 58px;
+  --row-h: 46px;
+  --control-h: 36px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --surface-0: #17111c;
+    --surface-1: #221a29;
+    --surface-2: #2b2133;
+    --border: #3d3046;
+    --border-strong: #4d3d58;
+
+    --text-primary: #ece6f0;
+    --text-secondary: #d4c9dd;
+    --text-tertiary: #bcb0c8;
+
+    --accent: #f2a0b5;
+    --accent-hover: #e8668a;
+    --accent-light: #3d2430;
+    --accent-ink: #f7c0cf;
+    --accent-solid: #f2a0b5;
+    --accent-solid-hover: #e8668a;
+    --on-accent-solid: #241a2b;
+    --danger-fill: #ff8095;
+    --on-danger-fill: #241a2b;
+    --focus: #f2a0b5;
+    --success: #6ddba0;
+    --success-light: #1e3a2c;
+    --warning: #ffc266;
+    --warning-light: #3a2e18;
+    --danger: #ff8095;
+    --danger-light: #3d2029;
+    --info: #7fb3f5;
+    --success-ink: #79e2aa;
+    --warning-ink: #ffd082;
+    --danger-ink: #ff9aaa;
+
+    --shadow-soft: 0 1px 2px rgba(0, 0, 0, .3);
+    --shadow-lift: 0 12px 34px rgba(0, 0, 0, .5);
+  }
+}
+
+:root[data-theme="dark"] {
+  --surface-0: #17111c;
+  --surface-1: #221a29;
+  --surface-2: #2b2133;
+  --border: #3d3046;
+  --border-strong: #4d3d58;
+
+  --text-primary: #ece6f0;
+  --text-secondary: #d4c9dd;
+  --text-tertiary: #bcb0c8;
+
+  --accent: #f2a0b5;
+  --accent-hover: #e8668a;
+  --accent-light: #3d2430;
+  --accent-ink: #f7c0cf;
+  --accent-solid: #f2a0b5;
+  --accent-solid-hover: #e8668a;
+  --on-accent-solid: #241a2b;
+  --danger-fill: #ff8095;
+  --on-danger-fill: #241a2b;
+  --focus: #f2a0b5;
+  --success: #6ddba0;
+  --success-light: #1e3a2c;
+  --warning: #ffc266;
+  --warning-light: #3a2e18;
+  --danger: #ff8095;
+  --danger-light: #3d2029;
+  --info: #7fb3f5;
+  --success-ink: #79e2aa;
+  --warning-ink: #ffd082;
+  --danger-ink: #ff9aaa;
+
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, .3);
+  --shadow-lift: 0 12px 34px rgba(0, 0, 0, .5);
+}
+
+:root[data-theme="dark"] .ico-sun { display: block; }
+
+:root[data-theme="dark"] .ico-moon { display: none; }

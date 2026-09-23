@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { startTestGateway, request } from './helpers.mjs';
+import { startTestGateway, request, pageSource } from './helpers.mjs';
 import { hashPassword, verifyPassword, createSessionSigner, parseCookies } from '../src/auth.mjs';
 
 const USER = { name: 'admin', pass: 'hunter2-secret' };
@@ -91,7 +91,7 @@ test('初始化：无 users.json → /admin 显示初始化页，setup 创建首
 
   const page = await request(`${ctx.baseUrl}/admin`);
   assert.equal(page.status, 200);
-  assert.match(page.body, /初始化/, '未初始化时 /admin 必须是初始化页');
+  assert.match(pageSource(page.body), /初始化/, '未初始化时 /admin 必须是初始化页');
 
   const res = await request(`${ctx.baseUrl}/api/auth/setup`, {
     method: 'POST',
@@ -406,7 +406,7 @@ test('前台公开：无任何凭证即可 GET / 与 /api/status（PUBLIC_DASHBO
   assert.match(page.body, /cc-manage/);
   assert.doesNotMatch(page.body, /<input[^>]*id="key"/, '前台不再有 key 输入框');
   assert.match(page.body, /href="\/admin"/, '前台必须给「登录后台」入口');
-  assert.match(page.body, /apiFetch\('\/api\/status'\)/, '前台仍通过 apiFetch 取数');
+  assert.match(pageSource(page.body), /apiFetch\('\/api\/status'\)/, '前台仍通过 apiFetch 取数');
 
   const status = await request(`${ctx.baseUrl}/api/status`);
   assert.equal(status.status, 200, '公开看板不得需要 key');
@@ -631,9 +631,9 @@ test('后台登录后 /admin 仍返回同一页（登录态靠 cookie，页面�
 
   const page = await request(`${ctx.baseUrl}/admin`, { headers: { cookie } });
   assert.equal(page.status, 200);
-  assert.match(page.body, /api\/auth\/login/, '后台页面必须带登录流程');
-  assert.match(page.body, /\/api\/auth\/setup/, '后台页面必须带初始化流程');
-  assert.match(page.body, /\/api\/admin\/accounts\/test/, '后台页面必须有测试连通性按钮');
+  assert.match(pageSource(page.body), /api\/auth\/login/, '后台页面必须带登录流程');
+  assert.match(pageSource(page.body), /\/api\/auth\/setup/, '后台页面必须带初始化流程');
+  assert.match(pageSource(page.body), /\/api\/admin\/accounts\/test/, '后台页面必须有测试连通性按钮');
   assert.doesNotMatch(page.body, /sessionStorage/, '后台不再把凭证放进 sessionStorage');
   assert.doesNotMatch(page.body, /localStorage\.setItem\('cc-manage-key/, '后台不再存 sk-cg- key');
 });

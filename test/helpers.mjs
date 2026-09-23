@@ -572,11 +572,75 @@ export function createDomShim({ html, fetchImpl, localStorageData = {} }) {
   };
 }
 
-/** 用 DOM 垫片执行页面的内联脚本（取的正是 `default-src 'self'` 会禁掉的那段）。 */
+// ── 页面资源：拆分后样式/脚本在 public/css、public/js ─────────────────
+// 测试的「源码数据源」= HTML 内联文本 + 外链文件文本；断言本身一条不动。
+const PUBLIC_DIR = new URL('../public/', import.meta.url);
+
+function attrOf(tag, name) {
+  const m = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i').exec(tag);
+  return m ? (m[1] ?? m[2] ?? m[3]) : null;
+}
+
+function isExternal(ref) {
+  return /^[a-z][a-z0-9+.-]*:/i.test(ref) || ref.startsWith('//');
+}
+
+/** 页面里的内联 <style> 文本（按文档顺序拼接）。 */
+export function inlineStyleText(html) {
+  return [...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)].map((m) => m[1]).join('\n');
+}
+
+/** <link rel="stylesheet" href="..."> 指向的 public/*.css 文件文本（按文档顺序）。 */
+export function linkedStyleText(html) {
+  const out = [];
+  for (const m of html.matchAll(/<link\b[^>]*>/gi)) {
+    const tag = m[0];
+    if (!/\brel\s*=\s*("stylesheet"|'stylesheet'|stylesheet)/i.test(tag)) continue;
+    const href = attrOf(tag, 'href');
+    if (!href || isExternal(href)) continue;
+    try { out.push(fs.readFileSync(new URL(href, PUBLIC_DIR), 'utf8')); } catch { /* 缺失文件跳过 */ }
+  }
+  return out.join('\n');
+}
+
+/**
+ * 合并后的页面样式数据源：HTML 内联 <style> + 所有外链样式表。
+ * 拆分前只有内联样式，拆分后样式在 public/css/*.css；用它替换旧的「只取内联」实现，
+ * 断言的正则/花括号解析完全不变。
+ */
+export function styleText(html) {
+  return inlineStyleText(html) + '\n' + linkedStyleText(html);
+}
+
+/** 脚本源码数据源：HTML 文本 + 所有外链 js 文件（供「源码里必须有 X」类断言用）。 */
+export function pageSource(html) {
+  const out = [html];
+  for (const m of html.matchAll(/<script\b[^>]*>/gi)) {
+    const src = attrOf(m[0], 'src');
+    if (!src || isExternal(src)) continue;
+    try { out.push(fs.readFileSync(new URL(src, PUBLIC_DIR), 'utf8')); } catch { /* 缺失文件跳过 */ }
+  }
+  return out.join('\n');
+}
+
+/** 取页面脚本（外链 + 内联，按文档顺序）。 */
+function collectScripts(html) {
+  const out = [];
+  const re = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi;
+  let m;
+  while ((m = re.exec(html))) {
+    const src = attrOf(m[1] || '', 'src');
+    if (src) out.push({ src: isExternal(src) ? null : src });
+    else out.push({ code: m[2] });
+  }
+  return out;
+}
+
+/** 用 DOM 垫片执行页面脚本：外链 js 先按文档顺序跑，HTML 内联引导块随后跑，同一个 vm context。 */
 export async function runInlineScript(html, shim) {
   const { default: vm } = await import('node:vm');
-  const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
-  assertAtLeastOne(scripts);
+  const scripts = collectScripts(html);
+  assertAtLeastOne(scripts.filter((s) => s.code !== undefined));
   const context = vm.createContext({
     ...shim.window,
     window: shim.window,
@@ -608,7 +672,14 @@ export async function runInlineScript(html, shim) {
     clearInterval: () => {},
     localStorage: shim.window.localStorage,
   });
-  for (const code of scripts) vm.runInContext(code, context, { filename: 'inline-script.js' });
+  for (const s of scripts) {
+    if (s.code !== undefined) {
+      vm.runInContext(s.code, context, { filename: 'inline-script.js' });
+    } else if (s.src) {
+      const file = new URL(s.src, PUBLIC_DIR);
+      vm.runInContext(fs.readFileSync(file, 'utf8'), context, { filename: String(file) });
+    }
+  }
   return context;
 }
 

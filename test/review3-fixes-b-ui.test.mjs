@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { createDomShim, runInlineScript } from './helpers.mjs';
+import { createDomShim, runInlineScript, styleText } from './helpers.mjs';
 
 const INDEX_HTML = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
 const ADMIN_HTML = fs.readFileSync(new URL('../public/admin.html', import.meta.url), 'utf8');
@@ -175,10 +175,7 @@ test('B2-5：快照过旧提示按实际阈值算出分钟数，不再写死 10 
 });
 
 // ── B2-6：窄屏标签条的可滑动提示（纯 CSS 静态断言）──────────────────
-function styleText(html) {
-  const m = html.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
-  return m ? m[1] : '';
-}
+// styleText：内联 <style> + 外链 css 合并（见 helpers.mjs）
 function braceBlock(css, start) {
   const open = css.indexOf('{', start);
   assert.ok(open >= 0, '找到 {');

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import vm from 'node:vm';
-import { startTestGateway, request, sleep, createDomShim, runInlineScript } from './helpers.mjs';
+import { startTestGateway, request, sleep, createDomShim, runInlineScript, pageSource } from './helpers.mjs';
 
 test('鉴权：无 key → 401，错的 sk-cg- key → 401，正确 key → 200', async (t) => {
   const ctx = await startTestGateway();
@@ -125,10 +125,10 @@ test('GET / 能打开面板，含账号卡片与 5h/周/月进度条骨架', asy
   assert.equal(res.status, 200);
   assert.match(res.headers['content-type'], /text\/html/);
   assert.match(res.body, /cc-manage/);
-  assert.match(res.body, /5 小时窗口/);
-  assert.match(res.body, /本周窗口/);
-  assert.match(res.body, /本月周期/);
-  assert.match(res.body, /\/api\/status/);
+  assert.match(pageSource(res.body), /5 小时窗口/);
+  assert.match(pageSource(res.body), /本周窗口/);
+  assert.match(pageSource(res.body), /本月周期/);
+  assert.match(pageSource(res.body), /\/api\/status/);
 });
 
 test('413：请求体超过 maxBodyBytes 被拒', async (t) => {
@@ -504,7 +504,7 @@ test('面板数据契约：/api/status 提供 index.html 读取的全部字段',
   }
 
   // 面板 HTML 就是从这个接口取数的
-  assert.match((await request(`${ctx.baseUrl}/`)).body, /'\/api\/status'/);
+  assert.match(pageSource((await request(`${ctx.baseUrl}/`)).body), /'\/api\/status'/);
 });
 
 test('面板新鲜度：/api/status 的每个额度快照都带可解析的 fetchedAt', async (t) => {
@@ -734,7 +734,7 @@ test('面板 HTML：公开只读（无 key 输入框 + 登录后台入口）', a
   // 右上角改为「登录后台」入口
   assert.match(html, /href="\/admin"/, '前台必须有登录后台入口');
   // 取数走公开 fetch（不携带 Authorization）
-  assert.match(html, /apiFetch\('\/api\/status'\)/);
+  assert.match(pageSource(html), /apiFetch\('\/api\/status'\)/);
   // 额度由后端自适应轮询自动刷新（活跃 60s / 空闲 600s），前台不再提供手动刷新按钮
   assert.doesNotMatch(html, /apiFetch\('\/api\/accounts\/refresh'/,
     '前台不应再有手动刷新按钮——额度由自适应轮询自动同步');
@@ -907,9 +907,9 @@ test('前台显示额度刷新频率，且文案由后端 quotaPoll 决定（不
   assert.equal(d.quotaPoll.activeIntervalMs, 45000);
 
   // 页面脚本里必须从 quotaPoll 取，而不是写死数字
-  assert.match(html, /cadenceText\(d\.quotaPoll\)/, '频率文案必须取自后端 quotaPoll');
-  assert.match(html, /function cadenceText/, '必须有 cadenceText 实现');
-  assert.match(html, /function fmtEvery/, '必须有毫秒→人话的格式化函数');
+  assert.match(pageSource(html), /cadenceText\(d\.quotaPoll\)/, '频率文案必须取自后端 quotaPoll');
+  assert.match(pageSource(html), /function cadenceText/, '必须有 cadenceText 实现');
+  assert.match(pageSource(html), /function fmtEvery/, '必须有毫秒→人话的格式化函数');
 
   // 换一组间隔，后端下发的值必须跟着变（证明不是硬编码）
   const ctx2 = await startTestGateway({ config: { quotaPollIntervalMs: 120000, quotaActivePollIntervalMs: 30000 } });
@@ -957,10 +957,10 @@ test('三个额度窗口的 resetAt 由上游原样透传，页面才有得显�
 
   // 页面必须具备渲染能力（容器 + 两个换算函数）
   const html = (await request(`${ctx.baseUrl}/`)).body;
-  assert.match(html, /function resetText/, '必须有「重置于 …」的渲染函数');
-  assert.match(html, /function untilText/, '必须有「还有多久」的换算');
-  assert.match(html, /class="bar-reset"/, '进度条下面要有重置时间的容器');
-  assert.match(html, /resetText\(w, \{ zeroMeansIdle/, '5h 窗口要按「空闲」语义特殊处理');
+  assert.match(pageSource(html), /function resetText/, '必须有「重置于 …」的渲染函数');
+  assert.match(pageSource(html), /function untilText/, '必须有「还有多久」的换算');
+  assert.match(pageSource(html), /class="bar-reset"/, '进度条下面要有重置时间的容器');
+  assert.match(pageSource(html), /resetText\(w, \{ zeroMeansIdle/, '5h 窗口要按「空闲」语义特殊处理');
 });
 
 test('重置时间文案：未来 / 空闲 / 已过期 / 没有数据，四种边界都要说实话', async (t) => {

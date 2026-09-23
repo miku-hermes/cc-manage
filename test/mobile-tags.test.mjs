@@ -2,14 +2,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { styleText } from './helpers.mjs';
 
 const INDEX_HTML = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
 
-// 取 <style> 内容
-function styleText(html) {
-  const m = html.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
-  return m ? m[1] : '';
-}
+// styleText：内联 <style> + 外链 css 合并（见 helpers.mjs）
 
 // 从 css[start]（'{' 缺失处）匹配成对花括号，返回块内文本
 function braceBlock(css, start) {

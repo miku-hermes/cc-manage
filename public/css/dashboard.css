@@ -1,0 +1,328 @@
+/* ── 极淡的左上角粉色光晕（永远在内容之下）────────────────── */
+body::before {
+  content: "";
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background: radial-gradient(720px 420px at 0% 0%, var(--accent-light), transparent 68%);
+  opacity: .55;
+}
+
+/* ── 飘落的樱花花瓣（容器裁切，永不被视口裁断）────────────── */
+.petals { position: fixed; inset: 0; overflow: hidden; pointer-events: none; z-index: 0; }
+
+.petal {
+  position: absolute; top: 0; opacity: .2; will-change: transform;
+  /* 花瓣形，不是圆点 */
+  border-radius: 50% 0 50% 50%;
+  background: var(--accent);
+  animation-name: petal-fall; animation-timing-function: linear; animation-iteration-count: infinite;
+}
+
+@keyframes petal-fall {
+  0%   { transform: translate3d(0, -12vh, 0) rotate(0deg); }
+  50%  { transform: translate3d(5vw, 50vh, 0) rotate(180deg); }
+  100% { transform: translate3d(-4vw, 112vh, 0) rotate(360deg); }
+}
+
+.logo svg { width: 16px; height: 16px; }
+
+.tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer;
+  height: 36px; padding: 0 14px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong); background: var(--surface-1); color: var(--text-secondary);
+  font-size: var(--fs-sm); transition: color .15s, border-color .15s, background .15s;
+}
+
+.btn:disabled { opacity: .5; cursor: progress; }
+
+.icon-btn {
+  display: grid; place-items: center; cursor: pointer; width: 36px; height: 36px;
+  border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
+  background: var(--surface-1); color: var(--text-secondary);
+  transition: color .15s, border-color .15s, background .15s;
+}
+
+.icon-btn svg { width: 16px; height: 16px; }
+
+.hint { font-size: var(--fs-xs); color: var(--warning); }
+
+/* ── 主区域（所有块左边缘对齐同一条竖线）────────────────── */
+main {
+  position: relative; z-index: 1;
+  max-width: var(--page-max); margin: 0 auto;
+  padding: var(--gutter) var(--gutter) 8px;
+  display: flex; flex-direction: column; gap: var(--gutter);
+}
+
+/* Hero：主角是余额 */
+.hero {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center;
+  gap: 20px 28px;
+  padding: var(--card-pad) var(--card-pad); border-radius: var(--radius-card);
+  border: 1px solid var(--border); background: var(--surface-1); box-shadow: var(--shadow-soft);
+}
+
+.hero-main { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+
+.greeting { margin: 0; font-size: var(--fs-xl); font-weight: 700; color: var(--accent-ink); letter-spacing: .01em; }
+
+.hero-balance {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-top: 2px;
+}
+
+.hero-balance b {
+  font-size: var(--fs-hero); font-weight: 700; line-height: var(--lh-hero);
+  font-variant-numeric: tabular-nums; letter-spacing: -.01em; color: var(--text-primary);
+}
+
+.hero-balance .bal-label { font-size: var(--fs-sm); color: var(--text-secondary); }
+
+.hero-sub {
+  margin: 2px 0 0; font-size: var(--fs-sm); color: var(--text-secondary);
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+
+.hero-meta {
+  margin: 4px 0 0; color: var(--text-secondary); font-size: var(--fs-xs);
+  display: flex; gap: 12px; flex-wrap: wrap;
+}
+
+.hero-meta span { overflow-wrap: anywhere; }
+
+/* 空的 span 不占位，否则 flex 的 gap 会多出一段空白 */
+.hero-meta span:empty { display: none; }
+
+.hero-cadence { color: var(--text-tertiary); }
+
+.hero-aside {
+  display: flex; flex-direction: column; align-items: flex-end; gap: 4px; text-align: right;
+  min-width: 0;
+}
+
+.hero-clock {
+  font-size: var(--fs-md); font-weight: 600; line-height: var(--lh-heading);
+  color: var(--text-secondary); font-variant-numeric: tabular-nums;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+
+.hero-clock svg { width: 16px; height: 16px; flex: none; opacity: .8; }
+
+.hero-date { color: var(--text-secondary); font-size: var(--fs-xs); }
+
+.hero-tokens { font-size: var(--fs-xs); color: var(--text-secondary); }
+
+.hero-tokens b { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+
+/* KPI：语义色 + 收紧高度 + 极小图标 */
+.kpis {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.kpi {
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px var(--card-pad); border-radius: var(--radius-sm);
+  background: var(--surface-1); border: 1px solid var(--border); box-shadow: var(--shadow-soft);
+}
+
+.kpi-icon {
+  display: grid; place-items: center; flex: none;
+  width: 28px; height: 28px; border-radius: 8px;
+  background: var(--surface-2); color: var(--text-secondary); border: 1px solid var(--border);
+}
+
+.kpi-icon svg { width: 16px; height: 16px; }
+
+.kpi-body { min-width: 0; }
+
+.kpi b {
+  display: block; font-size: 24px; font-weight: 700; line-height: var(--lh-heading);
+  font-variant-numeric: tabular-nums; color: var(--text-primary);
+}
+
+.kpi span {
+  display: block; font-size: var(--fs-xs); color: var(--text-secondary);
+  letter-spacing: .02em; margin-top: 2px;
+}
+
+.kpi.is-danger .kpi b, .kpi.is-danger .kpi-icon { color: var(--danger); }
+
+.kpi.is-danger .kpi-icon { border-color: var(--danger); background: var(--danger-light); }
+
+.kpi.is-warning .kpi b, .kpi.is-warning .kpi-icon { color: var(--warning); }
+
+.kpi.is-warning .kpi-icon { border-color: var(--warning); background: var(--warning-light); }
+
+.kpi.is-accent .kpi b, .kpi.is-accent .kpi-icon { color: var(--accent-ink); }
+
+.kpi.is-accent .kpi-icon { border-color: var(--accent); background: var(--accent-light); }
+
+.kpi.is-muted b { color: var(--text-tertiary); }
+
+/* ── 账号卡片网格：自适应铺满 ─────────────────────────── */
+.grid {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px; align-items: stretch;
+}
+
+.card-wide { grid-column: 1 / -1; }
+
+@media (max-width: 860px) {
+  .grid { grid-template-columns: minmax(0, 1fr); }
+  .card-wide { grid-column: auto; }
+}
+
+.card {
+  padding: var(--card-pad); border-radius: var(--radius-card);
+  background: var(--surface-1); border: 1px solid var(--border); box-shadow: var(--shadow-soft);
+  transition: border-color .18s ease, background .18s ease, box-shadow .18s ease;
+}
+
+.card:hover { border-color: var(--border-strong); box-shadow: var(--shadow-lift); }
+
+.card.empty { grid-column: 1 / -1; color: var(--text-secondary); text-align: center; padding: 34px var(--card-pad); }
+
+/* 卡片内部双栏：左信息+余额 / 右进度条 */
+.card-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 20px; align-items: stretch; }
+
+.card-col-left { min-width: 0; height: 100%; display: flex; flex-direction: column; }
+
+.card-col-right { min-width: 0; height: 100%; display: flex; flex-direction: column; }
+
+.card-col-left .card-fresh { margin-top: auto; padding-top: 6px; }
+
+@media (max-width: 620px) { .card-grid { grid-template-columns: minmax(0, 1fr); gap: 16px; } }
+
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+
+.card h2 {
+  margin: 0; font-size: var(--fs-md); font-weight: 700;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0;
+}
+
+.card-display { font-size: var(--fs-xs); font-weight: 400; color: var(--text-secondary); }
+
+.status { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-xs); color: var(--text-secondary); white-space: nowrap; }
+
+.dot { width: 8px; height: 8px; border-radius: var(--pill); background: var(--success); flex: none; }
+
+.card.paused .dot { background: var(--warning); }
+
+.card.invalid .dot { background: var(--danger); }
+
+/* ID 行：· 分隔、整体省略、不中间截断 */
+.card-sub {
+  margin-top: 6px; font-size: var(--fs-xs); color: var(--text-secondary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* 额度快照新鲜度：相对时间，>10 分钟转 warning 色 */
+.card-fresh { margin-top: 6px; font-size: var(--fs-xs); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+
+.card-fresh.is-stale { color: var(--warning); }
+
+.card-fresh.is-stale::before { content: '⚠ '; }
+
+.card-money { margin: 14px 0 2px; display: flex; align-items: baseline; gap: 8px; }
+
+.card-money b { font-size: var(--fs-xl); font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.card-money small { font-size: var(--fs-sm); color: var(--text-secondary); }
+
+.card-credits { font-size: var(--fs-xs); color: var(--text-secondary); }
+
+/* 进度条 */
+.bars { display: flex; flex-direction: column; gap: 14px; }
+
+.bar-group { display: block; }
+
+/* 每个窗口什么时候重置 —— 和进度条同宽、比标签更弱 */
+.bar-reset { margin-top: 4px; color: var(--text-tertiary); font-size: var(--fs-2xs); font-variant-numeric: tabular-nums; }
+
+.bar-head { display: flex; align-items: baseline; gap: 10px; font-size: var(--fs-xs); margin-bottom: 5px; }
+
+.bar-label { color: var(--text-secondary); }
+
+/* 百分比独占右端（金额已收进 title，不再占行） */
+.bar-pct {
+  margin-left: auto;
+  color: var(--text-secondary); font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums; min-width: 52px; text-align: right;
+}
+
+.bar {
+  height: 6px; min-height: 6px; border: 0; border-radius: var(--pill);
+  background: var(--border-strong); overflow: hidden;
+}
+
+.bar.is-empty { height: 6px; min-height: 6px; }
+
+.bar > i { display: block; height: 100%; min-height: 6px; border-radius: var(--pill); transition: width .45s ease; }
+
+.s-ok > i { background: var(--success); }
+
+.s-warn > i { background: var(--warning); }
+
+.s-bad > i { background: var(--danger); }
+
+.card-usage { margin-top: 12px; font-size: var(--fs-xs); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+
+/* 底部标签统一成 pill */
+.tags { margin-top: 14px; display: flex; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+
+@media (max-width: 640px) {
+  :root { --gutter: 16px; --card-pad: 16px; }
+  /* 窄屏固定 2 列：minmax(150px,1fr) 在 320px 会塌成 1 列 6 行 */
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* flex-wrap 按「基准宽度」决定换行，基准太大就会先换行再压缩；
+     给搜索框一个小基准 + 可增长，窄屏就能挤在同一行 */
+  .search-box { flex: 1 1 140px; }
+  .search-box input { width: 100%; }
+  .hero { grid-template-columns: minmax(0, 1fr); align-items: flex-start; }
+  .hero-aside { align-items: flex-start; text-align: left; }
+  .greeting { font-size: 22px; }
+  /* 标签条：窄屏强制单行 + 横向滚动（pill 不换行、不压缩）。
+     后面的标签会被推出可视区，所以右侧渐隐遮罩 + 极窄滚动条给出「可滑动」提示。 */
+  .tags {
+    flex-wrap: nowrap; justify-content: flex-start;
+    min-width: 0; max-width: 100%;
+    overflow-x: auto; overflow-y: hidden;
+    -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain;
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+  .tags .tag { flex: 0 0 auto; }
+  /* 渐隐遮罩只在「确实还能往右滚」时显示：滚到最右 or 内容不溢出就撤掉，
+     否则最右一枚 pill 的关键信息（重置时间）会被渐隐吃掉。 */
+  .tags:not(.is-scrollable), .tags.at-end {
+    -webkit-mask-image: none; mask-image: none;
+  }
+  .tags::-webkit-scrollbar { height: 4px; }
+  .tags::-webkit-scrollbar-track { background: transparent; }
+  .tags::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: var(--pill); }
+}
+
+/* 极小屏（≤340px）：搜索框继续收缩，「登录后台」只显图标，工具栏保持一行。
+   340 是临界值：327px 以下「图标+文字+主题按钮」就放不下了。 */
+@media (max-width: 340px) {
+  .search-box { padding: 0 10px; }
+  .search-box input { font-size: var(--fs-xs); }
+  .admin-link { padding: 0 10px; }
+  .admin-link-label { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .petals { display: none; }
+  .card, .bar > i, body { transition: none; }
+  .card:hover { box-shadow: var(--shadow-soft); border-color: var(--border); }
+}
+
+/* 共用令牌在 tokens.css；这里恢复前台专属的阴影分层（后台用更深的 elevation） */
+:root { --shadow-lift: 0 8px 22px rgba(232, 102, 138, .14); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --shadow-lift: 0 8px 24px rgba(0, 0, 0, .45); }
+}
+:root[data-theme="dark"] { --shadow-lift: 0 8px 24px rgba(0, 0, 0, .45); }
