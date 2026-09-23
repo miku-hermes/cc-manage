@@ -1,42 +1,50 @@
-/* ── 设计令牌（与前台共用同一套 gene）────────────────────────
-   栅格：--gutter / --card-pad 统一内边距，所有块左边缘对齐。     */
+/* ── 设计令牌：浅色现代主题（本批次为单一浅色主题，data-theme 机制保留）──────
+   栅格：--gutter / --card-pad 统一内边距，所有块左边缘对齐。
+   玻璃拟态：--glass-* 只用于 sticky 头部与弹框；卡片主体纯白 + --elev-1 柔和阴影。
+   data-theme 切换机制保留（B2-13 的 color-scheme 分派在 HTML 内联 <style> 里），
+   本期只定义浅色令牌，深色令牌暂不定义，后续要加再说。 */
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
 
   --page-max: 1280px;
   --gutter: 24px;
   --card-pad: 20px;
 
-  --surface-0: #f8f6f9;
+  /* 面：页面底浅灰蓝 / 卡片纯白 / 次级面 */
+  --surface-0: #f4f6fb;
   --surface-1: #ffffff;
-  --surface-2: #faf8fc;
-  --border: #e8e0f0;
-  --border-strong: #d8cce4;
+  --surface-2: #f8fafc;
+  --border: #e6eaf2;
+  --border-strong: #d8deea;
 
-  --text-primary: #2d1b3d;
-  --text-secondary: #554365;
-  --text-tertiary: #5f4d72;
+  /* 文字：主 15.7:1 / 次 5.7:1 / 弱 4.6:1（白底，均 ≥4.5:1） */
+  --text-primary: #17233b;
+  --text-secondary: #5c6779;
+  --text-tertiary: #6a7386;
 
+  /* 品牌粉紫（保留延续） */
   --accent: #e8668a;
-  --accent-hover: #d44a72;
-  --accent-light: #fce4ec;
+  --accent-hover: #d94f74;
+  --accent-light: #fdeef3;
   --accent-ink: #b03a5c;
   --accent-solid: #c5395f;
-  --accent-solid-hover: #b03a5c;
+  --accent-solid-hover: #a83356;
   --on-accent-solid: #ffffff;
   --danger-fill: #c8303f;
   --on-danger-fill: #ffffff;
   --focus: #c5395f;
-  --success: #257a50;
-  --success-light: #e4f5ec;
-  --warning: #96600a;
-  --warning-light: #fdf1dd;
-  --danger: #c8303f;
-  --danger-light: #fde9eb;
-  --info: #2f6ab3;
-  --success-ink: #17633f;
-  --warning-ink: #704300;
-  --danger-ink: #a3182b;
+
+  /* 语义色：加深一档适配白底（浅底深字，正文/小字 ≥4.5:1） */
+  --success: #15803d;
+  --success-light: #e8f7ee;
+  --warning: #b45309;
+  --warning-light: #fdf3e3;
+  --danger: #b91c1c;
+  --danger-light: #fdecec;
+  --info: #3b82f6;
+  --success-ink: #146b34;
+  --warning-ink: #9a4a06;
+  --danger-ink: #b91c1c;
 
   --fs-xs: 11px;
   --fs-sm: 13px;
@@ -54,8 +62,22 @@
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", ui-sans-serif, sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Cascadia Mono", monospace;
 
-  --shadow-soft: 0 1px 2px rgba(45, 27, 61, .06);
-  --shadow-lift: 0 10px 30px rgba(45, 27, 61, .16);
+  /* 柔和分层阴影：elev 为组件用，shadow-* 沿用旧名（值对齐 elev） */
+  --elev-1: 0 1px 2px rgba(16, 24, 40, .04), 0 4px 16px rgba(16, 24, 40, .06);
+  --elev-2: 0 2px 4px rgba(16, 24, 40, .05), 0 12px 30px rgba(16, 24, 40, .12);
+  --shadow-soft: var(--elev-1);
+  --shadow-lift: var(--elev-2);
+
+  /* 玻璃拟态：仅 sticky 头部与弹框使用 */
+  --glass-bg: rgba(255, 255, 255, .7);
+  --glass-blur: 16px;
+  --glass-border: rgba(230, 234, 242, .9);
+
+  /* 动效：统一 150/250ms + 缓出曲线 */
+  --dur-150: 150ms;
+  --dur-250: 250ms;
+  --ease-out: cubic-bezier(.22, .61, .36, 1);
+
   --radius-card: 14px;
   --radius-sm: 10px;
   --pill: 999px;
@@ -65,80 +87,7 @@
   --control-h: 36px;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --surface-0: #17111c;
-    --surface-1: #221a29;
-    --surface-2: #2b2133;
-    --border: #3d3046;
-    --border-strong: #4d3d58;
-
-    --text-primary: #ece6f0;
-    --text-secondary: #d4c9dd;
-    --text-tertiary: #bcb0c8;
-
-    --accent: #f2a0b5;
-    --accent-hover: #e8668a;
-    --accent-light: #3d2430;
-    --accent-ink: #f7c0cf;
-    --accent-solid: #f2a0b5;
-    --accent-solid-hover: #e8668a;
-    --on-accent-solid: #241a2b;
-    --danger-fill: #ff8095;
-    --on-danger-fill: #241a2b;
-    --focus: #f2a0b5;
-    --success: #6ddba0;
-    --success-light: #1e3a2c;
-    --warning: #ffc266;
-    --warning-light: #3a2e18;
-    --danger: #ff8095;
-    --danger-light: #3d2029;
-    --info: #7fb3f5;
-    --success-ink: #79e2aa;
-    --warning-ink: #ffd082;
-    --danger-ink: #ff9aaa;
-
-    --shadow-soft: 0 1px 2px rgba(0, 0, 0, .3);
-    --shadow-lift: 0 12px 34px rgba(0, 0, 0, .5);
-  }
-}
-
-:root[data-theme="dark"] {
-  --surface-0: #17111c;
-  --surface-1: #221a29;
-  --surface-2: #2b2133;
-  --border: #3d3046;
-  --border-strong: #4d3d58;
-
-  --text-primary: #ece6f0;
-  --text-secondary: #d4c9dd;
-  --text-tertiary: #bcb0c8;
-
-  --accent: #f2a0b5;
-  --accent-hover: #e8668a;
-  --accent-light: #3d2430;
-  --accent-ink: #f7c0cf;
-  --accent-solid: #f2a0b5;
-  --accent-solid-hover: #e8668a;
-  --on-accent-solid: #241a2b;
-  --danger-fill: #ff8095;
-  --on-danger-fill: #241a2b;
-  --focus: #f2a0b5;
-  --success: #6ddba0;
-  --success-light: #1e3a2c;
-  --warning: #ffc266;
-  --warning-light: #3a2e18;
-  --danger: #ff8095;
-  --danger-light: #3d2029;
-  --info: #7fb3f5;
-  --success-ink: #79e2aa;
-  --warning-ink: #ffd082;
-  --danger-ink: #ff9aaa;
-
-  --shadow-soft: 0 1px 2px rgba(0, 0, 0, .3);
-  --shadow-lift: 0 12px 34px rgba(0, 0, 0, .5);
-}
-
+/* 主题切换按钮图标（机制保留）：手动切到 dark 时亮太阳图标 */
 :root[data-theme="dark"] .ico-sun { display: block; }
 
 :root[data-theme="dark"] .ico-moon { display: none; }

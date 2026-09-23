@@ -25,7 +25,7 @@ main {
 /* ── 面板 ─────────────────────────────────────────────── */
 section.panel {
   margin-bottom: var(--gutter); border-radius: var(--radius-card);
-  background: var(--surface-1); border: 1px solid var(--border); box-shadow: var(--shadow-soft);
+  background: var(--surface-1); border: 1px solid var(--border); box-shadow: var(--elev-1);
   overflow: hidden;
 }
 
@@ -53,7 +53,7 @@ section.panel {
   font-size: var(--fs-xs); color: var(--text-secondary);
 }
 
-/* ── 表格 ─────────────────────────────────────────────── */
+/* ── 表格：行 hover 高亮、悬停态不跳行 ───────────────────── */
 .table-wrap { overflow-x: auto; }
 
 table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
@@ -71,7 +71,7 @@ td { height: var(--row-h); border-bottom: 1px solid var(--border); }
 
 tbody tr:last-child td { border-bottom: none; }
 
-tbody tr { transition: background .12s; }
+tbody tr { transition: background var(--dur-150) var(--ease-out); }
 
 tbody tr:hover td { background: var(--surface-2); }
 
@@ -130,18 +130,18 @@ td.actions .btn { height: 28px; padding: 0 10px; font-size: var(--fs-xs); margin
 
 .test-note.pending { color: var(--text-tertiary); }
 
-/* ── 表单 ─────────────────────────────────────────────── */
+/* ── 表单：focus 环统一到品牌色 ─────────────────────────── */
 label { font-size: var(--fs-sm); color: var(--text-secondary); }
 
 select, input[type="text"], input[type="password"], textarea {
   font: inherit; color: var(--text-primary); background: var(--surface-1);
   border: 1px solid var(--border-strong); border-radius: 8px;
   padding: 0 12px; width: 100%; height: var(--control-h);
-  transition: border-color .15s, box-shadow .15s;
+  transition: border-color var(--dur-150) var(--ease-out), box-shadow var(--dur-150) var(--ease-out);
 }
 
 select:focus, input[type="text"]:focus, input[type="password"]:focus, textarea:focus {
-  border-color: var(--accent-solid); box-shadow: 0 0 0 3px var(--accent-light);
+  border-color: var(--accent-solid); box-shadow: 0 0 0 3px var(--accent-light); outline: none;
 }
 
 textarea {
@@ -184,7 +184,7 @@ textarea {
 
 .event-msg { color: var(--text-secondary); word-break: break-all; min-width: 0; }
 
-/* ── 登录 / 初始化页 ──────────────────────────────────── */
+/* ── 登录 / 初始化页：居中玻璃卡片 + 品牌感 ──────────────── */
 body.gate { background-image: radial-gradient(760px 460px at 50% -10%, var(--accent-light), transparent 70%); }
 
 .gate-main {
@@ -194,13 +194,17 @@ body.gate { background-image: radial-gradient(760px 460px at 50% -10%, var(--acc
 
 .gate-card {
   width: min(420px, 100%); padding: 28px; border-radius: var(--radius-card);
-  background: var(--surface-1); border: 1px solid var(--border); box-shadow: var(--shadow-lift);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border); box-shadow: var(--elev-2);
 }
 
 .gate-logo {
   width: 44px; height: 44px; margin: 0 auto 14px; border-radius: var(--pill);
   display: grid; place-items: center; color: #fff;
   background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+  box-shadow: 0 6px 16px rgba(232, 102, 138, .3);
 }
 
 .gate-logo svg { width: 24px; height: 24px; }

@@ -1,5 +1,7 @@
 * { box-sizing: border-box; }
 
+html { -webkit-text-size-adjust: 100%; }
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -7,7 +9,8 @@ body {
   color: var(--text-primary);
   font: var(--fs-base)/var(--lh-body) var(--font-sans);
   -webkit-font-smoothing: antialiased;
-  transition: background .2s, color .2s;
+  text-rendering: optimizeLegibility;
+  transition: background var(--dur-250) var(--ease-out), color var(--dur-250) var(--ease-out);
 }
 
 h1, h2, h3 { line-height: var(--lh-heading); }
@@ -18,7 +21,10 @@ h1, h2, h3 { line-height: var(--lh-heading); }
 
 button { font: inherit; }
 
-/* 统一焦点环 */
+/* 细滚动条，避免默认滚动条破坏浅色玻璃观感 */
+* { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+
+/* 统一焦点环：仅键盘可见（鼠标点击不打扰） */
 :focus-visible {
   outline: 2px solid var(--focus); outline-offset: 2px;
 }
@@ -29,4 +35,9 @@ button { font: inherit; }
 .sr-only {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* 无障碍：系统开启「减少动态效果」时关闭全部过渡 / 动画 */
+@media (prefers-reduced-motion: reduce) {
+  * { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
 }

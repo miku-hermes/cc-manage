@@ -3,7 +3,7 @@ body::before {
   content: "";
   position: fixed; inset: 0; z-index: 0; pointer-events: none;
   background: radial-gradient(720px 420px at 0% 0%, var(--accent-light), transparent 68%);
-  opacity: .55;
+  opacity: .7;
 }
 
 /* ── 飘落的樱花花瓣（容器裁切，永不被视口裁断）────────────── */
@@ -20,7 +20,7 @@ body::before {
 @keyframes petal-fall {
   0%   { transform: translate3d(0, -12vh, 0) rotate(0deg); }
   50%  { transform: translate3d(5vw, 50vh, 0) rotate(180deg); }
-  100% { transform: translate3d(-4vw, 112vh, 0) rotate(360deg); }
+  100% { transform: translate3d(-4vw, -112vh, 0) rotate(360deg); }
 }
 
 .logo svg { width: 16px; height: 16px; }
@@ -29,9 +29,11 @@ body::before {
 
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer;
-  height: 36px; padding: 0 14px; border-radius: var(--radius-sm);
+  height: 36px; min-height: 34px; padding: 0 14px; border-radius: var(--radius-sm);
   border: 1px solid var(--border-strong); background: var(--surface-1); color: var(--text-secondary);
-  font-size: var(--fs-sm); transition: color .15s, border-color .15s, background .15s;
+  font-size: var(--fs-sm);
+  transition: color var(--dur-150) var(--ease-out), border-color var(--dur-150) var(--ease-out),
+    background var(--dur-150) var(--ease-out), transform var(--dur-150) var(--ease-out);
 }
 
 .btn:disabled { opacity: .5; cursor: progress; }
@@ -40,8 +42,11 @@ body::before {
   display: grid; place-items: center; cursor: pointer; width: 36px; height: 36px;
   border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
   background: var(--surface-1); color: var(--text-secondary);
-  transition: color .15s, border-color .15s, background .15s;
+  transition: color var(--dur-150) var(--ease-out), border-color var(--dur-150) var(--ease-out),
+    background var(--dur-150) var(--ease-out);
 }
+
+.icon-btn:hover { color: var(--accent-ink); border-color: var(--accent); background: var(--accent-light); }
 
 .icon-btn svg { width: 16px; height: 16px; }
 
@@ -55,12 +60,12 @@ main {
   display: flex; flex-direction: column; gap: var(--gutter);
 }
 
-/* Hero：主角是余额 */
+/* Hero：主角是余额（问候 / 主数字 / meta 小字 三级节奏） */
 .hero {
   display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center;
   gap: 20px 28px;
   padding: var(--card-pad) var(--card-pad); border-radius: var(--radius-card);
-  border: 1px solid var(--border); background: var(--surface-1); box-shadow: var(--shadow-soft);
+  border: 1px solid var(--border); background: var(--surface-1); box-shadow: var(--elev-1);
 }
 
 .hero-main { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
@@ -72,8 +77,8 @@ main {
 }
 
 .hero-balance b {
-  font-size: var(--fs-hero); font-weight: 700; line-height: var(--lh-hero);
-  font-variant-numeric: tabular-nums; letter-spacing: -.01em; color: var(--text-primary);
+  font-size: var(--fs-hero); font-weight: 800; line-height: var(--lh-hero);
+  font-variant-numeric: tabular-nums; letter-spacing: -.02em; color: var(--text-primary);
 }
 
 .hero-balance .bal-label { font-size: var(--fs-sm); color: var(--text-secondary); }
@@ -114,7 +119,7 @@ main {
 
 .hero-tokens b { color: var(--text-primary); font-variant-numeric: tabular-nums; }
 
-/* KPI：语义色 + 收紧高度 + 极小图标 */
+/* KPI：语义色 + 收紧高度 + 极小图标（hover 抬升一档） */
 .kpis {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 10px;
@@ -123,8 +128,11 @@ main {
 .kpi {
   display: flex; align-items: center; gap: 10px;
   padding: 14px var(--card-pad); border-radius: var(--radius-sm);
-  background: var(--surface-1); border: 1px solid var(--border); box-shadow: var(--shadow-soft);
+  background: var(--surface-1); border: 1px solid var(--border); box-shadow: var(--elev-1);
+  transition: box-shadow var(--dur-150) var(--ease-out), transform var(--dur-150) var(--ease-out), border-color var(--dur-150) var(--ease-out);
 }
+
+.kpi:hover { box-shadow: var(--elev-2); transform: translateY(-2px); border-color: var(--border-strong); }
 
 .kpi-icon {
   display: grid; place-items: center; flex: none;
@@ -175,11 +183,11 @@ main {
 
 .card {
   padding: var(--card-pad); border-radius: var(--radius-card);
-  background: var(--surface-1); border: 1px solid var(--border); box-shadow: var(--shadow-soft);
-  transition: border-color .18s ease, background .18s ease, box-shadow .18s ease;
+  background: var(--surface-1); border: 1px solid var(--border); box-shadow: var(--elev-1);
+  transition: border-color var(--dur-150) var(--ease-out), box-shadow var(--dur-150) var(--ease-out), transform var(--dur-150) var(--ease-out);
 }
 
-.card:hover { border-color: var(--border-strong); box-shadow: var(--shadow-lift); }
+.card:hover { border-color: var(--border-strong); box-shadow: var(--elev-2); transform: translateY(-2px); }
 
 .card.empty { grid-column: 1 / -1; color: var(--text-secondary); text-align: center; padding: 34px var(--card-pad); }
 
@@ -231,6 +239,20 @@ main {
 .card-money small { font-size: var(--fs-sm); color: var(--text-secondary); }
 
 .card-credits { font-size: var(--fs-xs); color: var(--text-secondary); }
+
+/* 额度构成条：月度 / 购买 / 赠送 三段色条（宽度由 JS 按数值给出） */
+.credits-bar {
+  display: flex; height: 6px; margin-top: 8px; border-radius: var(--pill);
+  background: var(--surface-2); overflow: hidden;
+}
+
+.credits-bar > i { display: block; height: 100%; }
+
+.credits-bar .seg-month { background: var(--info); }
+
+.credits-bar .seg-buy { background: var(--accent); }
+
+.credits-bar .seg-gift { background: var(--success); }
 
 /* 进度条 */
 .bars { display: flex; flex-direction: column; gap: 14px; }
@@ -316,13 +338,9 @@ main {
 
 @media (prefers-reduced-motion: reduce) {
   .petals { display: none; }
-  .card, .bar > i, body { transition: none; }
-  .card:hover { box-shadow: var(--shadow-soft); border-color: var(--border); }
+  .card, .bar > i, .kpi, body { transition: none; }
+  .card:hover, .kpi:hover { box-shadow: var(--elev-1); border-color: var(--border); transform: none; }
 }
 
 /* 共用令牌在 tokens.css；这里恢复前台专属的阴影分层（后台用更深的 elevation） */
-:root { --shadow-lift: 0 8px 22px rgba(232, 102, 138, .14); }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) { --shadow-lift: 0 8px 24px rgba(0, 0, 0, .45); }
-}
-:root[data-theme="dark"] { --shadow-lift: 0 8px 24px rgba(0, 0, 0, .45); }
+:root { --shadow-lift: 0 8px 22px rgba(232, 102, 138, .16); }

@@ -185,8 +185,9 @@ test('视觉#9：额度/更新时间/内核辅助文字统一 aux-text，小字�
   assert.match(out, /class="card-credits aux-text"/);
   assert.match(out, /class="card-fresh aux-text/);
   assert.match(styleText(INDEX_HTML), /\.aux-text \{ color: var\(--text-secondary\); \}/);
-  assert.match(styleText(INDEX_HTML), /--text-secondary: #554365;/);
-  assert.match(styleText(INDEX_HTML), /--text-secondary: #d4c9dd;/);
+  // 批次2：单一浅色主题，令牌值现代化（次文字 #5c6779 / 弱文字 #6a7386），语义不变（AA 小字）。
+  assert.match(styleText(INDEX_HTML), /--text-secondary: #5c6779;/);
+  assert.match(styleText(INDEX_HTML), /--text-tertiary: #6a7386;/);
   assert.match(styleText(INDEX_HTML), /\.tag\.warn \{ color: var\(--warning-ink\);/);
   assert.match(styleText(INDEX_HTML), /\.tag\.bad \{ color: var\(--danger-ink\);/);
 });

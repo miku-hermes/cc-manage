@@ -1,11 +1,13 @@
-/* ── 顶部导航栏 ────────────────────────────────────────── */
+/* ── 顶部导航栏：克制的玻璃拟态（仅 sticky 头部 / 弹框使用）───────── */
 .header {
   position: sticky; top: 0; z-index: 20;
   display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
   min-height: var(--header-h);
   padding: 10px max(var(--gutter), calc((100% - var(--page-max)) / 2 + var(--gutter)));
-  background: var(--surface-1);
-  border-bottom: 1px solid var(--border);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
+  border-bottom: 1px solid var(--glass-border);
 }
 
 .brand { display: flex; align-items: center; gap: 10px; }
@@ -14,6 +16,7 @@
   width: 30px; height: 30px; border-radius: var(--pill); display: grid; place-items: center;
   background: linear-gradient(135deg, var(--accent), var(--accent-hover));
   color: #fff; flex: none;
+  box-shadow: 0 4px 12px rgba(232, 102, 138, .3);
 }
 
 .brand-name { font-size: var(--fs-md); font-weight: 700; letter-spacing: .3px; }
@@ -23,6 +26,7 @@
   min-width: 0; flex: 0 1 auto;           /* 关键：窄屏优先压缩，不把工具栏撑成两行 */
   padding: 0 12px; border-radius: var(--radius-sm);
   background: var(--surface-2); border: 1px solid var(--border); color: var(--text-tertiary);
+  transition: border-color var(--dur-150) var(--ease-out), box-shadow var(--dur-150) var(--ease-out);
 }
 
 .search-box:focus-within { border-color: var(--accent-solid); box-shadow: 0 0 0 3px var(--accent-light); }
@@ -36,25 +40,12 @@
 
 .search-box input::placeholder { color: var(--text-tertiary); }
 
-.btn:hover:not(:disabled) { color: var(--accent-ink); border-color: var(--accent); background: var(--accent-light); }
-
-.btn svg { width: 15px; height: 15px; }
-
-.icon-btn:hover { color: var(--accent-ink); border-color: var(--accent); background: var(--accent-light); }
-
-.ico-sun { display: none; }
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .ico-sun { display: block; }
-  :root:not([data-theme="light"]) .ico-moon { display: none; }
-}
-
 .admin-link {
   display: inline-flex; align-items: center; gap: 6px; text-decoration: none;
   flex: none; white-space: nowrap;
   color: var(--text-secondary); font-size: var(--fs-sm); height: 36px; padding: 0 14px;
   border-radius: var(--radius-sm); border: 1px solid var(--border-strong); background: var(--surface-1);
-  transition: color .15s, border-color .15s, background .15s;
+  transition: color var(--dur-150) var(--ease-out), border-color var(--dur-150) var(--ease-out), background var(--dur-150) var(--ease-out);
 }
 
 .admin-link:hover { color: var(--accent-ink); border-color: var(--accent); background: var(--accent-light); }
@@ -96,7 +87,7 @@
   display: inline-flex; align-items: center; gap: 6px; text-decoration: none;
   color: var(--text-secondary); font-size: var(--fs-sm); height: var(--control-h); padding: 0 14px;
   border-radius: var(--radius-sm); border: 1px solid var(--border-strong); background: var(--surface-1);
-  transition: color .15s, border-color .15s, background .15s;
+  transition: color var(--dur-150) var(--ease-out), border-color var(--dur-150) var(--ease-out), background var(--dur-150) var(--ease-out);
 }
 
 .nav-link:hover { color: var(--accent-ink); border-color: var(--accent); background: var(--accent-light); }
@@ -107,18 +98,30 @@
 
 .who b { color: var(--text-primary); }
 
+/* ── 按钮：主 / 次 / 危险 / 图标，四态统一 + 触控高度 ≥34px ────────── */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer;
-  height: var(--control-h); padding: 0 14px; border-radius: var(--radius-sm);
+  height: var(--control-h); min-height: 34px; padding: 0 14px; border-radius: var(--radius-sm);
   border: 1px solid var(--border-strong); background: var(--surface-1); color: var(--text-secondary);
-  font-size: var(--fs-sm); transition: color .15s, border-color .15s, background .15s;
+  font-size: var(--fs-sm);
+  transition: color var(--dur-150) var(--ease-out), border-color var(--dur-150) var(--ease-out),
+    background var(--dur-150) var(--ease-out), box-shadow var(--dur-150) var(--ease-out), transform var(--dur-150) var(--ease-out);
 }
 
-.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn:hover:not(:disabled) { color: var(--accent-ink); border-color: var(--accent); background: var(--accent-light); }
+
+.btn:active:not(:disabled) { transform: translateY(1px); }
+
+.btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+
+.btn svg { width: 15px; height: 15px; }
 
 .btn.primary {
   background: var(--accent-solid);
   border-color: transparent; color: var(--on-accent-solid); font-weight: 600;
+  box-shadow: 0 2px 8px rgba(197, 57, 95, .25);
 }
 
 .btn.primary:hover:not(:disabled) { background: var(--accent-solid-hover); border-color: transparent; }
@@ -134,20 +137,35 @@
 
 .btn.outline { color: var(--accent-ink); border-color: var(--accent); background: var(--surface-1); }
 
+.btn.outline:hover:not(:disabled) { color: var(--accent-ink); border-color: var(--accent); background: var(--accent-light); }
+
 .icon-btn {
   display: grid; place-items: center; cursor: pointer; width: var(--control-h); height: var(--control-h);
   border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
   background: var(--surface-1); color: var(--text-secondary);
-  transition: color .15s, border-color .15s, background .15s;
+  transition: color var(--dur-150) var(--ease-out), border-color var(--dur-150) var(--ease-out),
+    background var(--dur-150) var(--ease-out), transform var(--dur-150) var(--ease-out);
 }
+
+.icon-btn:hover { color: var(--accent-ink); border-color: var(--accent); background: var(--accent-light); }
+
+.icon-btn:active { transform: translateY(1px); }
 
 .icon-btn svg { width: 17px; height: 17px; }
 
-/* ── 弹窗 ─────────────────────────────────────────────── */
+.ico-sun { display: none; }
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .ico-sun { display: block; }
+  :root:not([data-theme="light"]) .ico-moon { display: none; }
+}
+
+/* ── 弹框：玻璃 + 250ms 缩放淡入 ─────────────────────────── */
 .modal {
   position: fixed; inset: 0; z-index: 50; display: none;
   align-items: center; justify-content: center; padding: 20px;
-  background: rgba(23, 17, 28, .5); backdrop-filter: blur(2px);
+  background: rgba(23, 35, 59, .38);
+  -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
 }
 
 .modal.open { display: flex; }
@@ -155,8 +173,18 @@
 .dialog {
   width: min(460px, 100%); max-height: 90vh; overflow-y: auto;
   border-radius: var(--radius-card);
-  background: var(--surface-1); border: 1px solid var(--border-strong);
-  box-shadow: var(--shadow-lift); padding: var(--card-pad);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--elev-2); padding: var(--card-pad);
+}
+
+.modal.open .dialog { animation: dialog-in var(--dur-250) var(--ease-out); }
+
+@keyframes dialog-in {
+  from { opacity: 0; transform: scale(.96) translateY(6px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
 }
 
 .dialog h3 { margin: 0 0 4px; font-size: var(--fs-md); }
@@ -188,14 +216,31 @@
 
 .onetime-value code { flex: 1; user-select: all; }
 
+/* ── toast：底部居中玻璃胶囊 ───────────────────────────── */
 .toast {
   position: fixed; left: 50%; bottom: 28px; transform: translate(-50%, 18px);
   padding: 10px 20px; border-radius: var(--pill); font-size: var(--fs-sm);
-  background: var(--surface-1); border: 1px solid var(--accent); color: var(--text-primary);
-  box-shadow: var(--shadow-lift); opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s;
+  background: var(--glass-bg); border: 1px solid var(--accent); color: var(--text-primary);
+  -webkit-backdrop-filter: blur(var(--glass-blur)); backdrop-filter: blur(var(--glass-blur));
+  box-shadow: var(--elev-2); opacity: 0; pointer-events: none;
+  transition: opacity var(--dur-250) var(--ease-out), transform var(--dur-250) var(--ease-out);
   z-index: 60; max-width: min(560px, 90vw);
 }
 
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 
 .toast.bad { border-color: var(--danger); color: var(--danger-ink); }
+
+/* ── 骨架屏：shimmer 占位 ───────────────────────────────── */
+.skeleton {
+  position: relative; overflow: hidden; border-radius: var(--radius-sm);
+  background: var(--surface-2); color: transparent; min-height: 14px;
+}
+
+.skeleton::after {
+  content: ""; position: absolute; inset: 0; transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .75), transparent);
+  animation: skeleton-shimmer 1.4s var(--ease-out) infinite;
+}
+
+@keyframes skeleton-shimmer { to { transform: translateX(100%); } }
