@@ -1,18 +1,17 @@
-const THEME_STORE = 'cc-manage-theme';
-$('search').addEventListener('input', (e) => { state.filter = e.target.value || ''; renderCards(); });
-// ── 主题：默认跟随系统，按钮手动切换 ────────────────────────────────
-function storedTheme() {
-  try { return localStorage.getItem(THEME_STORE) || ''; } catch { return ''; }
-}
-function prefersDark() { return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches); }
-/** 当前生效主题：手动选择优先，否则跟随系统。 */
-function currentTheme() { return document.documentElement.getAttribute('data-theme') || (prefersDark() ? 'dark' : 'light'); }
-/** 手动切换：写 data-theme 并记住选择。 */
-function setTheme(t) {
-  document.documentElement.setAttribute('data-theme', t);
-  try { localStorage.setItem(THEME_STORE, t); } catch { /* 忽略 */ }
-}
-$('theme').onclick = () => setTheme(currentTheme() === 'dark' ? 'light' : 'dark');
+// ── 交互：主题按钮 / 搜索框走容器级事件委托 ──────────────────────────
+// 不再 $('theme').onclick / $('search').addEventListener 直绑：监听挂在 document 上，
+// 用 e.target.closest('#theme') / 目标 id 判断，行为与直绑完全一致。
+document.addEventListener('click', (e) => {
+  const t = e.target;
+  if (t && t.closest && t.closest('#theme')) setTheme(currentTheme() === 'dark' ? 'light' : 'dark');
+});
+document.addEventListener('input', (e) => {
+  const t = e.target;
+  if (!t || t.id !== 'search') return;
+  state.filter = t.value || '';
+  renderCards();
+});
+
 // ── 问候语 + 实时时钟（时钟已降级为小字）────────────────────────────
 function greetingOf(h) { return h < 5 ? '凌晨好' : h < 12 ? '早上好' : h < 18 ? '下午好' : '晚上好'; }
 function tick() {

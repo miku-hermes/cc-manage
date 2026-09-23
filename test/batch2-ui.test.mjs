@@ -77,7 +77,8 @@ test('B2-1：登出清空一次性 key / 粘贴的 CC key / 密码框并关掉�
   const page = await runInlineScript(ADMIN_HTML, shim);
 
   // 生成 key：mock 回明文 → #k-plain 非空、弹窗 open
-  vm.runInContext("$('add-key').onclick();", page);
+  // 批次 3 后 #add-key 走 document 级事件委托，测试也按委托路径派发。
+  shim.document.dispatchEvent({ type: 'click', target: shim.el('add-key') });
   assert.equal(shim.el('m-newkey').classList.contains('open'), true, '打开生成弹窗后应有 .open');
   await shim.el('k-submit').onclick();
   assert.match(shim.el('k-plain').textContent, /sk-cg-PLAINTEXT-SECRET/, '生成后 #k-plain 应有明文');
@@ -89,7 +90,9 @@ test('B2-1：登出清空一次性 key / 粘贴的 CC key / 密码框并关掉�
     openModal('m-account'); openModal('m-pass');`, page);
   assert.ok(shim.document.querySelectorAll('.modal.open').length >= 1, '登出前确有弹窗打开');
 
-  await shim.el('logout').onclick();
+  // 批次 3 后 #logout 走 document 级事件委托。
+  shim.document.dispatchEvent({ type: 'click', target: shim.el('logout') });
+  await delay(0);
 
   assert.equal(shim.el('k-plain').textContent, '', '#k-plain 明文必须清空');
   assert.equal(shim.el('k-result').classList.contains('hidden'), true, '#k-result 复位为隐藏');
@@ -110,7 +113,8 @@ test('B2-1：弹窗开着时 session 401 掉落，同样清空并关弹窗', asy
   const page = await runInlineScript(ADMIN_HTML, shim);
   await delay(0);
 
-  vm.runInContext(`$('add-key').onclick(); $('k-plain').textContent = 'sk-cg-LEAKED';
+  shim.document.dispatchEvent({ type: 'click', target: shim.el('add-key') });
+  vm.runInContext(`$('k-plain').textContent = 'sk-cg-LEAKED';
     $('a-key').value = 'user_leak'; $('u-pass').value = 'pw'; $('p-pass').value = 'pw'; $('p-current').value = 'pw';
     $('r-name').value = 'leak'; $('k-name').value = 'leak'; openModal('m-account');`, page);
   assert.match(shim.el('k-plain').textContent, /LEAKED/);
@@ -387,7 +391,7 @@ test('B2-19：隐私模式搜索不会把「请先登录后台」覆盖成「账
   assert.match(shim.el('cards').innerHTML, /请先/, '401 → 隐私模式提示');
 
   shim.el('search').value = 'abc';
-  shim.el('search').dispatchEvent({ type: 'input', target: shim.el('search') });
+  shim.document.dispatchEvent({ type: 'input', target: shim.el('search') });
   assert.match(shim.el('cards').innerHTML, /请先/, '搜索后提示仍在');
   assert.doesNotMatch(shim.el('cards').innerHTML, /账号池为空/);
 });

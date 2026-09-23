@@ -75,7 +75,9 @@ test('B2-1：退出登录清空敏感 state 与四个容器（keyPrefix 不再�
   assert.match(shim.el('accounts').innerHTML, /user_2XyP/, '登出前 keyPrefix 确实在 DOM 里');
   assert.match(shim.el('events').innerHTML, /敏感运行日志/);
 
-  await shim.el('logout').onclick();
+  // 批次 3 后 #logout 走 document 级事件委托。
+  shim.document.dispatchEvent({ type: 'click', target: shim.el('logout') });
+  await new Promise((r) => setTimeout(r, 0));
 
   assertCleared(shim, page);
   assert.equal(shim.document.body.className, 'gate', '登出后回到登录界面');

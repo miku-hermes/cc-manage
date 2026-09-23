@@ -1,34 +1,3 @@
-$('gate-submit').onclick = async () => {
-  const username = $('gate-user').value.trim();
-  const password = $('gate-pass').value;
-  const setup = state.mode === 'setup';
-  if (!username) return gateError('请输入用户名');
-  if (!password) return gateError('请输入密码');
-  if (setup && password !== $('gate-pass2').value) return gateError('两次输入的密码不一致');
-  if (setup && password.length < 8) return gateError('密码长度至少 8 位');
-  $('gate-submit').disabled = true;
-  try {
-    await apiJSON(setup ? '/api/auth/setup' : '/api/auth/login', { method: 'POST', body: { username, password } });
-    $('gate-pass').value = '';
-    $('gate-pass2').value = '';
-    await boot();
-    toast(setup ? '初始化完成，已登录' : '登录成功');
-  } catch (e) {
-    gateError(e.message || '登录失败');
-  } finally {
-    $('gate-submit').disabled = false;
-  }
-};
-for (const id of ['gate-user', 'gate-pass', 'gate-pass2']) {
-  $(id).addEventListener('keydown', (e) => { if (e.key === 'Enter') $('gate-submit').click(); });
-}
-
-$('logout').onclick = async () => {
-  try { await apiJSON('/api/auth/logout', { method: 'POST' }); } catch { /* 忽略 */ }
-  state.auth = null;
-  showGate('login');
-  toast('已退出登录');
-};
 // ── 加载 ────────────────────────────────────────────────────────────
 async function loadAccounts() {
   const data = await apiJSON('/api/admin/accounts');
@@ -66,52 +35,6 @@ async function loadAll() {
     return false;
   }
 }
-// ── 弹窗 ────────────────────────────────────────────────────────────
-let modalFocusReturn = null;
-function openModal(id) {
-  // 打开前记下焦点，关闭时归还 —— 键盘 / 屏幕阅读器用户不会丢上下文。
-  modalFocusReturn = document.activeElement && document.activeElement.focus ? document.activeElement : null;
-  $(id).classList.add('open');
-}
-function closeModal(id) {
-  $(id).classList.remove('open');
-  if (modalFocusReturn && modalFocusReturn.focus) modalFocusReturn.focus();
-  modalFocusReturn = null;
-}
-// Esc 关闭当前打开的弹窗（并归还焦点）
-document.addEventListener('keydown', (e) => {
-  if (e.key !== 'Escape') return;
-  const open = document.querySelectorAll('.modal.open');
-  if (!open.length) return;
-  for (const m of open) m.classList.remove('open');
-  if (modalFocusReturn && modalFocusReturn.focus) modalFocusReturn.focus();
-  modalFocusReturn = null;
-});
-
-/**
- * 打开「修改密码」弹窗。
- * 改**他人**密码时后端要求带上当前管理员密码（scrypt 校验）；改自己不需要。
- * 因此改他人必须显示并校验 #p-current，改自己则隐藏（视为没有该字段）。
- */
-function openPassModal(name) {
-  passTarget = name;
-  const me = state.auth && state.auth.user ? state.auth.user.username : null;
-  const isSelf = !!me && me === name;
-  $('p-sub').textContent = '为管理员「' + name + '」设置新密码（scrypt 加盐哈希存储）';
-  $('p-pass').value = '';
-  $('p-current').value = '';
-  $('p-err').textContent = '';
-  if (isSelf) $('p-current-field').classList.add('hidden');
-  else $('p-current-field').classList.remove('hidden');
-  openModal('m-pass');
-  $('p-pass').focus();
-}
-for (const el of document.querySelectorAll('[data-close]')) {
-  el.onclick = () => closeModal(el.getAttribute('data-close'));
-}
-for (const el of document.querySelectorAll('.modal')) {
-  el.addEventListener('mousedown', (e) => { if (e.target === el) el.classList.remove('open'); });
-}
 
 async function guard(fn) {
   try { await fn(); }
@@ -122,8 +45,8 @@ async function guard(fn) {
   }
 }
 
-// ── CC 账号操作 ─────────────────────────────────────────────────────
-$('add-account').onclick = () => { $('a-err').textContent = ''; openModal('m-account'); $('a-name').focus(); };
+// ── CC 账号：新增弹窗入口 + 表单提交（提交按钮保留 onclick，行为不变）──
+function openAccountModal() { $('a-err').textContent = ''; openModal('m-account'); $('a-name').focus(); }
 $('a-submit').onclick = () => guard(async () => {
   $('a-err').textContent = '';
   const name = $('a-name').value.trim();
@@ -138,9 +61,10 @@ $('a-submit').onclick = () => guard(async () => {
   await loadAccounts();
 });
 
+// ── CC 账号表：按钮走 #accounts 容器级委托，data-act / data-id 定位目标 ──
 $('accounts').addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-act]');
-  if (!btn) return;
+  if (!btn || btn.disabled) return;   // 只读置灰的按钮不得触发任何写操作
   const id = btn.getAttribute('data-id');
   // 必须比完整 keyId：shortId（前 8 字符）相同时会把操作作用到另一个账号上。
   const account = state.accounts.find((a) => String(a.keyId) === String(id));
@@ -192,6 +116,7 @@ $('accounts').addEventListener('click', (e) => {
   }
 });
 
+// ── 改备注表单提交（提交按钮保留 onclick）────────────────────────────
 $('r-submit').onclick = () => guard(async () => {
   $('r-err').textContent = '';
   const name = $('r-name').value.trim();
@@ -214,7 +139,7 @@ function resetNewKeyModal() {
   $('k-submit').disabled = !state.writable;
   $('k-submit').classList.remove('hidden');
 }
-$('add-key').onclick = () => { resetNewKeyModal(); openModal('m-newkey'); $('k-name').focus(); };
+function openNewKeyModal() { resetNewKeyModal(); openModal('m-newkey'); $('k-name').focus(); }
 
 $('k-submit').onclick = () => guard(async () => {
   $('k-err').textContent = '';
@@ -231,7 +156,7 @@ $('k-submit').onclick = () => guard(async () => {
   await loadKeys();
 });
 
-$('k-copy').onclick = async () => {
+async function copyPlainKey() {
   const text = $('k-plain').textContent;
   try {
     await navigator.clipboard.writeText(text);
@@ -244,11 +169,12 @@ $('k-copy').onclick = async () => {
     sel.addRange(range);
     toast('已选中，请按 Ctrl/Cmd+C 复制');
   }
-};
+}
 
+// ── 客户端 key 表：删除按钮走 #keys 容器级委托 ────────────────────────
 $('keys').addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-act="delkey"]');
-  if (!btn) return;
+  if (!btn || btn.disabled) return;
   const id = btn.getAttribute('data-id');
   // 同上：只比前 8 字符会误删/误判另一个 keyId 相同的客户端 key。
   const k = state.keys.find((x) => String(x.keyId) === String(id));
@@ -262,7 +188,7 @@ $('keys').addEventListener('click', (e) => {
 });
 
 // ── 管理员操作 ──────────────────────────────────────────────────────
-$('add-user').onclick = () => { $('u-err').textContent = ''; $('u-name').value = ''; $('u-pass').value = ''; openModal('m-user'); $('u-name').focus(); };
+function openUserModal() { $('u-err').textContent = ''; $('u-name').value = ''; $('u-pass').value = ''; openModal('m-user'); $('u-name').focus(); }
 $('u-submit').onclick = () => guard(async () => {
   $('u-err').textContent = '';
   const username = $('u-name').value.trim();
@@ -275,6 +201,7 @@ $('u-submit').onclick = () => guard(async () => {
   await loadUsers();
 });
 
+// ── 管理员表：改密码 / 删除走 #users 容器级委托 ────────────────────────
 $('users').addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-act]');
   if (!btn || btn.disabled) return;
@@ -315,21 +242,27 @@ $('p-submit').onclick = () => guard(async () => {
   toast('密码已更新');
 });
 
-// ── 事件过滤 ────────────────────────────────────────────────────────
-$('level').onchange = (e) => { state.level = e.target.value; loadEvents().catch((err) => toast(err.message, true)); };
-$('reload-events').onclick = () => loadEvents().catch((err) => toast(err.message, true));
-// ── 主题 ────────────────────────────────────────────────────────────
-function storedTheme() {
-  try { return localStorage.getItem(THEME_STORE) || ''; } catch { return ''; }
-}
-function prefersDark() { return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches); }
-function currentTheme() { return document.documentElement.getAttribute('data-theme') || (prefersDark() ? 'dark' : 'light'); }
-function setTheme(t) {
-  document.documentElement.setAttribute('data-theme', t);
-  try { localStorage.setItem(THEME_STORE, t); } catch { /* 忽略 */ }
-}
-$('theme').onclick = () => setTheme(currentTheme() === 'dark' ? 'light' : 'dark');
-$('theme-gate').onclick = () => setTheme(currentTheme() === 'dark' ? 'light' : 'dark');
+// ── 工具条 / 弹窗入口 / 主题：document 级事件委托 ─────────────────────
+// 不再逐个 $('x').onclick 直绑；用 data 属性 / 目标 id 定位，行为不变。
+document.addEventListener('click', (e) => {
+  const t = e.target;
+  const closest = (sel) => (t && t.closest ? t.closest(sel) : null);
+  if (closest('#add-account')) return openAccountModal();
+  if (closest('#add-key')) return openNewKeyModal();
+  if (closest('#add-user')) return openUserModal();
+  if (closest('#k-copy')) return copyPlainKey();
+  if (closest('#reload-events')) return loadEvents().catch((err) => toast(err.message, true));
+  if (closest('#load-retry')) { boot().catch(showLoadError); return; }
+  if (closest('#theme, #theme-gate')) setTheme(currentTheme() === 'dark' ? 'light' : 'dark');
+});
+
+// ── 事件过滤（#level）：change 走 document 级委托 ─────────────────────
+document.addEventListener('change', (e) => {
+  const t = e.target;
+  if (!t || t.id !== 'level') return;
+  state.level = t.value;
+  loadEvents().catch((err) => toast(err.message, true));
+});
 
 // ── 启动：先问 /api/auth/me 决定「初始化 / 登录 / 后台」─────────────
 async function boot() {
@@ -352,8 +285,6 @@ async function boot() {
   }
   if (!me.setupRequired && me.user && me.user.username) $('who').innerHTML = '已登录 <b>' + esc(me.user.username) + '</b>';
 }
-
-$('load-retry').onclick = () => boot().catch(showLoadError);
 
 /** 启动：恢复主题 + 问 /api/auth/me + 运行日志轮询（原来的顶层启动语句）。 */
 function start() {

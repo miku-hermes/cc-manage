@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const THEME_STORE = 'cc-manage-theme';
+// 主题相关（THEME_STORE / storedTheme / setTheme）统一在 js/theme.js，前后台共用。
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 function timeText(ts) { const d = new Date(ts); return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString('zh-CN', { hour12: false }); }
 /** 日志时间列短格式 HH:MM:SS（完整时间进 title，窄屏不再挤爆正文）。 */
