@@ -27,6 +27,8 @@ section.panel {
   margin-bottom: var(--gutter); border-radius: var(--radius-card);
   background: var(--surface-1); border: 1px solid var(--border); box-shadow: var(--elev-1);
   overflow: hidden;
+  transition: background-color var(--dur-250) var(--ease-out), border-color var(--dur-250) var(--ease-out),
+    color var(--dur-250) var(--ease-out);
 }
 
 .panel-head {
@@ -71,7 +73,10 @@ td { height: var(--row-h); border-bottom: 1px solid var(--border); }
 
 tbody tr:last-child td { border-bottom: none; }
 
-tbody tr { transition: background var(--dur-150) var(--ease-out); }
+tbody tr {
+  transition: background var(--dur-150) var(--ease-out), background-color var(--dur-250) var(--ease-out),
+    border-color var(--dur-250) var(--ease-out), color var(--dur-250) var(--ease-out);
+}
 
 tbody tr:hover td { background: var(--surface-2); }
 
@@ -137,7 +142,8 @@ select, input[type="text"], input[type="password"], textarea {
   font: inherit; color: var(--text-primary); background: var(--surface-1);
   border: 1px solid var(--border-strong); border-radius: 8px;
   padding: 0 12px; width: 100%; height: var(--control-h);
-  transition: border-color var(--dur-150) var(--ease-out), box-shadow var(--dur-150) var(--ease-out);
+  transition: border-color var(--dur-150) var(--ease-out), box-shadow var(--dur-150) var(--ease-out),
+    background-color var(--dur-250) var(--ease-out), color var(--dur-250) var(--ease-out);
 }
 
 select:focus, input[type="text"]:focus, input[type="password"]:focus, textarea:focus {

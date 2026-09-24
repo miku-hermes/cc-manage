@@ -71,6 +71,8 @@
   display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: var(--pill);
   font-size: var(--fs-xs); color: var(--text-secondary);
   background: var(--surface-2); border: 1px solid var(--border-strong);
+  transition: color var(--dur-250) var(--ease-out), border-color var(--dur-250) var(--ease-out),
+    background-color var(--dur-250) var(--ease-out);
 }
 
 .pill.ok { color: var(--success-ink); border-color: var(--success); background: var(--success-light); }
@@ -81,6 +83,8 @@
   display: inline-block; font-size: var(--fs-xs); padding: 3px 10px; border-radius: var(--pill);
   background: var(--surface-2); border: 1px solid var(--border-strong); color: var(--text-secondary);
   white-space: nowrap;
+  transition: color var(--dur-250) var(--ease-out), border-color var(--dur-250) var(--ease-out),
+    background-color var(--dur-250) var(--ease-out);
 }
 
 .tag.ok { color: var(--success-ink); border-color: var(--success); background: var(--success-light); }
@@ -120,7 +124,8 @@
   border: 1px solid var(--border-strong); background: var(--surface-1); color: var(--text-secondary);
   font-size: var(--fs-sm);
   transition: color var(--dur-150) var(--ease-out), border-color var(--dur-150) var(--ease-out),
-    background var(--dur-150) var(--ease-out), box-shadow var(--dur-150) var(--ease-out), transform var(--dur-150) var(--ease-out);
+    background var(--dur-150) var(--ease-out), box-shadow var(--dur-150) var(--ease-out), transform var(--dur-150) var(--ease-out),
+    background-color var(--dur-250) var(--ease-out);
 }
 
 .btn:hover:not(:disabled) { color: var(--accent-ink); border-color: var(--accent); background: var(--accent-light); }

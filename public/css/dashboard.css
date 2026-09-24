@@ -147,7 +147,8 @@ main {
   display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
   padding: 16px var(--card-pad); border-radius: 16px;
   background: var(--surface-1); border: 1px solid var(--border); border-left: 3px solid var(--accent); box-shadow: var(--elev-1);
-  transition: box-shadow var(--dur-150) var(--ease-out), transform var(--dur-150) var(--ease-out), border-color var(--dur-150) var(--ease-out);
+  transition: box-shadow var(--dur-150) var(--ease-out), transform var(--dur-150) var(--ease-out), border-color var(--dur-150) var(--ease-out),
+    background-color var(--dur-250) var(--ease-out), color var(--dur-250) var(--ease-out);
 }
 
 .kpi:hover { box-shadow: var(--elev-2); transform: translateY(-2px); border-color: var(--border-strong); border-left-color: var(--accent); }
@@ -210,7 +211,8 @@ main {
   backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
   font-variant-numeric: tabular-nums;
   transition: color var(--dur-150) var(--ease-out), border-color var(--dur-150) var(--ease-out),
-    background var(--dur-150) var(--ease-out), transform var(--dur-150) var(--ease-out);
+    background var(--dur-150) var(--ease-out), transform var(--dur-150) var(--ease-out),
+    background-color var(--dur-250) var(--ease-out);
 }
 
 .filter-btn:hover { color: var(--accent-ink); border-color: var(--accent); background: var(--accent-light); transform: translateY(-1px); }
@@ -236,7 +238,8 @@ main {
 .card {
   padding: var(--card-pad); border-radius: 18px;
   background: var(--surface-1); border: 1px solid var(--border); box-shadow: var(--elev-1);
-  transition: border-color var(--dur-150) var(--ease-out), box-shadow var(--dur-150) var(--ease-out), transform var(--dur-150) var(--ease-out);
+  transition: border-color var(--dur-150) var(--ease-out), box-shadow var(--dur-150) var(--ease-out), transform var(--dur-150) var(--ease-out),
+    background-color var(--dur-250) var(--ease-out), color var(--dur-250) var(--ease-out);
 }
 
 .card:hover { border-color: var(--border-strong); box-shadow: var(--elev-2), 0 4px 20px rgba(232, 102, 138, 0.08); transform: translateY(-2px); }
@@ -298,6 +301,7 @@ main {
 .credits-bar {
   display: flex; height: 11px; border-radius: 6px;
   background: var(--surface-2); border: 1px solid var(--border); overflow: hidden;
+  transition: background-color var(--dur-250) var(--ease-out), border-color var(--dur-250) var(--ease-out);
 }
 
 .credits-bar > i { display: block; height: 100%; transition: width .45s ease; }
@@ -339,6 +343,7 @@ main {
 .bar {
   height: 6px; min-height: 6px; border: 0; border-radius: var(--pill);
   background: var(--border-strong); overflow: hidden;
+  transition: background-color var(--dur-250) var(--ease-out), border-color var(--dur-250) var(--ease-out);
 }
 
 .bar.is-empty { height: 6px; min-height: 6px; }
@@ -401,10 +406,38 @@ main {
   .search-box input { font-size: var(--fs-xs); }
 }
 
+/* ── 首屏入场 + 筛选重排（批次 10）───────────────────────────────
+   入场动画只由一次性的 body.is-intro 驱动（app.js 首次成功渲染后加、约 1150ms 后移除）。
+   绝不能写成常驻 `.card { animation }`：5s 轮询整块重建 #cards 会每 5 秒重播。 */
+@keyframes rise-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+@keyframes card-in { from { opacity: 0; transform: translateY(8px) scale(.985); } to { opacity: 1; transform: none; } }
+
+@keyframes bar-grow { from { width: 0; } }
+
+body.is-intro .hero { animation: rise-in .5s var(--ease-out) both; }
+
+body.is-intro .kpis { animation: rise-in .5s var(--ease-out) .07s both; }
+
+body.is-intro .filters { animation: rise-in .45s var(--ease-out) .14s both; }
+
+body.is-intro .card {
+  animation: card-in .46s var(--ease-out) both;
+  animation-delay: calc(.2s + min(var(--i, 0), 7) * 45ms);
+}
+
+/* 首屏进度条 / 构成条从 0 长出来（不能动画时 reduced-motion 会压掉） */
+body.is-intro .bar > i, body.is-intro .credits-bar > i { animation: bar-grow .7s var(--ease-out) both; }
+
+/* 筛选 pill 点击 → 卡片重排淡入（260ms 短类；搜索框输入不触发） */
+#cards.is-reflow .card { animation: card-in .26s var(--ease-out) both; }
+
 @media (prefers-reduced-motion: reduce) {
   .petals { display: none; }
   .card, .bar > i, .kpi, .credits-bar > i, body { transition: none; }
   .card:hover, .kpi:hover { box-shadow: var(--elev-1); border-color: var(--border); transform: none; }
+  body.is-intro .hero, body.is-intro .kpis, body.is-intro .filters, body.is-intro .card,
+  body.is-intro .bar > i, body.is-intro .credits-bar > i, #cards.is-reflow .card { animation: none; }
 }
 
 /* 共用令牌在 tokens.css；这里恢复前台专属的阴影分层（后台用更深的 elevation） */

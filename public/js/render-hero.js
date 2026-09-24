@@ -1,3 +1,19 @@
+/* 数字滚动（批次 10）：记录上一次的值，首次 700ms 从 0 滚上来，之后只在
+   格式化结果真的变化时用 320ms 滚过去；不能动画时 setNumber 同步写终值。 */
+let lastBalance = null;    // 上次余额数值；null = 尚未渲染过。无快照时为 NaN（money→—）
+let lastTokens = null;     // 上次 token 数值；null = 尚未渲染过
+const lastKpiValues = {};  // KPI 数字 id → 上次的值
+
+/** 一个数字格：首次从 0，之后格式化结果变了才动。 */
+function paintKpiNumber(id, value) {
+  const el = $(id);
+  if (!el) return;
+  const prev = id in lastKpiValues ? lastKpiValues[id] : null;
+  if (prev === null) setNumber(el, 0, value, num, 700);
+  else if (num(prev) !== num(value)) setNumber(el, prev, value, num, 320);
+  lastKpiValues[id] = value;
+}
+
 /* KPI 语义色：错误>0 红、可用<总数 黄、0 值弱化 */
 function paintKpi(boxId, numId, value, opts) {
   const box = $(boxId);
@@ -11,7 +27,12 @@ function paintKpi(boxId, numId, value, opts) {
     else if (opts.kind === 'accent' && v > 0) box.classList.add('is-accent');
     else if (v === 0) box.classList.add('is-muted');
   }
-  b.textContent = known ? num(v) : '—';
+  if (known) {
+    paintKpiNumber(numId, v);
+  } else {
+    b.textContent = '—';   // 不可用值：同步写终值，格式与原来一致
+    lastKpiValues[numId] = null;
+  }
 }
 
 /** KPI 卡下方那行 12px 说明小字（真实数据，不塞假值）。 */
@@ -97,14 +118,20 @@ function render(d) {
   $('cadence').textContent = cadenceText(d.quotaPoll);
   // 公开面板不下发也不渲染内网上游地址（host/port 对匿名访客无用，只泄露拓扑）
   $('upstream').textContent = '内网上游' + (d.allowPassthrough ? ' · 已开启直连透传' : '');
-  $('tokens').textContent = num(st.totalTokens);
+  const tokensValue = st.totalTokens;
+  if (lastTokens === null) setNumber($('tokens'), 0, tokensValue, num, 700);
+  else if (num(lastTokens) !== num(tokensValue)) setNumber($('tokens'), lastTokens, tokensValue, num, 320);
+  lastTokens = tokensValue;
 
   // 余额：全页最大字号的主角（用不了的钱算 0，见 usableRemaining）。
   // 没有快照的账号 usableRemaining 返回 null：从合计里排除（不是当 0 低估池余额），并注明数量。
   const synced = accounts.filter((a) => Number.isFinite(usableRemaining(a)));
   const unsynced = accounts.length - synced.length;
   const remaining = synced.reduce((sum, a) => sum + usableRemaining(a), 0);
-  $('balance').textContent = synced.length ? money(remaining) : '—';
+  const balanceValue = synced.length ? remaining : NaN;   // 无快照 → NaN，money(NaN)='—'
+  if (lastBalance === null) setNumber($('balance'), 0, balanceValue, money, 700);
+  else if (money(lastBalance) !== money(balanceValue)) setNumber($('balance'), lastBalance, balanceValue, money, 320);
+  lastBalance = balanceValue;
   $('bal-label').textContent = '剩余额度（USD）' + (unsynced ? ' · 含 ' + unsynced + ' 个未同步账号' : '');
   // 余额下方的构成明细（聚合口径见 breakdownText）。
   $('bal-breakdown').textContent = breakdownText(accounts);
@@ -127,6 +154,7 @@ function render(d) {
 
   renderFilters(accounts);
   renderCards();
+  if (typeof playIntro === 'function') playIntro();   // 首屏入场 stagger：只跑一次（introPending 守卫）
 }
 function clearKpis() {
   for (const id of ['kpi-accounts', 'kpi-available', 'kpi-paused', 'kpi-unavailable', 'kpi-total', 'kpi-errors']) {
@@ -139,15 +167,18 @@ function clearKpis() {
     const el = $(id);
     if (el) el.textContent = '';
   }
+  for (const id of Object.keys(lastKpiValues)) lastKpiValues[id] = null;
 }
 function showPrivate() {
   state.data = null;
-  $('balance').textContent = '—';
+  lastBalance = null;
+  lastTokens = null;
+  setNumber($('balance'), 0, NaN, money, 0);   // 同步写 — 并取消在途动画
   $('bal-label').textContent = '剩余额度（USD）';
   $('bal-breakdown').textContent = '';
   $('health').textContent = '需要登录后台';
   $('health').className = 'pill bad';
-  $('tokens').textContent = '0';
+  setNumber($('tokens'), 0, NaN, num, 0);      // 同步写 0 并取消在途动画
   $('upstream').textContent = '';
   $('updated').textContent = '';
   $('cadence').textContent = '';

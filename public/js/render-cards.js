@@ -110,7 +110,7 @@ function creditsBlock(q) {
     + (c ? creditsBar(c) : '') + legend + '</div>';
 }
 
-function card(a, wideLast = false) {
+function card(a, wideLast = false, index = 0) {
   const ex = a.exhausted || null;   // 统一口径的「额度已用完」（含恢复时间）
   const q = a.lastQuota;
   const st = statusText(a);
@@ -162,7 +162,8 @@ function card(a, wideLast = false) {
     + (q ? freshHTML(q.fetchedAt) : '')
     + '</div>';
 
-  return '<article class="card ' + cardCls + '">'
+  // style="--i:N"：卡在列表里的序号，只给 body.is-intro 入场 stagger 用
+  return '<article class="card ' + cardCls + '" style="--i:' + index + '">'
     + head + body
     // data-key-id 让 renderCards 重建后能把每个账号标签条的原滚动位置回填（手机端 5s 刷新不跳回最左）
     + '<div class="tags" data-key-id="' + esc(a.keyId) + '">' + tags.join('') + '</div>'
@@ -195,7 +196,7 @@ function renderCards() {
   for (const el of document.querySelectorAll('#cards .tags[data-key-id]')) {
     scrollOf.set(el.getAttribute('data-key-id'), el.scrollLeft);
   }
-  $('cards').innerHTML = list.map((a, i) => card(a, i === list.length - 1 && list.length % 2 === 1)).join('');
+  $('cards').innerHTML = list.map((a, i) => card(a, i === list.length - 1 && list.length % 2 === 1, i)).join('');
   for (const el of document.querySelectorAll('#cards .tags[data-key-id]')) {
     const key = el.getAttribute('data-key-id');
     if (scrollOf.has(key)) el.scrollLeft = scrollOf.get(key);

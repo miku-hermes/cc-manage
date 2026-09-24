@@ -25,7 +25,7 @@ document.addEventListener('click', (e) => {
   if (fb) {
     const next = fb.getAttribute('data-filter');
     if (next && state.viewFilter !== next) state.viewFilter = next;
-    if (state.data) { renderFilters(state.data.accounts); renderCards(); }
+    if (state.data) { renderFilters(state.data.accounts); renderCards(); reflowCards(); }
   }
 });
 document.addEventListener('input', (e) => {
@@ -124,6 +124,31 @@ function petals() {
     p.style.animationDelay = (-Math.random() * 24).toFixed(1) + 's';
     host.appendChild(p);
   }
+}
+
+// ── 首屏入场（批次 10）：只由一次性的 body.is-intro 驱动 ──────────────
+// 5s 轮询会整块重建 #cards，若把 animation 写在常驻 .card 上就会每 5 秒重播；
+// 这里首次成功渲染后加类、约 1150ms 后移除，之后的轮询重建不再匹配任何动画选择器。
+let introPending = true;
+function playIntro() {
+  if (!introPending) return;
+  introPending = false;
+  const b = document.body;
+  if (!b || !b.classList) return;
+  b.classList.add('is-intro');
+  setTimeout(() => b.classList.remove('is-intro'), 1150);
+}
+
+// ── 筛选 pill 点击 → 卡片重排淡入（只挂 260ms 短类；搜索框输入绝不触发）──
+let reflowTimer = null;
+function reflowCards() {
+  const host = $('cards');
+  if (!host || !host.classList) return;
+  host.classList.remove('is-reflow');
+  void host.offsetWidth;                 // 强制重排：连续点击也能重播动画
+  host.classList.add('is-reflow');
+  if (reflowTimer) clearTimeout(reflowTimer);
+  reflowTimer = setTimeout(() => { host.classList.remove('is-reflow'); reflowTimer = null; }, 260);
 }
 
 /** 启动：恢复主题 + 首屏渲染 + 定时器（原来的顶层启动语句）。 */
