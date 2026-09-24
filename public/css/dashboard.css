@@ -225,7 +225,7 @@ main {
 /* ── 近 24 小时趋势：三张迷你折线卡（纯内联 SVG，尺寸由 CSS 控）──
    外观与 .card 一致（复用同一套令牌），不写死任何颜色。 */
 .trend {
-  padding: var(--card-pad); border-radius: 18px;
+  padding: 14px var(--card-pad) 12px; border-radius: 18px;
   background: var(--surface-1); border: 1px solid var(--border); box-shadow: var(--elev-1);
   transition: border-color var(--dur-150) var(--ease-out), box-shadow var(--dur-150) var(--ease-out),
     background-color var(--dur-250) var(--ease-out);
@@ -237,28 +237,53 @@ main {
 
 .trend-range { font-size: var(--fs-xs); }
 
-.trend-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 12px; }
+.trend-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 10px; align-items: start; }
 
 @media (max-width: 640px) { .trend-grid { grid-template-columns: minmax(0, 1fr); } }
 
-.trend-card { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+/* 每个条目：统一两行网格 —— 行 1「标签 + 数值」，行 2 sparkline 独占整宽。
+   三列等宽 + 相同左右内边距，三个条目的标签基线一致、三条线端点也对齐。 */
+.trend-card { min-width: 0; --trend-tone: var(--text-secondary); }
 
-.trend-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.trend-item { display: grid; grid-template-rows: auto auto; row-gap: 8px; min-width: 0; }
+
+/* 行 1：标签在左、数值在右，两端对齐共享同一条基线 */
+.trend-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; }
 
 .trend-label { font-size: var(--fs-xs); color: var(--text-secondary); }
 
 .trend-value { font-size: var(--fs-lg); font-weight: 700; color: var(--text-primary); font-variant-numeric: tabular-nums; }
 
-/* sparkline：固定 viewBox + preserveAspectRatio=none，实际宽高交给 CSS */
-.trend-spark { display: block; width: 100%; height: 34px; }
+/* 行 2（图上带区）：固定 28px 高度，与行 1 之间由 .trend-item 的 row-gap 隔开
+   （数值行与图至少 8px 间距 → 描边不会爬进文字行）。同一列宽 → 三条线端点对齐。 */
+.trend-plot { position: relative; height: 28px; min-width: 0; }
 
-.trend-line { stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+/* sparkline：固定 viewBox + preserveAspectRatio=none，实际宽高交给 CSS（收紧纵向留白） */
+.trend-spark { display: block; width: 100%; height: 28px; }
 
-.trend-accent .trend-line { stroke: var(--accent); }
-.trend-danger .trend-line { stroke: var(--danger); }
-.trend-success .trend-line { stroke: var(--success); }
+/* 语义色：请求数是中性指标 → 中性弱色；错误数 → 危险色；可用余额 → 成功色 */
+.trend-item.trend-request { --trend-tone: var(--text-secondary); }
+.trend-item.trend-danger { --trend-tone: var(--danger); }
+.trend-item.trend-success { --trend-tone: var(--success); }
 
-.trend-empty { height: 34px; display: grid; place-items: center; font-size: var(--fs-xs); color: var(--text-tertiary); }
+/* 三条序列同一种画法：底部基线 + 同色半透明面积 + 2px 圆头折线 + 末端小圆点 */
+.trend-line { stroke: var(--trend-tone); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.trend-area { fill: var(--trend-tone); fill-opacity: .12; stroke: none; }
+.trend-dot { fill: var(--trend-tone); stroke: none; }
+/* y=0 锚线：很淡的水平规则线（弱色令牌），三条序列共享同一高度基准 */
+.trend-baseline { stroke: var(--border); stroke-width: 1; stroke-linecap: round; }
+/* 请求数用中性弱色（--text-secondary 在浅底上对比度低）：单独把描边加粗到 2.75px，
+   配合面积填充 + 端点圆点，把它从「一条线」拉成「一张图」，三条线视觉权重相当。 */
+.trend-item.trend-request .trend-line { stroke-width: 2.75; }
+
+/* 样本 < 2 的空态：中性灰虚线基线（不参与任何语义色），一眼看出不是真实数据 */
+.trend-line-dashed { stroke: var(--text-tertiary); stroke-dasharray: 4 3; stroke-width: 2; stroke-linecap: round; }
+.trend-note {
+  position: absolute; right: 0; top: 50%; transform: translateY(-50%);
+  padding: 0 4px; font-size: var(--fs-2xs); color: var(--text-tertiary); background: var(--surface-1);
+}
+
+.trend-empty { height: 28px; display: grid; place-items: center; font-size: var(--fs-xs); color: var(--text-tertiary); }
 
 /* ── 账号卡片网格：自适应铺满 ─────────────────────────── */
 .grid {
