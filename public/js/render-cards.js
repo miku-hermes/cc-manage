@@ -36,6 +36,21 @@ function accountStatus(a) {
 }
 function statusText(a) { return accountStatus(a); }
 
+/** 「耗尽」统一口径（筛选计数与 accountStatus 同源，不另立标准）。 */
+function isExhaustedAccount(a) {
+  return !!(a && (a.exhausted || a.creditsExhausted || a.authInvalid));
+}
+
+/** 状态筛选：与搜索叠加生效；'all' 不筛。 */
+function inViewFilter(a) {
+  switch (state.viewFilter) {
+    case 'available': return accountStatus(a).schedulable;
+    case 'cooldown': return !!(a.paused || a.rateLimited) && !isExhaustedAccount(a);
+    case 'exhausted': return isExhaustedAccount(a);
+    default: return true;
+  }
+}
+
 /** 额度新鲜度行：带 data-fetched-at，交给每秒的 tickFreshness() 重算。 */
 function freshHTML(fetchedAt) {
   const t = Number(fetchedAt);
@@ -59,10 +74,45 @@ function usableRemaining(a) {
   return q.remaining;                                     // 含 window：只是排队，钱没死
 }
 
+/** 名称右侧计划标签：从 plan.planId 派生（走 planLabel 友好名，不暴露原始 id）。 */
+function planPill(q) {
+  if (!q || !q.plan) return '';
+  const label = planLabel(q.plan.planId);
+  if (label === null || label === undefined || label === '') return '';
+  return '<span class="plan-pill mono">' + esc(label) + '</span>';
+}
+
+/* 额度构成分段条：三段横向拼接，段宽 = 该段金额 / 三段之和（全 0 时为空条）。
+   颜色：月度 = accent 粉 / 购买 = info 蓝 / 赠送 = success 绿。 */
+function creditsBar(c) {
+  const m = Number(c.monthlyCredits) || 0;
+  const p = Number(c.purchasedCredits) || 0;
+  const f = Number(c.freeCredits) || 0;
+  const total = m + p + f;
+  const w = (v) => (total > 0 ? +(v / total * 100).toFixed(4) : 0);
+  const label = '额度构成：月度 ' + money(c.monthlyCredits) + ' · 购买 ' + money(c.purchasedCredits)
+    + ' · 赠送 ' + money(c.freeCredits);
+  return '<div class="credits-bar" role="img" aria-label="' + esc(label) + '" title="' + esc(label) + '">'
+    + '<i class="seg-month" style="width:' + w(m) + '%"></i>'
+    + '<i class="seg-buy" style="width:' + w(p) + '%"></i>'
+    + '<i class="seg-gift" style="width:' + w(f) + '%"></i>'
+    + '</div>';
+}
+
+/** 额度构成区块：标签 + 分段条 + 图例（无快照时只给「尚未获取额度快照」）。 */
+function creditsBlock(q) {
+  const c = q && q.credits ? q.credits : null;
+  const legend = c
+    ? '<div class="card-credits aux-text">月度 ' + money(c.monthlyCredits)
+      + ' · 购买 ' + money(c.purchasedCredits) + ' · 赠送 ' + money(c.freeCredits) + '</div>'
+    : '<div class="card-credits aux-text">尚未获取额度快照</div>';
+  return '<div class="credits-block"><div class="credits-title">额度构成</div>'
+    + (c ? creditsBar(c) : '') + legend + '</div>';
+}
+
 function card(a, wideLast = false) {
   const ex = a.exhausted || null;   // 统一口径的「额度已用完」（含恢复时间）
   const q = a.lastQuota;
-  const c = q && q.credits ? q.credits : null;
   const st = statusText(a);
   const cardCls = st.dot + (wideLast ? ' card-wide' : '');
   const tags = [];
@@ -91,21 +141,17 @@ function card(a, wideLast = false) {
   } else if (a.creditsExhausted) {
     tags.push('<span class="tag bad">余额不足</span>');   // 兼容旧后端
   }
-  if (q && q.plan) tags.push('<span class="tag">套餐 ' + esc(planLabel(q.plan.planId) ?? '-') + '</span>');
 
-  const left = '<div class="card-col-left">'
-    + '<div class="card-head"><h2>' + esc(a.name)
-    + (q && q.displayName ? '<span class="card-display">' + esc(q.displayName) + '</span>' : '') + '</h2>'
-    + '<span class="status"><span class="dot" aria-hidden="true"></span>' + esc(st.t) + '</span></div>'
-    // 前台只显示备注名（h2 里）+ 上游显示名，不下发也不渲染 key 的任何片段
+  // 头行：备注名（+ 上游显示名）+ 计划标签 + 状态胶囊。前台只显示备注名/显示名，
+  // 不下发也不渲染 key 的任何片段（keyId 仅出现在底部 .tags 的 data-key-id 里做滚动回填）。
+  const head = '<div class="card-head"><h2>' + esc(a.name)
+    + (q && q.displayName ? '<span class="card-display">' + esc(q.displayName) + '</span>' : '')
+    + planPill(q) + '</h2>'
+    + '<span class="status is-' + esc(st.tone) + '"><span class="dot" aria-hidden="true"></span>' + esc(st.t) + '</span></div>';
+
+  const body = '<div class="card-body">'
+    + creditsBlock(q)
     + '<div class="card-money"><b>' + money(usableRemaining(a)) + '</b><small>剩余额度</small></div>'
-    + (c
-      ? '<div class="card-credits aux-text">月度 ' + money(c.monthlyCredits) + ' · 购买 ' + money(c.purchasedCredits) + ' · 赠送 ' + money(c.freeCredits) + '</div>'
-      : '<div class="card-credits aux-text">尚未获取额度快照</div>')
-    + (q ? freshHTML(q.fetchedAt) : '')
-    + '</div>';
-
-  const right = '<div class="card-col-right">'
     + '<div class="bars">'
     + bar('5 小时窗口', q && q.fiveHour, { spent: ex && ex.kind === 'window' && ex.window === 'fiveHour' })
     + bar('本周窗口', q && q.weekly, { spent: ex && ex.kind === 'window' && ex.window === 'weekly' })
@@ -113,10 +159,11 @@ function card(a, wideLast = false) {
     + '</div>'
     + (q && q.usage ? '<div class="card-usage aux-text">本周期 token ' + esc(num(q.usage.totalTokens))
       + (q.usage.totalCost === undefined ? '' : ' · 花费 ' + money(q.usage.totalCost)) + '</div>' : '')
+    + (q ? freshHTML(q.fetchedAt) : '')
     + '</div>';
 
   return '<article class="card ' + cardCls + '">'
-    + '<div class="card-grid">' + left + right + '</div>'
+    + head + body
     // data-key-id 让 renderCards 重建后能把每个账号标签条的原滚动位置回填（手机端 5s 刷新不跳回最左）
     + '<div class="tags" data-key-id="' + esc(a.keyId) + '">' + tags.join('') + '</div>'
     + '</article>';
@@ -128,14 +175,17 @@ function renderCards() {
   if (!state.data) return;
   const all = state.data.accounts;
   const f = state.filter.trim().toLowerCase();
+  // 状态筛选与搜索叠加生效（先按状态筛，再按关键词筛）。
+  const byView = all.filter(inViewFilter);
   const list = f
-    ? all.filter((a) => [a.name, a.lastQuota && a.lastQuota.displayName]
+    ? byView.filter((a) => [a.name, a.lastQuota && a.lastQuota.displayName]
       .some((v) => String(v ?? '').toLowerCase().includes(f)))
-    : all;
+    : byView;
   if (!list.length) {
-    $('cards').innerHTML = '<div class="card empty">' + (all.length
-      ? '没有匹配「' + esc(state.filter) + '」的账号。'
-      : '账号池为空。请在 accounts.json 里配置账号，或用 CC_ACCOUNTS 环境变量注入。') + '</div>';
+    const msg = all.length
+      ? (state.filter.trim() ? '没有匹配「' + esc(state.filter) + '」的账号。' : '该筛选下没有账号。')
+      : '账号池为空。请在 accounts.json 里配置账号，或用 CC_ACCOUNTS 环境变量注入。';
+    $('cards').innerHTML = '<div class="card empty">' + msg + '</div>';
     syncTagMasks();
     return;
   }

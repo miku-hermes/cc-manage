@@ -3,7 +3,15 @@
 // 用 e.target.closest('#theme') / 目标 id 判断，行为与直绑完全一致。
 document.addEventListener('click', (e) => {
   const t = e.target;
-  if (t && t.closest && t.closest('#theme')) setTheme(currentTheme() === 'dark' ? 'light' : 'dark');
+  if (!t || !t.closest) return;
+  if (t.closest('#theme')) { setTheme(currentTheme() === 'dark' ? 'light' : 'dark'); return; }
+  // 状态筛选条：document 级委托（禁内联 onclick），active 态与过滤叠加逻辑见 renderFilters/inViewFilter。
+  const fb = t.closest('#filters .filter-btn');
+  if (fb) {
+    const next = fb.getAttribute('data-filter');
+    if (next && state.viewFilter !== next) state.viewFilter = next;
+    if (state.data) { renderFilters(state.data.accounts); renderCards(); }
+  }
 });
 document.addEventListener('input', (e) => {
   const t = e.target;

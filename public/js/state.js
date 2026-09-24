@@ -1,1 +1,1 @@
-const state = { data: null, filter: '' };
+const state = { data: null, filter: '', viewFilter: 'all' };
