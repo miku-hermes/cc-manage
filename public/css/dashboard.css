@@ -397,7 +397,7 @@ main {
 
 /* 极小屏（≤340px）：展开态搜索框压窄、字号减小，工具栏保持一行。 */
 @media (max-width: 340px) {
-  .search-box.expanded { width: 170px; }
+  .search-box.expanded, .search-box:focus-within { width: 170px; }
   .search-box input { font-size: var(--fs-xs); }
 }
 

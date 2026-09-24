@@ -41,23 +41,25 @@
 
 .search-box input {
   border: none; background: transparent; color: var(--text-primary); min-width: 0;
-  font: inherit; font-size: var(--fs-sm); width: 0; padding: 0; opacity: 0; flex: 1 1 auto;
+  font: inherit; font-size: var(--fs-sm); width: 0; padding: 0; opacity: 0; flex: 0 0 auto;
   transition: width var(--dur-250) var(--ease-out), opacity var(--dur-150) var(--ease-out);
 }
 
-.search-box.expanded input { width: 170px; padding: 0 0 0 8px; opacity: 1; }
+.search-box.expanded input,
+.search-box:focus-within input { width: 170px; padding: 0 0 0 8px; opacity: 1; }
 
 .search-box input::placeholder { color: var(--text-tertiary); }
 
 .admin-link {
   display: grid; place-items: center; flex: none; text-decoration: none;
   width: var(--control-h); height: var(--control-h);
-  border-radius: var(--radius-sm); border: none; background: none;
+  border-radius: var(--radius-sm); border: 1px solid var(--border-strong); background: var(--surface-1);
   color: var(--text-secondary);
-  transition: color var(--dur-150) var(--ease-out), background var(--dur-150) var(--ease-out);
+  transition: color var(--dur-150) var(--ease-out), border-color var(--dur-150) var(--ease-out),
+    background var(--dur-150) var(--ease-out);
 }
 
-.admin-link:hover { color: var(--accent-ink); background: var(--accent-light); }
+.admin-link:hover { color: var(--accent-ink); border-color: var(--accent); background: var(--accent-light); }
 
 .admin-link svg { width: 17px; height: 17px; }
 

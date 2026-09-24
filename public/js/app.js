@@ -5,13 +5,19 @@ document.addEventListener('click', (e) => {
   const t = e.target;
   if (!t || !t.closest) return;
   if (t.closest('#theme')) { setTheme(currentTheme() === 'dark' ? 'light' : 'dark'); return; }
-  // 搜索框展开/收起：点击图标（非输入框本身）切换 expanded，展开时聚焦输入框。
+  // 搜索框展开/收起：点输入框本身只保证展开（浏览器会把图标点击投递到 input 上），
+  // 点图标才切换 expanded，展开时聚焦输入框。
   const sb = t.closest('.search-box');
-  if (sb && !(t.tagName && t.tagName.toUpperCase() === 'INPUT')) {
+  if (sb) {
     const input = sb.querySelector('input');
-    const expand = !sb.classList.contains('expanded');
-    sb.classList.toggle('expanded');
-    if (input) { if (expand) input.focus(); else input.blur(); }
+    const isInput = !!(t.tagName && t.tagName.toUpperCase() === 'INPUT');
+    if (isInput) {
+      sb.classList.add('expanded');
+    } else {
+      const expand = !sb.classList.contains('expanded');
+      sb.classList.toggle('expanded');
+      if (input) { if (expand) input.focus(); else input.blur(); }
+    }
   }
   // 状态筛选条：document 级委托（禁内联 onclick），active 态与过滤叠加逻辑见 renderFilters/inViewFilter。
   const fb = t.closest('#filters .filter-btn');
@@ -48,6 +54,14 @@ document.addEventListener('keydown', (e) => {
     const input = sb.querySelector('input');
     if (input) input.focus();
   }
+});
+
+// 搜索框获得焦点：只要焦点落进 .search-box 就补上 expanded（兜底点击投递差异）。
+document.addEventListener('focusin', (e) => {
+  const t = e.target;
+  if (!t || !t.closest) return;
+  const sb = t.closest('.search-box');
+  if (sb) sb.classList.add('expanded');
 });
 
 // 搜索框失焦：输入为空时收起，避免留下一个空的展开态。
