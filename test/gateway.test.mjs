@@ -1049,7 +1049,8 @@ test('余额不足的账号：换号重试给客户端正常响应，且它自�
   assert.ok(!res.body.includes('insufficient credits'), '客户端不该看到上游的余额不足报错');
 
   // 面板视角：穷号要显示不可用 + 原因，且不是「暂停到 X」
-  const d = JSON.parse((await request(`${ctx.baseUrl}/api/status`)).body);
+  // B12：lastError 不再随匿名 /api/status 下发，本用例改读内部全量视图（断言不变）。
+  const d = ctx.gateway.statusView({ internal: true });
   const alpha = d.accounts.find((a) => a.name === '账号A');
   const beta = d.accounts.find((a) => a.name === '账号B');
   assert.equal(alpha.creditsExhausted, true, '穷号要带 creditsExhausted 标记');

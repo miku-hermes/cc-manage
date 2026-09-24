@@ -142,10 +142,10 @@ function card(a, wideLast = false, index = 0) {
     tags.push('<span class="tag bad">余额不足</span>');   // 兼容旧后端
   }
 
-  // 头行：备注名（+ 上游显示名）+ 计划标签 + 状态胶囊。前台只显示备注名/显示名，
+  // 头行：备注名 + 计划标签 + 状态胶囊。前台只显示用户自己的备注名，
   // 不下发也不渲染 key 的任何片段（keyId 仅出现在底部 .tags 的 data-key-id 里做滚动回填）。
+  // B12：公开接口不再下发上游身份字段，卡片不再渲染副标题片段。
   const head = '<div class="card-head"><h2>' + esc(a.name)
-    + (q && q.displayName ? '<span class="card-display">' + esc(q.displayName) + '</span>' : '')
     + planPill(q) + '</h2>'
     + '<span class="status is-' + esc(st.tone) + '"><span class="dot" aria-hidden="true"></span>' + esc(st.t) + '</span></div>';
 
@@ -178,9 +178,9 @@ function renderCards() {
   const f = state.filter.trim().toLowerCase();
   // 状态筛选与搜索叠加生效（先按状态筛，再按关键词筛）。
   const byView = all.filter(inViewFilter);
+  // B12：公开接口不再下发上游身份字段，搜索只按用户备注名（a.name）匹配。
   const list = f
-    ? byView.filter((a) => [a.name, a.lastQuota && a.lastQuota.displayName]
-      .some((v) => String(v ?? '').toLowerCase().includes(f)))
+    ? byView.filter((a) => String(a.name ?? '').toLowerCase().includes(f))
     : byView;
   if (!list.length) {
     const msg = all.length

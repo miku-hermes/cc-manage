@@ -666,7 +666,7 @@ export async function startGateway(overrides = {}) {
     return null;
   }
 
-  function accountView(account, { withKeyPrefix = false } = {}) {
+  function accountView(account, { withKeyPrefix = false, internal = false } = {}) {
     const rt = scheduler.runtime(account);
     const q = rt.lastQuota;
     const pct = (w) => (w && typeof w.percent === 'number' ? Math.round(w.percent * 10) / 10 : null);
@@ -689,12 +689,17 @@ export async function startGateway(overrides = {}) {
       creditsExhaustedAt: rt.creditsExhausted?.at ?? null,
       // 统一口径的「额度已用完」（含恢复时间），与窗口耗尽同一类说法
       exhausted: exhaustedView(rt, q),
-      lastError: rt.lastError ? redact(rt.lastError, secrets) : null,
-      lastErrorAt: rt.lastErrorAt,
+      // B12：/api/status 匿名可读，lastError / lastErrorAt 是上游报错原文（措辞、超时描述），
+      // 只给已登录的后台；对外档用条件展开让这两个键**不存在**（不是 null）。
+      ...(internal
+        ? { lastError: rt.lastError ? redact(rt.lastError, secrets) : null, lastErrorAt: rt.lastErrorAt }
+        : {}),
       lastQuota: q
         ? {
             ok: q.ok,
-            displayName: q.displayName,
+            // B12：displayName 是上游账号的真实身份（线上实测就是用户本人账号名）；
+            // 公开面板不得下发，后台（internal）照旧全量。用条件展开保证键不存在。
+            ...(internal ? { displayName: q.displayName } : {}),
             plan: q.plan,
             remaining: q.remaining,
             credits: q.credits,
@@ -710,8 +715,10 @@ export async function startGateway(overrides = {}) {
     };
   }
 
-  function statusView() {
-    const accounts_ = accounts.map(accountView);
+  // internal 默认 false = 对外安全档：/api/status 匿名可读，只下发面板必需字段，
+  // 摘掉上游身份（lastQuota.displayName）与内部错误原文（lastError / lastErrorAt）。
+  function statusView({ internal = false } = {}) {
+    const accounts_ = accounts.map((a) => accountView(a, { internal }));
     const availableCount = accounts.filter((a) => scheduler.isAvailable(a)).length;
     return {
       ok: true,
@@ -1007,7 +1014,8 @@ export async function startGateway(overrides = {}) {
         // 用 accountView（含 lastQuota 额度快照）而不是 pubAccount（只有 8 个基础字段）：
         // 后台要展示 5h/周/月进度条与余额，用 pubAccount 会永远显示「尚未获取额度快照」。
         // accountView 内部已做脱敏（只出 keyId / keyPrefix，lastError 走 redact）。
-        accounts: accounts.map((a) => accountView(a, { withKeyPrefix: true })),
+        // B12：后台已登录鉴权，走全量档（internal: true）——displayName / lastError / lastErrorAt 照旧下发。
+        accounts: accounts.map((a) => accountView(a, { withKeyPrefix: true, internal: true })),
         tests: testHistory.slice(0, TEST_HISTORY_MAX),
       });
     }

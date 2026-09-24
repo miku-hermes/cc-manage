@@ -113,6 +113,8 @@ const post = (ctx, body = { model: 'mock-model' }) =>
   });
 
 const statusView = async (ctx) => JSON.parse((await request(`${ctx.baseUrl}/api/status`)).body);
+// B12：lastError 不再随匿名 /api/status 下发；需要看 lastError 的用例改读内部全量视图。
+const internalView = (ctx) => ctx.gateway.statusView({ internal: true });
 
 // ── a. 内核折叠后的 401（模型名错/套餐不含）不得停调账号 ─────────────────────
 test('403-not-auth#a：内核折叠 403→401（MODEL_NOT_IN_PLAN）不停调账号，401 原样透传', async (t) => {
@@ -162,7 +164,7 @@ test('403-not-auth#b：真·无效 key（401 Invalid Authorization header）仍�
   const res = await post(ctx);
   assert.equal(res.status, 401, '401 状态码仍原样透传');
 
-  const view = await statusView(ctx);
+  const view = await internalView(ctx);
   const invalid = view.accounts.find((a) => a.authInvalid);
   assert.ok(invalid, '真鉴权失效必须标记 authInvalid');
   assert.equal(invalid.available, false, '鉴权失效的账号必须立刻退出调度');
@@ -192,7 +194,7 @@ test('403-not-auth#c：模型/套餐 401 的 lastError 不得含「鉴权失效�
   t.after(() => ctx.close());
 
   await post(ctx);
-  const view = await statusView(ctx);
+  const view = await internalView(ctx);
   const acct = ctx.gateway.accounts.find((a) => a.name === '主号');
   const row = view.accounts.find((a) => a.keyId === acct.keyId);
   assert.equal(row.authInvalid, false);

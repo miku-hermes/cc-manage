@@ -103,7 +103,8 @@ test('余额见底的账号：刷新额度时就该被标成不可用，不必�
   // 只刷新额度，**不发任何推理请求**
   await ctx.gateway.refreshAll();
 
-  const d = JSON.parse((await request(`${ctx.baseUrl}/api/status`)).body);
+  // B12：lastError 不再随匿名 /api/status 下发，本用例改读内部全量视图（断言不变）。
+  const d = ctx.gateway.statusView({ internal: true });
   const alpha = d.accounts.find((a) => a.name === '账号A');
   assert.equal(alpha.creditsExhausted, true, '刷新后就该标上余额不足（用户投诉的位置）');
   assert.equal(alpha.available, false, '不能再显示为可调度');

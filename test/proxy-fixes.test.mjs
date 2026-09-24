@@ -43,7 +43,8 @@ test('F2：上游流中途断开 → 下游连接异常中止，且统计计入�
   assert.ok(!res.body.includes('[DONE]'), '不该出现任何「正常结束」标志');
 
   await sleep(50);
-  const status = JSON.parse((await request(`${ctx.baseUrl}/api/status`)).body);
+  // B12：lastError 不再随匿名 /api/status 下发，本用例改读内部全量视图（断言不变）。
+  const status = ctx.gateway.statusView({ internal: true });
   assert.equal(status.stats.errors, 1, '上游中断必须计入 stats.errors');
   assert.equal(status.stats.total, 1, '一个请求只占一行统计');
   const acct = status.accounts.find((a) => a.lastError);
@@ -73,7 +74,8 @@ test('F4：429「Rate limit exceeded」不再把账号暂停 5 小时（线上�
   const res = await post(ctx, '/v1/chat/completions', { body: JSON.stringify({ model: 'mock-model' }) });
   assert.equal(res.status, 429, '限流状态码原样透传给客户端');
 
-  const status = JSON.parse((await request(`${ctx.baseUrl}/api/status`)).body);
+  // B12：lastError 不再随匿名 /api/status 下发，本用例改读内部全量视图（断言不变）。
+  const status = ctx.gateway.statusView({ internal: true });
   for (const a of status.accounts) {
     assert.equal(a.paused, false, `账号「${a.name}」绝不能被判成额度耗尽（paused）`);
     assert.equal(a.pausedUntil, null, `账号「${a.name}」不得有 pausedUntil`);
