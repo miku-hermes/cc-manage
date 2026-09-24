@@ -5,6 +5,14 @@ document.addEventListener('click', (e) => {
   const t = e.target;
   if (!t || !t.closest) return;
   if (t.closest('#theme')) { setTheme(currentTheme() === 'dark' ? 'light' : 'dark'); return; }
+  // 搜索框展开/收起：点击图标（非输入框本身）切换 expanded，展开时聚焦输入框。
+  const sb = t.closest('.search-box');
+  if (sb && !(t.tagName && t.tagName.toUpperCase() === 'INPUT')) {
+    const input = sb.querySelector('input');
+    const expand = !sb.classList.contains('expanded');
+    sb.classList.toggle('expanded');
+    if (input) { if (expand) input.focus(); else input.blur(); }
+  }
   // 状态筛选条：document 级委托（禁内联 onclick），active 态与过滤叠加逻辑见 renderFilters/inViewFilter。
   const fb = t.closest('#filters .filter-btn');
   if (fb) {
@@ -18,6 +26,36 @@ document.addEventListener('input', (e) => {
   if (!t || t.id !== 'search') return;
   state.filter = t.value || '';
   renderCards();
+});
+
+// 搜索框键盘：Enter / 空格展开并聚焦，Escape 收起。
+document.addEventListener('keydown', (e) => {
+  const t = e.target;
+  if (!t || !t.closest) return;
+  const sb = t.closest('.search-box');
+  if (!sb) return;
+  if (e.key === 'Escape') {
+    sb.classList.remove('expanded');
+    const input = sb.querySelector('input');
+    if (t.blur) t.blur();               // 焦点在图标上时也要放掉，才能撤掉 :focus-within
+    if (input) input.blur();
+    return;
+  }
+  const isInput = t.tagName && t.tagName.toUpperCase() === 'INPUT';
+  if (!isInput && (e.key === 'Enter' || e.key === ' ')) {
+    if (e.preventDefault) e.preventDefault();
+    sb.classList.add('expanded');
+    const input = sb.querySelector('input');
+    if (input) input.focus();
+  }
+});
+
+// 搜索框失焦：输入为空时收起，避免留下一个空的展开态。
+document.addEventListener('focusout', (e) => {
+  const t = e.target;
+  if (!t || !t.closest || t.id !== 'search') return;
+  const sb = t.closest('.search-box');
+  if (sb && !t.value) sb.classList.remove('expanded');
 });
 
 // ── 问候语 + 实时时钟（时钟已降级为小字）────────────────────────────

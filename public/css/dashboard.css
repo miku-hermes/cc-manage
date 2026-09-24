@@ -31,7 +31,7 @@ body::before {
   -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
 }
 
-.tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.tools { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
 
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer;
@@ -367,10 +367,8 @@ main {
   :root { --gutter: 16px; --card-pad: 16px; }
   /* 窄屏固定 2 列：minmax(150px,1fr) 在 320px 会塌成 1 列 6 行 */
   .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  /* flex-wrap 按「基准宽度」决定换行，基准太大就会先换行再压缩；
-     给搜索框一个小基准 + 可增长，窄屏就能挤在同一行 */
-  .search-box { flex: 1 1 140px; }
-  .search-box input { width: 100%; }
+  /* 搜索框默认是 36px 图标，展开态才变宽；不再给它可增长的基准 */
+  .search-box { flex: 0 0 auto; }
   .hero { grid-template-columns: minmax(0, 1fr); align-items: flex-start; }
   .hero-aside { align-items: flex-start; text-align: left; }
   .greeting { font-size: var(--fs-lg); }
@@ -397,13 +395,10 @@ main {
   .tags::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: var(--pill); }
 }
 
-/* 极小屏（≤340px）：搜索框继续收缩，「登录后台」只显图标，工具栏保持一行。
-   340 是临界值：327px 以下「图标+文字+主题按钮」就放不下了。 */
+/* 极小屏（≤340px）：展开态搜索框压窄、字号减小，工具栏保持一行。 */
 @media (max-width: 340px) {
-  .search-box { padding: 0 10px; }
+  .search-box.expanded { width: 170px; }
   .search-box input { font-size: var(--fs-xs); }
-  .admin-link { padding: 0 10px; }
-  .admin-link-label { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

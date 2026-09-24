@@ -2,8 +2,8 @@
 .header {
   position: sticky; top: 0; z-index: 20;
   display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
-  min-height: var(--header-h);
-  padding: 10px max(var(--gutter), calc((100% - var(--page-max)) / 2 + var(--gutter)));
+  min-height: 52px;                        /* 前台头部收紧（原 --header-h: 58px），更紧凑 */
+  padding: 8px max(var(--gutter), calc((100% - var(--page-max)) / 2 + var(--gutter)));
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur));
   backdrop-filter: blur(var(--glass-blur));
@@ -22,12 +22,18 @@
 .brand-name { font-size: var(--fs-md); font-weight: 700; letter-spacing: .3px; }
 
 .search-box {
-  display: flex; align-items: center; gap: 8px; height: 36px;
-  min-width: 0; flex: 0 1 auto;           /* 关键：窄屏优先压缩，不把工具栏撑成两行 */
-  padding: 0 12px; border-radius: var(--radius-sm);
+  display: flex; align-items: center; gap: 0; height: 36px;
+  width: 36px; flex: 0 0 auto; min-width: 0;   /* 默认只是一个 36x36 图标按钮 */
+  padding: 0; justify-content: center; overflow: hidden; cursor: pointer;
+  border-radius: var(--radius-sm);
   background: var(--surface-2); border: 1px solid var(--border); color: var(--text-tertiary);
-  transition: border-color var(--dur-150) var(--ease-out), box-shadow var(--dur-150) var(--ease-out);
+  transition: width var(--dur-250) var(--ease-out), padding var(--dur-250) var(--ease-out),
+    border-color var(--dur-150) var(--ease-out), box-shadow var(--dur-150) var(--ease-out);
 }
+
+/* 展开态：点击图标 / 回车 / 键盘聚焦时拉长为输入框（间距由 input 的左内边距给出） */
+.search-box.expanded,
+.search-box:focus-within { width: 200px; padding: 0 12px; justify-content: flex-start; }
 
 .search-box:focus-within { border-color: var(--accent-solid); box-shadow: 0 0 0 3px var(--accent-light); }
 
@@ -35,22 +41,25 @@
 
 .search-box input {
   border: none; background: transparent; color: var(--text-primary); min-width: 0;
-  font: inherit; font-size: var(--fs-sm); width: 170px; flex: 1 1 60px;
+  font: inherit; font-size: var(--fs-sm); width: 0; padding: 0; opacity: 0; flex: 1 1 auto;
+  transition: width var(--dur-250) var(--ease-out), opacity var(--dur-150) var(--ease-out);
 }
+
+.search-box.expanded input { width: 170px; padding: 0 0 0 8px; opacity: 1; }
 
 .search-box input::placeholder { color: var(--text-tertiary); }
 
 .admin-link {
-  display: inline-flex; align-items: center; gap: 6px; text-decoration: none;
-  flex: none; white-space: nowrap;
-  color: var(--text-secondary); font-size: var(--fs-sm); height: 36px; padding: 0 14px;
-  border-radius: var(--radius-sm); border: 1px solid var(--border-strong); background: var(--surface-1);
-  transition: color var(--dur-150) var(--ease-out), border-color var(--dur-150) var(--ease-out), background var(--dur-150) var(--ease-out);
+  display: grid; place-items: center; flex: none; text-decoration: none;
+  width: var(--control-h); height: var(--control-h);
+  border-radius: var(--radius-sm); border: none; background: none;
+  color: var(--text-secondary);
+  transition: color var(--dur-150) var(--ease-out), background var(--dur-150) var(--ease-out);
 }
 
-.admin-link:hover { color: var(--accent-ink); border-color: var(--accent); background: var(--accent-light); }
+.admin-link:hover { color: var(--accent-ink); background: var(--accent-light); }
 
-.admin-link svg { width: 16px; height: 16px; }
+.admin-link svg { width: 17px; height: 17px; }
 
 .pill {
   display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: var(--pill);
