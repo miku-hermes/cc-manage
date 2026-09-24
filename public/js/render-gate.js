@@ -24,6 +24,7 @@ function showGate(mode, me) {
   clearSensitiveData();
   state.mode = mode;
   document.body.className = 'gate';
+  $('boot-loading').style.display = 'none';
   $('gate-head').style.display = '';
   $('gate-main').style.display = '';
   $('admin-head').style.display = 'none';
@@ -44,6 +45,7 @@ function showGate(mode, me) {
 
 function showAdmin() {
   document.body.className = '';
+  $('boot-loading').style.display = 'none';
   $('gate-head').style.display = 'none';
   $('gate-main').style.display = 'none';
   $('admin-head').style.display = '';

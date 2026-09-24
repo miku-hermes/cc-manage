@@ -50,6 +50,10 @@
 
 .search-box input::placeholder { color: var(--text-tertiary); }
 
+/* 搜索框的输入框不再自己画焦点环：外层 .search-box 的 border + 粉光环已是清晰指示。
+   Chrome 对文本输入框永远匹配 :focus-visible（即使鼠标点击），不去掉就会出现第三层框。 */
+.search-box input:focus-visible { outline: none; }
+
 .admin-link {
   display: grid; place-items: center; flex: none; text-decoration: none;
   width: var(--control-h); height: var(--control-h);

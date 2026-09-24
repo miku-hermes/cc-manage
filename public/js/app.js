@@ -5,8 +5,10 @@ document.addEventListener('click', (e) => {
   const t = e.target;
   if (!t || !t.closest) return;
   if (t.closest('#theme')) { setTheme(currentTheme() === 'dark' ? 'light' : 'dark'); return; }
-  // 搜索框展开/收起：点输入框本身只保证展开（浏览器会把图标点击投递到 input 上），
-  // 点图标才切换 expanded，展开时聚焦输入框。
+  // 搜索框：点图标或输入框都只负责展开，绝不在这里收起。
+  // <label class="search-box"> 包着 <input>，浏览器会把图标点击再投递给 input；
+  // 若图标分支还 toggle 收起，就会出现「展开→缩回→再展开」的闪烁。
+  // 收起只保留 Escape 与「失焦且为空」两条路径（见下方 keydown / focusout）。
   const sb = t.closest('.search-box');
   if (sb) {
     const input = sb.querySelector('input');
@@ -14,9 +16,8 @@ document.addEventListener('click', (e) => {
     if (isInput) {
       sb.classList.add('expanded');
     } else {
-      const expand = !sb.classList.contains('expanded');
-      sb.classList.toggle('expanded');
-      if (input) { if (expand) input.focus(); else input.blur(); }
+      sb.classList.add('expanded');
+      if (input) input.focus();
     }
   }
   // 状态筛选条：document 级委托（禁内联 onclick），active 态与过滤叠加逻辑见 renderFilters/inViewFilter。

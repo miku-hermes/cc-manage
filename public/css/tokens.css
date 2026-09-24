@@ -1,8 +1,8 @@
-/* ── 设计令牌：浅色现代主题（本批次为单一浅色主题，data-theme 机制保留）──────
+/* ── 设计令牌：浅色 / 深色现代主题（data-theme 机制保留）──────────────────
    栅格：--gutter / --card-pad 统一内边距，所有块左边缘对齐。
    玻璃拟态：--glass-* 只用于 sticky 头部与弹框；卡片主体纯白 + --elev-1 柔和阴影。
-   data-theme 切换机制保留（B2-13 的 color-scheme 分派在 HTML 内联 <style> 里），
-   本期只定义浅色令牌，深色令牌暂不定义，后续要加再说。 */
+   data-theme 切换机制保留（B2-13 的 color-scheme 分派在 HTML 内联 <style> 里）；
+   浅色令牌定义在 :root，深色令牌定义在文件末尾的 :root[data-theme="dark"]。 */
 :root {
   color-scheme: light;
 
@@ -92,3 +92,42 @@
 :root[data-theme="dark"] .ico-sun { display: block; }
 
 :root[data-theme="dark"] .ico-moon { display: none; }
+
+/* ── 深色令牌：深蓝黑底 + 保留粉紫品牌色（正文对比度 ≥4.5:1）──────────
+   由 theme.js 的 setTheme() 写 data-theme="dark" 触发；两页 HTML 的预绘制脚本
+   在首次绘制前套用已保存 / 系统偏好的主题，避免浅色→深色闪一下。 */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-0: #12151c;
+  --surface-1: #1a1f29;
+  --surface-2: #232936;
+  --border: #2b3342;
+  --border-strong: #3a4456;
+  --text-primary: #e8ecf4;
+  --text-secondary: #a3adc0;
+  --text-tertiary: #8590a5;
+  --accent: #f080a0;
+  --accent-hover: #f59ab4;
+  --accent-light: rgba(240, 128, 160, .14);
+  --accent-ink: #f4a3bb;
+  --accent-solid: #e8668a;
+  --accent-solid-hover: #f080a0;
+  --on-accent-solid: #ffffff;
+  --danger-fill: #dc2626;
+  --on-danger-fill: #ffffff;
+  --focus: #f080a0;
+  --success: #4ade80;
+  --success-light: rgba(74, 222, 128, .14);
+  --success-ink: #86efac;
+  --warning: #fbbf24;
+  --warning-light: rgba(251, 191, 36, .14);
+  --warning-ink: #fcd34d;
+  --danger: #f87171;
+  --danger-light: rgba(248, 113, 113, .14);
+  --danger-ink: #fca5a5;
+  --info: #60a5fa;
+  --elev-1: 0 1px 2px rgba(0, 0, 0, .3), 0 4px 16px rgba(0, 0, 0, .35);
+  --elev-2: 0 2px 4px rgba(0, 0, 0, .35), 0 12px 30px rgba(0, 0, 0, .45);
+  --glass-bg: rgba(26, 31, 41, .72);
+  --glass-border: rgba(43, 51, 66, .9);
+}

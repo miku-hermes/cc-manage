@@ -345,11 +345,11 @@ main {
 
 .bar > i { display: block; height: 100%; min-height: 6px; border-radius: var(--pill); transition: width .45s ease; }
 
-.s-ok > i { background: linear-gradient(90deg, #15803d, #22c55e); }
+.s-ok > i { background: linear-gradient(90deg, var(--success), #4ade80); }
 
-.s-warn > i { background: linear-gradient(90deg, #b45309, #f59e0b); }
+.s-warn > i { background: linear-gradient(90deg, var(--warning), #fbbf24); }
 
-.s-bad > i { background: linear-gradient(90deg, #b91c1c, #ef4444); }
+.s-bad > i { background: linear-gradient(90deg, var(--danger), #f87171); }
 
 .card-usage { margin-top: 12px; font-size: var(--fs-xs); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 

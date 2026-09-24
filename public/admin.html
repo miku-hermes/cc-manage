@@ -12,6 +12,19 @@
   :root[data-theme="light"] { color-scheme: light; }
   :root[data-theme="dark"] { color-scheme: dark; }
 </style>
+<script>
+/* 预绘制主题：首次绘制前套用已保存/系统偏好的主题，避免浅色→深色闪一下。
+   只在 localStorage 可用且确有保存值、或系统偏好深色时才写 data-theme；
+   localStorage 抛错时什么也不做，交给 CSS 默认浅色兜底。 */
+try {
+  var t = localStorage.getItem('cc-manage-theme');
+  if (t === 'light' || t === 'dark') {
+    document.documentElement.setAttribute('data-theme', t);
+  } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+    document.documentElement.setAttribute('data-theme', 'dark');
+  }
+} catch (e) { /* 忽略 */ }
+</script>
 <link rel="stylesheet" href="css/tokens.css">
 <link rel="stylesheet" href="css/base.css">
 <link rel="stylesheet" href="css/components.css">
@@ -35,7 +48,14 @@
   </div>
 </div>
 
-<main class="gate-main" id="gate-main">
+<main class="gate-main" id="boot-loading">
+  <section class="gate-card">
+    <h1>加载中…</h1>
+    <p class="sub">正在确认登录状态…</p>
+  </section>
+</main>
+
+<main class="gate-main" id="gate-main" style="display:none">
   <section class="gate-card">
     <div class="gate-logo" aria-hidden="true">
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.6l2.5 6.2 6.2 2.5-6.2 2.5-2.5 6.2-2.5-6.2L3.3 11.3l6.2-2.5z"/></svg>
