@@ -222,3 +222,54 @@ test('B4-11：前台卡片不渲染 keyId/keyPrefix 文本（keyId 仅存于 dat
   assert.match(out, /data-key-id="secret-key-id-abcdef"/, 'data-key-id 钩子保留（滚动回填依赖）');
   assert.ok(shim.el('filters'), '#filters 容器存在于 HTML');
 });
+
+// ── 批次 5：KPI 卡结构重排（标签在上 → 大数字 → sub）+ 语义图标 ──────
+const DASHBOARD_CSS = fs.readFileSync(new URL('../public/css/dashboard.css', import.meta.url), 'utf8');
+
+/** 取 6 张卡各自的 HTML 块：`<div class="kpi" id="kpi-box-…">` → 下一张卡 / </section>。 */
+function kpiBlocks() {
+  const re = /<div class="kpi" id="kpi-box-([a-z]+)">([\s\S]*?)(?=\n    <div class="kpi"|\n  <\/section>)/g;
+  return [...INDEX_HTML.matchAll(re)].map((m) => ({ key: m[1], html: m[2] }));
+}
+
+test('B5-1：6 张 KPI 卡均为 kpi-head(图标+标签) → 大数字 → sub 的竖排结构，且无 kpi-body', () => {
+  const blocks = kpiBlocks();
+  assert.equal(blocks.length, 6, '6 张 kpi-box-* 卡都要匹配到');
+  assert.deepEqual(blocks.map((b) => b.key),
+    ['accounts', 'available', 'paused', 'unavailable', 'total', 'errors'], '卡序不变');
+  const headRe = /^<div class="kpi-head">\s*<span class="kpi-icon" aria-hidden="true"><svg [^>]*>[\s\S]*?<\/svg><\/span>\s*<span class="kpi-label">[^<]+<\/span>\s*<\/div>/;
+  for (const { key, html } of blocks) {
+    // 去掉 errors 卡里的口径注释，避免注释插在 head 与 b 之间干扰顺序断言
+    const body = html.replace(/<!--[\s\S]*?-->/g, '').trim();
+    assert.match(body, headRe, `${key}: 顶行必须是 .kpi-head 包住 .kpi-icon + .kpi-label`);
+    assert.doesNotMatch(body, /kpi-body/, `${key}: 旧 .kpi-body 包裹层必须删除`);
+    const order = [...body.matchAll(/kpi-head|(<b id="kpi-[a-z]+">)|(class="kpi-sub")/g)].map((m) => m[0]);
+    assert.deepEqual(order, ['kpi-head', `<b id="kpi-${key}">`, 'class="kpi-sub"'], `${key}: 顺序 head→b→sub`);
+  }
+});
+
+test('B5-2：总请求卡换成 activity 脉搏线图标', () => {
+  const total = kpiBlocks().find((b) => b.key === 'total');
+  assert.match(total.html, /M22 12h-4l-3 9L9 3l-3 9H2/, '总请求 = 脉搏线（请求流量）');
+  assert.doesNotMatch(total.html, /M8 6h13/, '旧 list 三横线图标必须换掉');
+});
+
+test('B5-3：上游错误卡换成 triangle-alert 三角感叹图标', () => {
+  const errors = kpiBlocks().find((b) => b.key === 'errors');
+  assert.match(errors.html, /M10\.29 3\.86/, '上游错误 = 三角感叹（告警）');
+});
+
+test('B5-4：可用卡换成 signal 信号条图标', () => {
+  const available = kpiBlocks().find((b) => b.key === 'available');
+  assert.match(available.html, /M9 18v-6/, '可用 = 升序信号条（在线/可用）');
+  assert.doesNotMatch(available.html, /M8\.2 12\.4l2\.6 2\.6 5-5\.6/, '旧 circle-check 对勾必须换掉');
+});
+
+test('B5-5：dashboard.css 的 .kpi 为竖排 flex，且 .kpi-head 横向并排规则存在', () => {
+  assert.match(DASHBOARD_CSS, /\.kpi-head\s*\{[^}]*display:\s*flex/);
+  assert.match(DASHBOARD_CSS, /\.kpi-head\s*\{[^}]*align-items:\s*center/);
+  const rule = DASHBOARD_CSS.match(/\n\.kpi\s*\{([^}]*)\}/);
+  assert.ok(rule, '.kpi 规则存在');
+  assert.match(rule[1], /flex-direction:\s*column/, '卡片整体竖排');
+  assert.match(rule[1], /align-items:\s*flex-start/);
+});
