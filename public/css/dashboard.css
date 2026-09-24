@@ -25,6 +25,12 @@ body::before {
 
 .logo svg { width: 16px; height: 16px; }
 
+/* 品牌名渐变（前台）*/
+.brand-name {
+  background: var(--gradient-accent);
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+}
+
 .tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
 
 .btn {
@@ -66,12 +72,12 @@ main {
   gap: 20px 28px;
   padding: calc(var(--card-pad) + 4px) calc(var(--card-pad) + 4px);
   border-radius: 20px;
-  border: 1px solid var(--border); background: var(--surface-1); box-shadow: var(--elev-1);
+  border: 1px solid var(--border); background: linear-gradient(135deg, var(--surface-1) 0%, var(--accent-light) 100%); box-shadow: var(--elev-1);
 }
 
 .hero-main { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 
-.greeting { margin: 0; font-size: var(--fs-lg); font-weight: 600; color: var(--text-primary); letter-spacing: .01em; }
+.greeting { margin: 0 0 4px; font-size: var(--fs-xl); font-weight: 600; color: var(--text-primary); letter-spacing: .01em; }
 
 .hero-balance {
   display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-top: 2px;
@@ -80,6 +86,8 @@ main {
 .hero-balance b {
   font-size: var(--fs-hero); font-weight: 800; line-height: var(--lh-hero);
   font-variant-numeric: tabular-nums; letter-spacing: -.02em; color: var(--text-primary);
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%);
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
 }
 
 .hero-balance .bal-label { font-size: var(--fs-sm); color: var(--text-secondary); }
@@ -117,6 +125,7 @@ main {
 .hero-clock {
   font-size: var(--fs-md); font-weight: 600; line-height: var(--lh-heading);
   color: var(--text-secondary); font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
   display: inline-flex; align-items: center; gap: 6px;
 }
 
@@ -137,11 +146,11 @@ main {
 .kpi {
   display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
   padding: 16px var(--card-pad); border-radius: 16px;
-  background: var(--surface-1); border: 1px solid var(--border); box-shadow: var(--elev-1);
+  background: var(--surface-1); border: 1px solid var(--border); border-left: 3px solid var(--accent); box-shadow: var(--elev-1);
   transition: box-shadow var(--dur-150) var(--ease-out), transform var(--dur-150) var(--ease-out), border-color var(--dur-150) var(--ease-out);
 }
 
-.kpi:hover { box-shadow: var(--elev-2); transform: translateY(-2px); border-color: var(--border-strong); }
+.kpi:hover { box-shadow: var(--elev-2); transform: translateY(-2px); border-color: var(--border-strong); border-left-color: var(--accent); }
 
 /* 顶行：小图标芯片 + 标签并排 */
 .kpi-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -149,7 +158,7 @@ main {
 .kpi-icon {
   display: grid; place-items: center; flex: none;
   width: 22px; height: 22px; border-radius: 7px;
-  background: var(--surface-2); color: var(--text-secondary); border: 1px solid var(--border);
+  background: linear-gradient(135deg, var(--surface-2), var(--accent-light)); color: var(--text-secondary); border: 1px solid var(--border);
 }
 
 .kpi-icon svg { width: 14px; height: 14px; }
@@ -158,7 +167,7 @@ main {
 .kpi-label { font-size: var(--fs-xs); color: var(--text-secondary); letter-spacing: .02em; }
 
 .kpi b {
-  display: block; font-size: 28px; font-weight: 700; line-height: var(--lh-heading);
+  display: block; font-size: 32px; font-weight: 700; line-height: var(--lh-heading);
   font-variant-numeric: tabular-nums; color: var(--text-primary);
 }
 
@@ -182,6 +191,14 @@ main {
 
 .kpi.is-muted b { color: var(--text-tertiary); }
 
+.kpi.is-danger { border-left-color: var(--danger); }
+
+.kpi.is-warning { border-left-color: var(--warning); }
+
+.kpi.is-accent { border-left-color: var(--accent); }
+
+.kpi.is-muted { border-left-color: var(--border-strong); }
+
 /* ── 状态筛选条：一排 pill，active = accent 底白字 ─────────────── */
 .filters { display: flex; flex-wrap: wrap; gap: 8px; }
 
@@ -190,15 +207,17 @@ main {
   padding: 8px 16px; border-radius: var(--pill);
   color: var(--text-secondary); background: var(--surface-1);
   border: 1px solid var(--border-strong);
+  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
   font-variant-numeric: tabular-nums;
   transition: color var(--dur-150) var(--ease-out), border-color var(--dur-150) var(--ease-out),
-    background var(--dur-150) var(--ease-out);
+    background var(--dur-150) var(--ease-out), transform var(--dur-150) var(--ease-out);
 }
 
-.filter-btn:hover { color: var(--accent-ink); border-color: var(--accent); background: var(--accent-light); }
+.filter-btn:hover { color: var(--accent-ink); border-color: var(--accent); background: var(--accent-light); transform: translateY(-1px); }
 
 .filter-btn.is-active {
   color: var(--on-accent-solid); background: var(--accent-solid); border-color: var(--accent-solid);
+  box-shadow: 0 2px 8px rgba(197, 57, 95, 0.2);
 }
 
 /* ── 账号卡片网格：自适应铺满 ─────────────────────────── */
@@ -220,16 +239,16 @@ main {
   transition: border-color var(--dur-150) var(--ease-out), box-shadow var(--dur-150) var(--ease-out), transform var(--dur-150) var(--ease-out);
 }
 
-.card:hover { border-color: var(--border-strong); box-shadow: var(--elev-2); transform: translateY(-2px); }
+.card:hover { border-color: var(--border-strong); box-shadow: var(--elev-2), 0 4px 20px rgba(232, 102, 138, 0.08); transform: translateY(-2px); }
 
-.card.empty { grid-column: 1 / -1; color: var(--text-secondary); text-align: center; padding: 34px var(--card-pad); }
+.card.empty { grid-column: 1 / -1; color: var(--text-tertiary); text-align: center; font-size: var(--fs-md); padding: 48px var(--card-pad); }
 
 .card-body { min-width: 0; display: flex; flex-direction: column; }
 
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 
 .card h2 {
-  margin: 0; font-size: var(--fs-md); font-weight: 600;
+  margin: 0; font-size: var(--fs-md); font-weight: 600; letter-spacing: 0.01em;
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0;
 }
 
@@ -245,7 +264,7 @@ main {
 /* 状态胶囊：ok=绿底 / warn=琥珀底 / bad=红底（tone 来自 accountStatus） */
 .status {
   display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
-  padding: 3px 10px; border-radius: var(--pill);
+  padding: 3px 10px; border-radius: 8px;
   font-size: 12px; font-weight: 600;
 }
 
@@ -253,7 +272,7 @@ main {
 
 .status.is-ok { color: var(--success-ink); background: var(--success-light); }
 
-.status.is-ok .dot { background: var(--success); }
+.status.is-ok .dot { background: var(--success); animation: pulse 2s ease-in-out infinite; }
 
 .status.is-warn { color: var(--warning-ink); background: var(--warning-light); }
 
@@ -262,6 +281,11 @@ main {
 .status.is-bad { color: var(--danger-ink); background: var(--danger-light); }
 
 .status.is-bad .dot { background: var(--danger); }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .5; }
+}
 
 /* 额度构成：小标签 + 三段分段条 + 图例 */
 .credits-block { margin-top: 16px; }
@@ -272,7 +296,7 @@ main {
 }
 
 .credits-bar {
-  display: flex; height: 9px; border-radius: var(--pill);
+  display: flex; height: 11px; border-radius: 6px;
   background: var(--surface-2); border: 1px solid var(--border); overflow: hidden;
 }
 
@@ -289,7 +313,7 @@ main {
 /* 剩余额度：卡片里的大数字 */
 .card-money { margin: 16px 0 0; display: flex; align-items: baseline; gap: 8px; }
 
-.card-money b { font-size: 24px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.card-money b { font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
 
 .card-money small { font-size: var(--fs-sm); color: var(--text-secondary); }
 
@@ -321,11 +345,11 @@ main {
 
 .bar > i { display: block; height: 100%; min-height: 6px; border-radius: var(--pill); transition: width .45s ease; }
 
-.s-ok > i { background: var(--success); }
+.s-ok > i { background: linear-gradient(90deg, #15803d, #22c55e); }
 
-.s-warn > i { background: var(--warning); }
+.s-warn > i { background: linear-gradient(90deg, #b45309, #f59e0b); }
 
-.s-bad > i { background: var(--danger); }
+.s-bad > i { background: linear-gradient(90deg, #b91c1c, #ef4444); }
 
 .card-usage { margin-top: 12px; font-size: var(--fs-xs); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 
