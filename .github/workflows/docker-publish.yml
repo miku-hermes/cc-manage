@@ -19,8 +19,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Lint
+        run: npm run lint
+
+      # CI 开测试并发加速（端口动态分配，并行安全）。
       - name: Run tests
-        run: node --test test/*.test.mjs
+        run: node --test --test-concurrency=8 test/*.test.mjs
 
       # 内核自带测试（vendor/commandcode-proxy/test/）之前从没在 CI 跑过，
       # 但部署的正是这个内核镜像。它会 spawn 子进程 + 占端口，单独一步便于定位。

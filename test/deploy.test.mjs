@@ -146,12 +146,27 @@ test('tests-L6：gateway mem_limit ≥ 384m（192MB 堆 + 8×8MB 堆外 Buffer +
 // ── M4：CI 必须跑 vendor 内核自带测试 ───────────────────────────────
 test('M4：CI 与 npm test 都覆盖 vendor 内核自带测试', () => {
   const pkg = JSON.parse(read('package.json'));
-  assert.match(pkg.scripts.test, /node --test test\/\*\.test\.mjs/, 'npm test 仍要跑本仓库测试');
+  // 要求同一条命令里同时出现 node --test、并发标志、测试目录；
+  // 断言的是「真执行的命令」，不是注释里凑出来的字面量。
+  assert.match(
+    pkg.scripts.test,
+    /node --test[^\n]*--test-concurrency=\d+[^\n]*test\/\*\.test\.mjs/,
+    'npm test 必须真跑带并发的 node --test test/*.test.mjs',
+  );
+  assert.match(pkg.scripts.test, /--test-concurrency=\d+/, 'npm test 必须带 --test-concurrency（并发保护）');
   assert.match(pkg.scripts.test, /npm --prefix vendor\/commandcode-proxy test/, 'npm test 必须连带跑内核测试');
 
+  // 只把 run: 行抓出来断言：对整份文件匹配会被注释骗过。
   const ci = read('.github/workflows/docker-publish.yml');
-  assert.match(ci, /node --test test\/\*\.test\.mjs/, 'CI 必须跑本仓库测试目录');
-  assert.match(ci, /npm --prefix vendor\/commandcode-proxy test/, 'CI 必须单独跑内核测试目录（内核镜像就是部署出去的那个）');
+  const runLines = [...ci.matchAll(/^\s*run:\s*(.+)$/gm)].map((m) => m[1]).join('\n');
+  assert.ok(runLines.length > 0, '工作流里必须存在 run: 行');
+  assert.match(
+    runLines,
+    /node --test[^\n]*--test-concurrency=\d+[^\n]*test\/\*\.test\.mjs/,
+    'CI 的 run: 行必须真跑带并发的 node --test test/*.test.mjs',
+  );
+  assert.match(runLines, /npm --prefix vendor\/commandcode-proxy test/, 'CI 的 run: 行必须单独跑内核测试目录（内核镜像就是部署出去的那个）');
+  assert.match(runLines, /npm run lint/, 'CI 的 run: 行必须真的调用 npm run lint（不能只写在注释里）');
 
   // 两个内核测试文件必须还在（否则「跑了」只是空跑）
   for (const f of ['test/stream-end.test.mjs', 'test/connection-lifecycle.test.mjs']) {

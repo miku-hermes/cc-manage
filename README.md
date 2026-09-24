@@ -295,7 +295,8 @@ curl -N -X POST 127.0.0.1:3051/v1/chat/completions \
 ## 测试与自测
 
 ```bash
-npm test          # node:test：本仓库测试 + vendor/commandcode-proxy 内核测试，离线可跑、不打真实网络
+npm run lint      # 零依赖静态检查（只用 node: 内置模块：node --check 语法 / debugger / .only( / console.log）
+npm test          # node:test：本仓库测试（--test-concurrency=8 并发）+ vendor/commandcode-proxy 内核测试，离线可跑、不打真实网络
 ```
 
 手工联调（不碰真实 Command Code）：
@@ -340,7 +341,7 @@ ghcr.io/<owner>/cc-manage-core:latest
 
 工作流在 `.github/workflows/docker-publish.yml`，推送即生效：
 
-- 推 `master`/`main` 或打 `v*` 标签 → 先跑 `npm test`（本仓库测试 + `vendor/commandcode-proxy` 内核自带测试，两个目录都跑），通过后构建并推送两个镜像
+- 推 `master`/`main` 或打 `v*` 标签 → 先跑 `npm run lint`，再跑 `npm test`（本仓库测试 + `vendor/commandcode-proxy` 内核自带测试，两个目录都跑），通过后构建并推送两个镜像
 - 构建时把 `node:22-alpine` 解析成 digest 传 `--build-arg BASE_IMAGE=...@sha256:...`，并传 `REVISION=$(git rev-parse HEAD)` 打成 OCI 标签
 - 镜像：`ghcr.io/miku-hermes/cc-manage-gateway` 与 `ghcr.io/miku-hermes/cc-manage-core`
 - 标签：`latest`（默认分支）、分支名、`v1.2.3` / `1.2`（打 tag 时）、`sha-<短哈希>`
