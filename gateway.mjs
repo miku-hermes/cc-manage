@@ -1584,11 +1584,44 @@ if (isMain) {
   const addr = server.address();
   log.info(`cc-manage 网关已启动: http://${addr.address}:${addr.port}`);
   log.info(`上游内核: ${config.upstreamProxyUrl} | CC API: ${config.ccApiBase}`);
+  // 防重入守卫：错误期间（或信号之后）连环触发时只走一次关闭/退出，
+  // 否则会出现重复关闭、重复日志，甚至在 process.exit 之前又抛一次。
+  let exiting = false;
   const shutdown = async (sig) => {
+    if (exiting) return;
+    exiting = true;
     log.info(`收到 ${sig}，正在退出…`);
     await stop().catch(() => {});
     process.exit(0);
   };
+  /**
+   * B11：进程级致命兜底（未捕获异常 / 未处理的 promise rejection）。
+   *
+   * Node 15+ 默认把未处理的 rejection 变成致命错误直接杀进程 —— 轮询/探针里漏一个 await，
+   * 网关就静默死掉：restart: unless-stopped 虽然会拉起，但**在途请求全丢、日志里看不到原因**。
+   * 本网关同时给自己的 LLM 流量供路，静默僵死比崩溃更糟：宁可快速重启，也不要在未知
+   * （可能半初始化）状态下继续服务。
+   *
+   * 所以：记录可诊断信息（事件类型 / message / stack）→ 走**已有的**优雅关闭路径
+   * （等 5s 让在途流式响应自然收尾，不拦腰掐断）→ 以非零码退出，让容器拉起一个干净进程。
+   * 整个处理体包 try/catch：处理器自身再抛异常绝不能变成第二次未捕获。
+   */
+  const fatal = async (kind, reason) => {
+    if (exiting) return;
+    exiting = true;
+    try {
+      const message = reason instanceof Error ? (reason.message ?? String(reason)) : String(reason);
+      const detail = reason instanceof Error ? (reason.stack ?? reason.message ?? String(reason)) : String(reason);
+      log.error(`[${kind}] ${message}`);
+      log.error(`[${kind}] 进程即将退出（优雅关闭后以非零码退出，交容器 restart: unless-stopped 拉起干净进程）\n${detail}`);
+    } catch { /* 日志/取值失败也不能让处理器再抛 */ }
+    try {
+      await stop().catch(() => {});
+    } catch { /* 关闭失败也照样退出，绝不能僵在这里 */ }
+    process.exit(1);
+  };
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('unhandledRejection', (reason) => { void fatal('unhandledRejection', reason); });
+  process.on('uncaughtException', (err) => { void fatal('uncaughtException', err); });
 }

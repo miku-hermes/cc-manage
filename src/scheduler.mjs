@@ -16,6 +16,14 @@ export const DEFAULT_SNAPSHOT_STALE_MS = 20 * 60 * 1000;
 // 过期快照 / 数据不完整窗口的中性打分（B3、B8）：不能拿满分抢流量，也不判不可用（避免全池 503）。
 export const NEUTRAL_RATIO = 0.5;
 
+// B11 粘性让位：粘住的账号剩余比低于 FLOOR、且与「当前最优可用账号」的差距 ≥ GAP 时放弃粘性。
+// 两个条件都要 —— 只用 GAP 会在水位接近时来回抖（刚让位又想粘回去），
+// 只用 FLOOR 会在全池水位都低时把会话迁来迁去（谁都救不了）。
+// 取值理由：0.25 约等于「再扛一两个大请求就见底」的水位；0.30 的差距保证让位带来的
+// 额度收益明显大于一次会话迁移的代价（重连/丢上游前缀缓存），两者之间天然留出滞回带。
+export const AFFINITY_YIELD_FLOOR = 0.25;
+export const AFFINITY_YIELD_GAP = 0.30;
+
 /**
  * B8：额度快照是否过旧。`fetchedAt` 缺失、非有限数、或距 `now` 超过 `staleMs` → 过期。
  *
@@ -227,6 +235,21 @@ export function isCreditsExhausted(status, bodyText = '') {
   return CREDITS_HINT_RE.test(String(bodyText));
 }
 
+// 429 里的「超时」措辞：timeout / timed out / timed-out / ETIMEDOUT / 响应超时。
+// 注意**不**包含 retry_after 之类的字段名 —— 真限流的报文里也有它。
+const RATE_LIMIT_TIMEOUT_RE = /timeout|timed[\s-]?out|ETIMEDOUT|响应超时/i;
+
+/**
+ * 429 里「上游响应超时」与「真限流」的判别。
+ * 上游会把超时包装成 429 + type:"rate_limit_error"（实测 message:
+ * "Response timeout - request timed out"），照单全收会把健康账号白冷却 60 秒。
+ * 只有 body 明确出现超时语义才算 —— 认不出来一律按真限流处理（保守）。
+ */
+export function isRateLimitTimeout(status, text = '') {
+  if (status !== 429) return false;
+  return RATE_LIMIT_TIMEOUT_RE.test(String(text ?? ''));
+}
+
 export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffinity = 2000, snapshotStaleMs = DEFAULT_SNAPSHOT_STALE_MS, log } = {}) {
   // 运行期状态：state.accounts[keyId]
   const blankRuntime = () => ({
@@ -355,6 +378,27 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
   }
 
   /**
+   * B11：粘住的账号是否该「让位」给更充裕的账号。
+   *
+   * getAffinity() 的 TTL 从**最后一次命中**起算，于是持续活跃的会话会被永久钉在同一个
+   * 账号上。线上实测：副号2 月额度已用 81.8%（只剩 $1.81）却承担了 1426/1768 ≈ 81% 的请求，
+   * 而副号1 还剩 $7.82 却几乎闲置 —— 等副号2 耗尽，长会话会在最糟的时刻被迫集体迁移。
+   *
+   * 带滞回：粘住账号的剩余比低于 AFFINITY_YIELD_FLOOR **且** 与最优可用账号的差距
+   * ≥ AFFINITY_YIELD_GAP 才让位。差距不足/同分绝不让位（防抖动）。
+   * 调用方已确认粘住账号仍 isAvailable()，这里不绕过那条判定（不可用的账号本来就会重挑）。
+   */
+  function shouldYieldAffinity(pinned, now) {
+    const candidates = accounts.filter((a) => isAvailable(a, now));
+    if (candidates.length === 0) return false;
+    const best = rank(candidates, now)[0];
+    if (!best) return false;
+    const pinnedRatio = effectiveRatio(pinned, now);
+    const bestRatio = effectiveRatio(best, now);
+    return pinnedRatio < AFFINITY_YIELD_FLOOR && bestRatio - pinnedRatio >= AFFINITY_YIELD_GAP;
+  }
+
+  /**
    * 选一个账号。sessionId 命中且该账号仍可用 → 直接复用（粘性）。
    * @returns {{account: object|null, reason?: string}}
    */
@@ -362,7 +406,12 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
     const stickyId = getAffinity(sessionId, now);
     if (stickyId) {
       const hit = accounts.find((a) => a.keyId === stickyId);
-      if (hit && isAvailable(hit, now)) return { account: hit };
+      if (hit && isAvailable(hit, now)) {
+        // B11：粘性有效才复用；剩余额度偏低且差距明显时让位，落回下面的
+        // 「重新挑选 + 重设粘性」路径（下一次请求就粘到新账号上，不会每请求都重挑）。
+        if (!shouldYieldAffinity(hit, now)) return { account: hit };
+        log?.info?.(`账号「${hit.name}」剩余额度偏低（${Math.round(effectiveRatio(hit, now) * 100)}%），会话让位给更充裕的账号`);
+      }
     }
     const candidates = accounts.filter((a) => isAvailable(a, now));
     if (candidates.length === 0) return { account: null, reason: 'no_available_account' };

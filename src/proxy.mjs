@@ -3,7 +3,7 @@ import http from 'node:http';
 import https from 'node:https';
 import { URL } from 'node:url';
 import { redact } from './log.mjs';
-import { isQuotaError, isCreditsExhausted, quotaWindowHint } from './scheduler.mjs';
+import { isQuotaError, isCreditsExhausted, isRateLimitTimeout, quotaWindowHint } from './scheduler.mjs';
 // B5：透传固定桶常量定义在 store.mjs（pruneState 也要用它跳过已删账号清理），这里复用/再导出。
 import { PASSTHROUGH_STATS_KEY } from './store.mjs';
 
@@ -573,11 +573,37 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
               continue;
             }
           } else if (status === 429) {
-            // 普通限流：只短暂冷却（默认 60s），绝不是 5 小时停用。
-            // 历史 bug：`"Rate limit exceeded"` 命中了 /limit|exceeded/ → 账号被误判额度耗尽。
-            const until = scheduler.markRateLimited(current);
-            log?.warn?.(`账号「${current.name}」被上游限流，冷却到 ${new Date(until).toISOString()}`);
-            scheduler.recordError(current, `上游 HTTP 429（限流，冷却 60 秒）`);
+            // B11：429 有两种语义，绝不能照单全收：
+            //   ① 上游把「响应超时」包装成 429 + type:"rate_limit_error"（实测 message:
+            //      "Response timeout - request timed out"）—— 超时是上游临时抖动，不是这个
+            //      账号被限速，markRateLimited 等于自己白少一个健康号（线上副号1被白冷却 60s）；
+            //   ② 真限流 —— 保持原行为：只短暂冷却（默认 60s），绝不是 5 小时停用。
+            //      历史 bug：`"Rate limit exceeded"` 命中了 /limit|exceeded/ → 账号被误判额度耗尽。
+            if (isRateLimitTimeout(status, text)) {
+              scheduler.recordError(current, '上游 HTTP 429（响应超时，不冷却）');
+              log?.warn?.(`账号「${current.name}」收到上游 HTTP 429（响应超时，不冷却账号）`);
+            } else if (attempt === 0) {
+              const until = scheduler.markRateLimited(current);
+              log?.warn?.(`账号「${current.name}」被上游限流，冷却到 ${new Date(until).toISOString()}`);
+              scheduler.recordError(current, `上游 HTTP 429（限流，冷却 60 秒）`);
+            } else {
+              // 已经换过一次号仍撞 429：只记错误、不再冷却新账号。
+              // 换号的前提是「池里还有健康账号」；若把每个被重试到的账号都冷却，一次上游抖动
+              // 就会把整池逐个带下线（历史事故：一次限流让整池不可调度）。它若真的被限速，
+              // 下一轮以它为**首个**账号的请求会按上面的分支正常冷却它。
+              scheduler.recordError(current, '上游 HTTP 429（换号后仍限流，不冷却）');
+              log?.warn?.(`账号「${current.name}」换号重试后仍被上游限流（不冷却，避免整池冷却）`);
+            }
+            // 两种 429 都要换号重试一次 —— 与 quotaErr 分支同构（逐字照抄那套严格条件）：
+            // 池里还有健康账号时不能让客户端白吃一个 429。严格条件：attempt===0 且未写出
+            // 任何字节且非透传伪账号，绝不能在有字节已下发时重试。
+            if (attempt === 0 && !res.headersSent && !current.__passthrough && pickRetryAccount(current)) {
+              release();
+              bodyState?.stop?.();
+              if (hasBody && !bodyState?.complete) await drainRemaining(req, bodyState, maxBodyBytes).catch(() => {});
+              attempt++;
+              continue;
+            }
           } else if (status === 401) {
             // H1：401 不再无条件 markAuthInvalid。内核把上游 403（模型名错/套餐不含）也
             // 折叠成 401 + authentication_error，必须读 message 把两类语义分开：
