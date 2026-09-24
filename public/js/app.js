@@ -161,4 +161,9 @@ function boot() {
 
   load();
   setInterval(() => { if (!document.hidden) load(); }, 5000);
+
+  // 历史趋势：首屏拉一次 + 每 60s 刷新（与 5s 轮询同样的 hidden 守卫）。
+  // 独立于主面板：loadTrend 内部失败静默降级，不影响 /api/status 的渲染。
+  loadTrend();
+  setInterval(() => { if (!document.hidden) loadTrend(); }, 60000);
 }

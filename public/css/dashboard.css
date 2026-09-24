@@ -222,6 +222,44 @@ main {
   box-shadow: 0 2px 8px rgba(197, 57, 95, 0.2);
 }
 
+/* ── 近 24 小时趋势：三张迷你折线卡（纯内联 SVG，尺寸由 CSS 控）──
+   外观与 .card 一致（复用同一套令牌），不写死任何颜色。 */
+.trend {
+  padding: var(--card-pad); border-radius: 18px;
+  background: var(--surface-1); border: 1px solid var(--border); box-shadow: var(--elev-1);
+  transition: border-color var(--dur-150) var(--ease-out), box-shadow var(--dur-150) var(--ease-out),
+    background-color var(--dur-250) var(--ease-out);
+}
+
+.trend-head-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+
+.trend-title { font-size: var(--fs-sm); font-weight: 700; color: var(--text-primary); }
+
+.trend-range { font-size: var(--fs-xs); }
+
+.trend-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 12px; }
+
+@media (max-width: 640px) { .trend-grid { grid-template-columns: minmax(0, 1fr); } }
+
+.trend-card { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+
+.trend-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+
+.trend-label { font-size: var(--fs-xs); color: var(--text-secondary); }
+
+.trend-value { font-size: var(--fs-lg); font-weight: 700; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+
+/* sparkline：固定 viewBox + preserveAspectRatio=none，实际宽高交给 CSS */
+.trend-spark { display: block; width: 100%; height: 34px; }
+
+.trend-line { stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+
+.trend-accent .trend-line { stroke: var(--accent); }
+.trend-danger .trend-line { stroke: var(--danger); }
+.trend-success .trend-line { stroke: var(--success); }
+
+.trend-empty { height: 34px; display: grid; place-items: center; font-size: var(--fs-xs); color: var(--text-tertiary); }
+
 /* ── 账号卡片网格：自适应铺满 ─────────────────────────── */
 .grid {
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -421,6 +459,8 @@ body.is-intro .kpis { animation: rise-in .5s var(--ease-out) .07s both; }
 
 body.is-intro .filters { animation: rise-in .45s var(--ease-out) .14s both; }
 
+body.is-intro .trend { animation: rise-in .46s var(--ease-out) .11s both; }
+
 body.is-intro .card {
   animation: card-in .46s var(--ease-out) both;
   animation-delay: calc(.2s + min(var(--i, 0), 7) * 45ms);
@@ -434,9 +474,9 @@ body.is-intro .bar > i, body.is-intro .credits-bar > i { animation: bar-grow .7s
 
 @media (prefers-reduced-motion: reduce) {
   .petals { display: none; }
-  .card, .bar > i, .kpi, .credits-bar > i, body { transition: none; }
+  .card, .bar > i, .kpi, .credits-bar > i, .trend, body { transition: none; }
   .card:hover, .kpi:hover { box-shadow: var(--elev-1); border-color: var(--border); transform: none; }
-  body.is-intro .hero, body.is-intro .kpis, body.is-intro .filters, body.is-intro .card,
+  body.is-intro .hero, body.is-intro .kpis, body.is-intro .filters, body.is-intro .trend, body.is-intro .card,
   body.is-intro .bar > i, body.is-intro .credits-bar > i, #cards.is-reflow .card { animation: none; }
 }
 

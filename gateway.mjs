@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfig } from './src/config.mjs';
 import { createStore, CC_KEY_PREFIX, LOCAL_KEY_PREFIX } from './src/store.mjs';
+import { createHistory, HISTORY_BUCKET_MS, HISTORY_TICK_MS } from './src/history.mjs';
 import { createLogger, keyIdOf, keyPrefixOf, redact, sanitizeForLog } from './src/log.mjs';
 import { fetchWhoami, fetchQuota } from './src/quota.mjs';
 import { probeAccountCredits, shouldProbeCredits } from './src/credits-probe.mjs';
@@ -121,6 +122,9 @@ export async function startGateway(overrides = {}) {
   const scheduler = createScheduler({ accounts, state: store.state, ttlMs: config.sessionAffinityTtlMs, snapshotStaleMs, log });
   const stats = store.state.stats;
   for (const a of accounts) stats.byAccount[a.keyId] ??= { requests: 0, errors: 0, tokens: 0 };
+
+  // B13：历史趋势环形缓冲。state 已就绪，history 挂在 store.state.history 上（落盘即写它）。
+  const history = createHistory({ state: store.state });
 
   // ── 后台鉴权（账号 + 密码 → 签名 cookie session）─────────
   // 与客户端 sk-cg- key 彻底分开：key 只用于 /v1/* API 调用，session 只用于后台页面。
@@ -543,6 +547,7 @@ export async function startGateway(overrides = {}) {
 
   // ── 后台定时器 ─────────────────────────────────────────
   let recheckTimer = null;
+  let historyTimer = null;
   // 暂停复查互斥（F8）：单轮要串行查 N 个账号的上游额度，慢时远超间隔；
   // setInterval 不等待，前一轮没跑完就要跳过本轮，否则同一账号被重复查询、放大 CC API 压力。
   let recheckRunning = false;
@@ -561,6 +566,18 @@ export async function startGateway(overrides = {}) {
       recheckTimer = setInterval(runPausedRecheck, config.pausedRecheckIntervalMs);
       recheckTimer.unref?.();
     }
+    // B13：周期采样历史趋势。只有真的定稿了一个样本才落盘，避免每分钟都写 state.json。
+    historyTimer = setInterval(() => {
+      const { rolled } = history.record({
+        requests: stats.total,
+        errors: stats.errors,
+        tokens: stats.totalTokens,
+        available: accounts.filter((a) => scheduler.isAvailable(a)).length,
+        remaining: usableRemainingTotal(),
+      });
+      if (rolled) { try { store.saveState(); } catch { /* 落盘失败不影响服务 */ } }
+    }, HISTORY_TICK_MS);
+    historyTimer.unref?.();   // 不要因为这个定时器卡住退出
   }
 
   // ── 鉴权 ───────────────────────────────────────────────
@@ -664,6 +681,34 @@ export async function startGateway(overrides = {}) {
         : { kind: 'balance', label: '余额不足', resetAt: null };
     }
     return null;
+  }
+
+  /**
+   * 面板口径的「这个账号还能用多少钱」——与前台 render-cards.js 的 usableRemaining 一一对应：
+   *   - 没有快照 / remaining 非有限数 → null（从合计里排除，不当 0 低估池余额）；
+   *   - 月额度用完 / 余额不足（上游实测付不了）→ 0；
+   *   - 只是窗口排队（window）→ 真实余额（钱没死）。
+   */
+  function usableRemaining(account) {
+    const rt = scheduler.runtime(account);
+    const q = rt.lastQuota;
+    if (!q || !Number.isFinite(q.remaining)) return null;
+    const kind = exhaustedView(rt, q)?.kind;
+    if (kind === 'monthly' || kind === 'balance') return 0;
+    return q.remaining;
+  }
+
+  /** 可用余额合计（USD，2 位小数）：无快照账号排除在外，一个都没同步时记 0。 */
+  function usableRemainingTotal() {
+    let sum = 0;
+    let synced = false;
+    for (const a of accounts) {
+      const v = usableRemaining(a);
+      if (!Number.isFinite(v)) continue;
+      sum += v;
+      synced = true;
+    }
+    return synced ? Math.round(sum * 100) / 100 : 0;
   }
 
   function accountView(account, { withKeyPrefix = false, internal = false } = {}) {
@@ -1367,6 +1412,13 @@ export async function startGateway(overrides = {}) {
       if (!requirePanelRead(req, res)) return;
       return sendJSON(res, 200, statusView());
     }
+    // B13：历史趋势（只读，与 /api/status 同档）。刻意不塞进 /api/status：
+    // 那是 5 秒轮询的接口，不能把整个样本数组每次都带上。响应只含聚合数字，
+    // 绝不含账号名 / keyId / displayName / lastError 等身份字段。
+    if (req.method === 'GET' && url.pathname === '/api/history') {
+      if (!requirePanelRead(req, res)) return;
+      return sendJSON(res, 200, { ok: true, bucketMs: HISTORY_BUCKET_MS, tickMs: HISTORY_TICK_MS, samples: history.samples() });
+    }
     if (req.method === 'GET' && url.pathname === '/api/accounts') {
       if (!requirePanelRead(req, res)) return;
       return sendJSON(res, 200, {
@@ -1487,6 +1539,7 @@ export async function startGateway(overrides = {}) {
   async function stop({ graceMs = GRACEFUL_SHUTDOWN_MS } = {}) {
     poller.stop();
     if (recheckTimer) clearInterval(recheckTimer);
+    if (historyTimer) clearInterval(historyTimer);
     store.saveState();
     const closed = new Promise((r) => server.close(() => r()));
     const allClosed = new Promise((r) => server.once('close', () => r()));
@@ -1496,7 +1549,7 @@ export async function startGateway(overrides = {}) {
   }
 
   return {
-    server, config, log, accounts, localKeys, store, scheduler, stats, refreshAll, statusView, stop, proxy,
+    server, config, log, accounts, localKeys, store, scheduler, stats, history, refreshAll, statusView, stop, proxy,
     events, note, reloadNow, syncPool, handleAdmin, handleAuth, sessions, loginLimiter, currentUser,
     poller, touchActivity, runPausedRecheck,
     probeState,

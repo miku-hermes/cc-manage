@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { keyIdOf, keyPrefixOf, maskSecret } from './log.mjs';
+import { blankHistory, normalizeHistory } from './history.mjs';
 
 const LOCAL_KEY_PREFIX = 'sk-cg-';
 // CC 上游 key 的固定前缀，用字面量拼接，避免在源码/镜像里出现完整形态的密钥样例串。
@@ -258,7 +259,7 @@ export function createStore({ rootDir = process.cwd(), env = process.env, log = 
   // 时并不在池中，说明它是「删掉旧账号后重新加回来的同 keyId 新账号」，runtime 标记必须
   // 清空，绝不能继承旧账号的 authInvalid / pausedUntil。老 state.json 没有该字段 → null，
   // 此时不做该判定（保守，避免升级后误清真实账号的标记）。
-  const state = { accounts: {}, stats: { total: 0, errors: 0, totalTokens: 0, byAccount: {} }, pool: null };
+  const state = { accounts: {}, stats: { total: 0, errors: 0, totalTokens: 0, byAccount: {} }, pool: null, history: blankHistory() };
   // loadState 里是否已经落过盘（损坏重建 / 残留清理）—— 供测试断言用，不进任何响应体
   let persistAfterLoad = false;
 
@@ -439,6 +440,10 @@ export function createStore({ rootDir = process.cwd(), env = process.env, log = 
     }
     // stats / byAccount 必须规范化成对象（审查#13）：null / 字符串会让 Object.entries() 直接抛错
     state.stats = normalizeStats(raw?.stats);
+    // B13：历史趋势。坏形状（老 state.json 没有该字段 / 手改成垃圾）一律退化成空历史。
+    // 只在内存里规范化 —— 绝不在这里落盘，否则「账号全在册」的加载路径会多写一次
+    // state.json，破坏 store.test.mjs 的逐字节不变量。
+    state.history = normalizeHistory(raw?.history);
     // B4：先恢复「上次落盘时的池成员」再 prune —— pruneState 据此识别新出现的 keyId。
     state.pool = Array.isArray(raw?.pool) ? raw.pool.map(String) : null;
     if (Array.isArray(accounts)) {
@@ -460,7 +465,7 @@ export function createStore({ rootDir = process.cwd(), env = process.env, log = 
     }
     // pool 一并落盘：下次加载据此识别「删掉又加回来的同 keyId 新账号」（B4）。
     const pool = Array.isArray(state.pool) ? state.pool : [];
-    atomicWrite(stateFile, JSON.stringify({ accounts, stats: state.stats, pool }, null, 2), { log });
+    atomicWrite(stateFile, JSON.stringify({ accounts, stats: state.stats, pool, history: state.history }, null, 2), { log });
   }
 
   return {
