@@ -19,7 +19,9 @@ import {
   loadOrCreateSecret,
   parseCookies,
   safeEqualText,
+  ScryptQueueFullError,
   sessionCookieHeader,
+  setScryptQueueMax,
   verifyPassword,
 } from './src/auth.mjs';
 import { createScheduler, quotaWindows } from './src/scheduler.mjs';
@@ -46,6 +48,24 @@ const LOGIN_LOCK_MS = 5 * 60 * 1000;
 const LOGIN_MAX_LOCK_MS = 60 * 60 * 1000;
 const PASSWORD_MIN = 8;
 const PASSWORD_MAX = 200;
+// B17-#7：单线程 scrypt(N=2^16) 实测均值 ≈656ms → 吞吐 ≈91 次/分钟。全局登录尝试上限按
+// **实际吞吐**校准（不再用 per-source×10=600）：配置上限高于系统容量只会让请求在队列里
+// 堆积、把合法登录排在积压后面。取 90（≈实测吞吐），队列深度上限（scryptMaxQueue）另做兜底。
+const SCRYPT_THROUGHPUT_PER_MIN = 90;
+
+/**
+ * 全局登录尝试上限（B17-#7，纯函数）：显式配置优先；否则取 max(每来源上限, 实测吞吐)。
+ * 导出供回归测试直接验证（与 BODY_PEEK_BYTES 同款做法）。
+ * 历史行为是 `per-source × 10 = 600`，远高于单线程 scrypt 的实际容量 —— 配置上限大于系统
+ * 容量只会把请求堆进队列，而不是「更快地拒绝」。
+ */
+export function globalLoginAttemptMax(config = {}) {
+  const explicit = Number(config.loginGlobalAttemptsPerMinute);
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  const perSource = Number(config.loginAttemptsPerMinute) > 0 ? Number(config.loginAttemptsPerMinute) : 60;
+  return Math.max(perSource, SCRYPT_THROUGHPUT_PER_MIN);
+}
+
 // 连通性测试结果只做展示，不必持久化太多次
 const TEST_HISTORY_MAX = 20;
 // 公开面板匿名触发的额度刷新最小间隔（毫秒）：按来源分桶
@@ -96,6 +116,8 @@ export async function startGateway(overrides = {}) {
   // 未知键 / 无法解析的值收集成 warnings，这里在 logger 就绪后打出来，别静默吞掉。
   const loadedConfig = loadConfig(overrides.configPath ?? path.join(ROOT, 'config.json'), overrides.env ?? process.env);
   const config = { ...loadedConfig, ...(overrides.config ?? {}) };
+  // B17-#7：把 scrypt 串行队列的深度上限注入 auth 模块（模块级状态，进程内全局生效）。
+  setScryptQueueMax(config.scryptMaxQueue);
   const log = createLogger({ level: config.logLevel, file: config.logFile });
   for (const w of configWarnings(loadedConfig)) log.warn?.(`配置告警：${w}`);
   // 可注入的墙钟：测试用可控 now 驱动探针 TTL / 退避，生产默认 Date.now。
@@ -147,10 +169,8 @@ export async function startGateway(overrides = {}) {
     now: () => Date.now(),
     // 全局尝试预算（不分用户名）：轮换用户名刷登录也会被限速，不再无限触发 scrypt
     attemptMax: Number(config.loginAttemptsPerMinute) > 0 ? Number(config.loginAttemptsPerMinute) : 60,
-    // H2：进程级全局桶（跨来源），伪造 XFF/轮换来源也绕不过；0 → attemptMax×10
-    globalAttemptMax: Number(config.loginGlobalAttemptsPerMinute) > 0
-      ? Number(config.loginGlobalAttemptsPerMinute)
-      : (Number(config.loginAttemptsPerMinute) > 0 ? Number(config.loginAttemptsPerMinute) : 60) * 10,
+    // H2：进程级全局桶（跨来源），伪造 XFF/轮换来源也绕不过；0 → 按实测吞吐校准（B17-#7）
+    globalAttemptMax: globalLoginAttemptMax(config),
     attemptWindowMs: 60 * 1000,
   });
   let users = [];
@@ -914,14 +934,38 @@ export async function startGateway(overrides = {}) {
     }
   }
 
-  /** 操作者标识：后台登录用户名 + 来源 IP。 */
+  /**
+   * 操作者标识：后台登录用户名 + 来源 IP（B17-#8）。
+   *
+   * 历史实现取 `req.socket.remoteAddress` —— 反代（1Panel openresty）之后它恒为代理地址，
+   * 审计日志里所有人都是同一个 IP，出事后无法定位真人。改用 clientIp(req)（走
+   * resolveClientIp 处理可信 XFF），与登录日志同一口径。不可信来源时 clientIp 自动回落 socket。
+   */
   function actorOf(req) {
-    return `user=${currentUser(req) ?? 'unknown'}@${req.socket?.remoteAddress ?? '-'}`;
+    return `user=${currentUser(req) ?? 'unknown'}@${clientIp(req)}`;
   }
 
+  /**
+   * 路径参数解码（B17-#4）：`decodeURIComponent('%')` 会抛 URIError，原样逃逸出路由就变成
+   * 500「后台接口内部错误」。这里统一转成 400，并明确说明是路径参数的编码问题。
+   */
+  function safeDecodeURIComponent(raw) {
+    try {
+      return decodeURIComponent(raw);
+    } catch {
+      throw new HttpError(400, '路径参数编码非法：不是合法的 percent-encoding');
+    }
+  }
+
+  // B17-#6：名称直接插值进 note()/日志，而 redact **不转义换行** —— 带 \n 的名字能在日志里
+  // 伪造出一条「自带时间戳 / level」的独立行（日志伪造），带 ANSI 转义还能污染终端。
+  // 同文件里用户名 / IP / sessionId 都走了 sanitizeForLog；这里对账号名与客户端 key 名
+  // 统一**拒绝**控制字符（比转义更清晰，也不会有漏网的分支）。
+  const NAME_CONTROL_RE = /[\u0000-\u001f\u007f]/;
   function cleanName(raw) {
     const name = String(raw ?? '').trim();
     if (!name) throw new HttpError(400, '名称不能为空');
+    if (NAME_CONTROL_RE.test(name)) throw new HttpError(400, '名称不能包含控制字符（换行 / 制表符 / 其它 0x00-0x1f 与 0x7f）');
     if (name.length > NAME_MAX) throw new HttpError(400, `名称长度不能超过 ${NAME_MAX} 个字符`);
     return name;
   }
@@ -937,6 +981,22 @@ export async function startGateway(overrides = {}) {
 
   function credentialAccounts(list = accounts) {
     return list.map((a) => ({ name: a.name, key: a.key, enabled: a.enabled !== false }));
+  }
+
+  /**
+   * B17-#1：账号池至少要保留一个**启用**账号，否则调度器无号可用、所有 /v1 请求 503。
+   *
+   * DELETE 与 PATCH（停用）共用这一条守卫，语义完全一致：变更后掉到 0 个启用账号 → 409，
+   * 文案明确告诉操作者「请先启用其它账号」。历史 bug：DELETE 有守卫而 PATCH 没有，
+   * 于是 `PATCH {enabled:false}` 能把最后一个可用账号停掉，绕过 DELETE 的保护。
+   * @param {Array<{enabled:boolean}>} next 变更后的账号列表
+   * @param {string} verb 动作（删除 / 停用），用于文案
+   */
+  function assertEnabledAccountRemains(next, verb) {
+    if (next.some((a) => a.enabled !== false)) return;
+    throw new HttpError(409, next.length === 0
+      ? `不能${verb}最后一个账号：${verb}后账号池为空，所有请求都会失败`
+      : `不能${verb}最后一个可用账号：${verb}后没有可调度的账号（请先启用其它账号）`);
   }
 
   function credentialKeys(list = localKeys) {
@@ -1092,7 +1152,7 @@ export async function startGateway(overrides = {}) {
     if (method === 'PATCH' && userMatch) {
       requireWritable();
       const actor = currentUser(req);
-      const username = decodeURIComponent(userMatch[1]);
+      const username = safeDecodeURIComponent(userMatch[1]);
       const target = findUser(username);
       if (!target) throw new HttpError(404, '管理员不存在');
       const body = await readJSONBody(req);
@@ -1121,7 +1181,7 @@ export async function startGateway(overrides = {}) {
 
     if (method === 'DELETE' && userMatch) {
       requireWritable();
-      const username = decodeURIComponent(userMatch[1]);
+      const username = safeDecodeURIComponent(userMatch[1]);
       const target = findUser(username);
       if (!target) throw new HttpError(404, '管理员不存在');
       if (users.length <= 1) throw new HttpError(409, '至少保留一个管理员：删掉最后一个后将无法登录后台');
@@ -1184,7 +1244,7 @@ export async function startGateway(overrides = {}) {
 
     if (method === 'PATCH' && accountMatch) {
       requireWritable();
-      const id = decodeURIComponent(accountMatch[1]);
+      const id = safeDecodeURIComponent(accountMatch[1]);
       const target = accounts.find((a) => a.keyId === id);
       if (!target) throw new HttpError(404, '账号不存在');
       const body = await readJSONBody(req);
@@ -1196,6 +1256,9 @@ export async function startGateway(overrides = {}) {
       }
       const enabled = body.enabled === undefined ? target.enabled !== false : body.enabled;
       const next = credentialAccounts().map((a) => (a.key === target.key ? { ...a, name, enabled } : a));
+      // B17-#1：停用最后一个可用账号与删除它等价（调度器同样无号可用）→ 同一守卫、同一 409。
+      // 只在明确要求停用时检查；enabled:true（或只改名）不受影响。
+      if (body.enabled === false) assertEnabledAccountRemains(next, '停用');
       store.saveAccounts(next);
       reloadNow();
       // 手动启用 = 运维明确要求再用它：清掉「余额不足」标记，否则用户会困惑
@@ -1210,16 +1273,11 @@ export async function startGateway(overrides = {}) {
 
     if (method === 'DELETE' && accountMatch) {
       requireWritable();
-      const id = decodeURIComponent(accountMatch[1]);
+      const id = safeDecodeURIComponent(accountMatch[1]);
       const target = accounts.find((a) => a.keyId === id);
       if (!target) throw new HttpError(404, '账号不存在');
       const remaining = credentialAccounts().filter((a) => a.key !== target.key);
-      const enabledLeft = remaining.filter((a) => a.enabled !== false).length;
-      if (enabledLeft === 0) {
-        throw new HttpError(409, remaining.length === 0
-          ? '不能删除最后一个账号：删除后账号池为空，所有请求都会失败'
-          : '不能删除最后一个可用账号：删除后没有可调度的账号（请先启用其它账号）');
-      }
+      assertEnabledAccountRemains(remaining, '删除');
       store.saveAccounts(remaining);
       const { removed } = reloadNow();
       note('info', `删除账号「${target.name}」keyId=${id}（${actorOf(req)}）`);
@@ -1249,7 +1307,7 @@ export async function startGateway(overrides = {}) {
 
     if (method === 'DELETE' && keyMatch) {
       requireWritable();
-      const id = decodeURIComponent(keyMatch[1]);
+      const id = safeDecodeURIComponent(keyMatch[1]);
       const target = localKeys.find((k) => k.keyId === id);
       if (!target) throw new HttpError(404, '客户端 key 不存在');
       store.saveKeys(credentialKeys().filter((k) => k.key !== target.key));
@@ -1311,6 +1369,12 @@ export async function startGateway(overrides = {}) {
         return await handleAuth(req, res, url);
       } catch (e) {
         if (e instanceof HttpError) return sendJSON(res, e.status, { error: { message: e.message, type: 'auth_error' } });
+        // B17-#7：scrypt 队列已满 → 503（服务器繁忙、稍后重试），不是 401、更不是 500。
+        if (e instanceof ScryptQueueFullError || e?.code === 'SCRYPT_QUEUE_FULL') {
+          log.warn(`鉴权接口被拒（scrypt 队列已满）：${e.message}`);
+          res.setHeader('retry-after', '1');
+          return sendJSON(res, 503, { error: { message: '服务器繁忙（密码校验队列已满），请稍后重试', type: 'overloaded' } });
+        }
         // M2b：store 的只读挂载写入失败 → 明确 403（文案含「只读」），绝不 500
         if (e?.code === 'READONLY_FS') {
           return sendJSON(res, 403, { error: { message: '凭据以只读方式挂载，无法修改；请改用可写的 config/ 目录', type: 'auth_error' } });
@@ -1461,6 +1525,12 @@ export async function startGateway(overrides = {}) {
         await handleAdmin(req, res, url);
       } catch (e) {
         if (e instanceof HttpError) return sendJSON(res, e.status, { error: { message: e.message, type: 'admin_error' } });
+        // B17-#7：改密码 / 建管理员同样要算 scrypt；队列满时明确 503，不裸抛 500。
+        if (e instanceof ScryptQueueFullError || e?.code === 'SCRYPT_QUEUE_FULL') {
+          log.warn(`后台接口被拒（scrypt 队列已满）：${e.message}`);
+          res.setHeader('retry-after', '1');
+          return sendJSON(res, 503, { error: { message: '服务器繁忙（密码校验队列已满），请稍后重试', type: 'overloaded' } });
+        }
         // M2b：只读挂载下的写操作 → 403 且文案含「只读」，不裸抛 500
         if (e?.code === 'READONLY_FS') {
           return sendJSON(res, 403, { error: { message: '凭据以只读方式挂载，无法修改；请改用可写的 config/ 目录', type: 'admin_error' } });
@@ -1517,6 +1587,16 @@ export async function startGateway(overrides = {}) {
   server.headersTimeout = Number(config.headersTimeoutMs) > keepAliveTimeoutMs
     ? Number(config.headersTimeoutMs)
     : keepAliveTimeoutMs + 1000;   // Node 要求 headersTimeout > keepAliveTimeout
+  // B17-#2：显式设置 requestTimeout（不依赖 Node 的 300s 默认）。它是「收完整请求」的总时限，
+  // 是我们的 bodyReadTimeoutMs 之外的第二道兜底（Node 那层不带统计/日志）。取值保证不小于
+  // headersTimeout，且默认略大于 bodyReadTimeoutMs，让网关自己的 408 先生效。
+  server.requestTimeout = Math.max(
+    Number(config.requestTimeoutMs) > 0 ? Number(config.requestTimeoutMs) : 180000,
+    server.headersTimeout + 1000,
+  );
+  // B17-#2：同时打开的连接数上限（Node 默认 Infinity）。慢连接 / 半开连接不能无限占 socket 表。
+  const maxConnections = Number(config.maxConnections) > 0 ? Math.floor(Number(config.maxConnections)) : 512;
+  server.maxConnections = Math.max(1, maxConnections);
 
   await new Promise((resolve, reject) => {
     server.once('error', reject);

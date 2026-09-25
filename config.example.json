@@ -14,5 +14,9 @@
   "logLevel": "info",
   "logFile": "",
   "maxBodyBytes": 8388608,
-  "maxInflight": 8
+  "maxInflight": 8,
+  "bodyReadTimeoutMs": 120000,
+  "requestTimeoutMs": 180000,
+  "maxConnections": 512,
+  "scryptMaxQueue": 8
 }

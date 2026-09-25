@@ -2,7 +2,7 @@
 import http from 'node:http';
 import https from 'node:https';
 import { URL } from 'node:url';
-import { redact } from './log.mjs';
+import { redact, redactForLog } from './log.mjs';
 import { isQuotaError, isCreditsExhausted, isRateLimitTimeout, quotaWindowHint } from './scheduler.mjs';
 // B5：透传固定桶常量定义在 store.mjs（pruneState 也要用它跳过已删账号清理），这里复用/再导出。
 import { PASSTHROUGH_STATS_KEY } from './store.mjs';
@@ -136,7 +136,7 @@ function pipeResponse(upstreamRes, res, { onChunk, log, secrets }) {
     // 'end' = 上游把响应体完整发完（唯一的「成功」信号）
     const onEnd = () => finish(true);
     const onErr = (e) => {
-      log?.warn?.(`上游响应中断: ${redact(e?.message ?? String(e), secrets)}`);
+      log?.warn?.(`上游响应中断: ${redactForLog(e?.message ?? String(e), secrets)}`);
       finish(false, e);
     };
     // 'close' 兜底：被 destroy() 的流不会发 'end'，只发 'close'，
@@ -159,12 +159,40 @@ function pipeResponse(upstreamRes, res, { onChunk, log, secrets }) {
  * 把下游请求体边流式转发给 upstreamReq、边 tee 进内存（受 maxBodyBytes 限制）。
  * 返回 { buffer, complete }：complete=false 表示中途因响应到达/出错而中止。
  */
-function pipingBody(req, upstreamReq, maxBodyBytes, initialChunks = [], alreadyEnded = false) {
-  const state = { chunks: [], size: 0, complete: false, tooLarge: false, error: null };
+function pipingBody(req, upstreamReq, maxBodyBytes, initialChunks = [], alreadyEnded = false, bodyReadTimeoutMs = 0) {
+  const state = { chunks: [], size: 0, complete: false, tooLarge: false, error: null, timedOut: false };
+  let deadlineTimer = null;
+  const clearDeadline = () => {
+    if (deadlineTimer) { clearTimeout(deadlineTimer); deadlineTimer = null; }
+  };
   state.stop = () => {
+    clearDeadline();
     req.off('data', onData);
     req.off('end', onEnd);
     req.off('error', onError);
+  };
+  /**
+   * B17-#2：整个请求体的**最坏期限**。peekBody 的起始超时只管「首块之前」；客户端发 1 字节
+   * 后停住（data 不再来、end 永远不来）会永久占住 socket 与在途名额 —— 默认 maxInflight=8，
+   * 8 个这样的连接就能让全部 /v1 长时间 503。到点：停止 tee、中止上游转发、标记
+   * BODY_READ_TIMEOUT，由 forward() 回 408（客户端可读）并断开连接。
+   * 计时器 unref（不拖住进程），正常结束 / 出错都会经 state.stop() 清除。
+   */
+  const armDeadline = () => {
+    const ms = Number(bodyReadTimeoutMs);
+    if (!(ms > 0) || deadlineTimer) return;
+    deadlineTimer = setTimeout(() => {
+      deadlineTimer = null;
+      if (state.complete) return;
+      state.timedOut = true;
+      state.error = Object.assign(
+        new Error(`请求体读取超时（${ms}ms 内未收完）`),
+        { code: 'BODY_READ_TIMEOUT' },
+      );
+      state.stop();
+      upstreamReq.destroy(state.error);   // 中止转发（连接层失败路径会把这个 code 带回来）
+    }, ms);
+    deadlineTimer.unref?.();
   };
   function onData(chunk) {
     state.size += chunk.length;
@@ -220,6 +248,7 @@ function pipingBody(req, upstreamReq, maxBodyBytes, initialChunks = [], alreadyE
     state.stop();
     upstreamReq.end();
   });
+  armDeadline();
   // 网关可能为了取 session id 而 pause 过请求流，这里显式恢复
   req.resume();
   state.bytes = () => Buffer.concat(state.chunks);
@@ -270,6 +299,8 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
   let inflight = 0;
   const base = new URL(config.upstreamProxyUrl);
   const upstreamTimeoutMs = config.upstreamTimeoutMs ?? 300000;
+  // B17-#2：整个请求体的最坏期限（见 pipingBody.armDeadline）
+  const bodyReadTimeoutMs = Number(config.bodyReadTimeoutMs) > 0 ? Number(config.bodyReadTimeoutMs) : 120000;
 
   /**
    * 重试时挑一个不同的可用账号（B6）。
@@ -457,7 +488,7 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
         // 请求体：首次流式 tee；重试时用 buffer 重放
         if (hasBody) {
           if (attempt === 0) {
-            bodyState = pipingBody(req, upstreamReq, maxBodyBytes, initialChunks, bodyEnded);
+            bodyState = pipingBody(req, upstreamReq, maxBodyBytes, initialChunks, bodyEnded, bodyReadTimeoutMs);
           } else if (bodyState?.complete && !bodyState?.tooLarge && !bodyState?.error) {
             upstreamReq.end(bodyState.bytes());
           } else {
@@ -484,6 +515,18 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
           release();
           const code = connError?.code;
           const retryable = code !== 'BODY_TOO_LARGE' && !clientGone.signal.aborted;
+          // B17-#2：请求体读超时 → 408（不是 502）。客户端还在发 body，先回可读的错误体
+          // 再关连接（立刻 destroy 会让客户端只看到 ECONNRESET，读不到原因）。
+          if (code === 'BODY_READ_TIMEOUT' || bodyState?.timedOut
+            || bodyState?.error?.code === 'BODY_READ_TIMEOUT') {
+            bump(true);
+            bodyState?.stop?.();
+            log?.warn?.(`请求体读取超时（${bodyReadTimeoutMs}ms），已中止转发并断开连接`);
+            res.setHeader('connection', 'close');
+            sendJSON(res, 408, { error: { message: 'Request body timeout', type: 'request_timeout' } });
+            res.once('finish', () => { try { req.destroy(); } catch { /* 已断开 */ } });
+            return;
+          }
           if (code === 'BODY_TOO_LARGE' || bodyState?.tooLarge) {
             bump(true);
             bodyState?.stop?.();
@@ -519,6 +562,11 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
         // 4xx / 额度类错误：缓冲 body、脱敏后原样回传状态码
         if (status >= 400) {
           clientGone.signal.removeEventListener('abort', abortEarly);
+          // B17-#3：已拿到最终响应就**立刻停止 body tee** —— 否则 onData 会继续把客户端上传的
+          // 字节 push 进 state.chunks（上限 maxBodyBytes=8MB），内存不再受 maxInflight 约束。
+          // 这里只 stop() 不 resume()：重试分支还要 drainRemaining 拿剩余字节重放，resume()
+          // 会把它们丢掉；stop() 后流回到暂停态，字节留在缓冲里，既不丢也不涨。
+          bodyState?.stop?.();
           const buf = await readBody(upstreamRes);
           const text = buf.toString('utf8');
           // 先分类：额度/余额类是账号级状态，401 是鉴权，429 是限流冷却 —— 都不算「客户端错误」。
@@ -612,7 +660,7 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
             //      → markAuthInvalid + 停调；
             //   ③ 认不出来 → 保守：只 recordError 不停调（宁可面板少一个停调，不可误杀有效号）。
             if (isModelPlanLimit(text)) {
-              const summary = redact(text, secrets).slice(0, 300);
+              const summary = redactForLog(text, secrets).slice(0, 300);
               scheduler.recordError(current, '上游 HTTP 401（模型/套餐限制，不停调账号）');
               log?.warn?.(`账号「${current.name}」收到上游 401（模型/套餐限制，不停调账号）：${summary}`);
             } else if (isAuthInvalidMessage(text)) {
@@ -636,7 +684,7 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
             // 2026-09-22 线上事故：403 被和 401 同等处理 → 两个有效副号被误标 authInvalid
             // 停调并落盘，叠加主号月额度耗尽后整池 503。这里只记错误、原样透传 403，
             // 绝不 markAuthInvalid / 不换号 / 不 refreshAccount。
-            const summary = redact(text, secrets).slice(0, 300);
+            const summary = redactForLog(text, secrets).slice(0, 300);
             scheduler.recordError(current, '上游 HTTP 403（模型/套餐限制，不停调账号）');
             log?.warn?.(`账号「${current.name}」收到上游 HTTP 403（模型/套餐限制，不停调账号）：${summary}`);
           } else {
@@ -649,6 +697,12 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
             && !creditErr && !quotaErr && status !== 401 && status !== 429;
           bump(true, { clientError });
           release();
+          // B17-#3：终态（不重试）路径 —— resume() 让 Node 排空客户端剩余请求体，半截 body
+          // 不再挂在 socket 上。注意：这里的 bodyState.stop() 是**冗余的纵深防御** —— 到达本
+          // 分支前，563-569 行（4xx/5xx 归一路径）已经 stop() 过 tee 了；本分支真正新增的实质
+          // 行为是 req.resume()（把停在暂停/背压态的残体排空），不是这行 stop()。
+          bodyState?.stop?.();
+          req.resume();
           res.writeHead(status, { 'content-type': upstreamRes.headers['content-type'] ?? 'application/json' });
           res.end(redact(text, secrets));
           return;
@@ -711,7 +765,7 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
     } catch (e) {
       scheduler.recordError(account, e?.message ?? String(e));
       bump(true);
-      log?.error?.(`转发异常: ${redact(e?.message ?? String(e), secrets)}`);
+      log?.error?.(`转发异常: ${redactForLog(e?.message ?? String(e), secrets)}`);
       sendJSON(res, 502, { error: { message: 'Gateway error', type: 'upstream_error' } });
     } finally {
       release();

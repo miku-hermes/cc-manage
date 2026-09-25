@@ -43,15 +43,50 @@ function b64(buf) {
  *    （含所有反代流量）一起卡顿 —— 这是审查#3 的核心问题，必须改成不阻塞；
  *  - 只丢给异步 scrypt 还不够：N 个并发登录就是 N 个 64MB 的派生任务，256m 容体会被打爆。
  * 队列保证同一时刻只算一个 scrypt（CPU / 内存都有硬上限），事件循环全程可调度。
+ *
+ * B17-#7：队列**必须有深度上限**。限速只保证「进入 scrypt 的次数有界」，但单次
+ * scrypt(N=2^16) 实测 ≈656ms（单线程吞吐 ≈91 次/分钟），60/分钟的每来源上限意味着
+ * 2~3 个来源就能堆出上百个排队任务：内存（每个排队请求 + 事件循环延迟）线性上涨，
+ * 而合法管理员登录会被 FIFO 排在积压后面。超限**不排队**，直接抛 SCRYPT_QUEUE_FULL
+ * （调用方转 503「服务器繁忙，稍后重试」）。
  */
+const SCRYPT_QUEUE_DEFAULT_MAX = 8;
+/** 队列深度上限（含正在执行的一次）。可用 SCRYPT_MAX_QUEUE env / config 覆盖。 */
+let scryptQueueMax = (() => {
+  const raw = Number(process.env.SCRYPT_MAX_QUEUE);
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : SCRYPT_QUEUE_DEFAULT_MAX;
+})();
+/** 覆盖队列深度上限（gateway 启动时用 config.scryptMaxQueue 注入；非法值忽略）。 */
+export function setScryptQueueMax(n) {
+  const v = Number(n);
+  if (Number.isFinite(v) && v > 0) scryptQueueMax = Math.floor(v);
+}
+/** 诊断用：当前排队情况（测试断言队列有界）。 */
+export function scryptQueueStats() {
+  return { pending: scryptPending, max: scryptQueueMax };
+}
+
+/** 队列已满：不排队，直接让调用方回 503（服务器繁忙）。 */
+export class ScryptQueueFullError extends Error {
+  constructor() {
+    super('密码校验队列已满（服务器繁忙），请稍后重试');
+    this.name = 'ScryptQueueFullError';
+    this.code = 'SCRYPT_QUEUE_FULL';
+    this.status = 503;
+  }
+}
+
 let scryptQueue = Promise.resolve();
+let scryptPending = 0;   // 在跑 + 排队中的任务数
 function scryptAsync(password, salt, keylen, opts) {
+  if (scryptPending >= scryptQueueMax) return Promise.reject(new ScryptQueueFullError());
+  scryptPending += 1;
   const task = () => new Promise((resolve, reject) => {
     scrypt(String(password), salt, keylen, opts, (err, derived) => (err ? reject(err) : resolve(derived)));
   });
   const run = scryptQueue.then(task, task);   // 前一个无论成败，这一个照跑
   scryptQueue = run.then(() => undefined, () => undefined);
-  return run;
+  return run.finally(() => { scryptPending -= 1; });
 }
 
 /**
@@ -94,7 +129,9 @@ export async function verifyPassword(password, stored) {
   let actual;
   try {
     actual = await scryptAsync(password, salt, expected.length, { N, r, p, maxmem: SCRYPT_MAX_MEM });
-  } catch {
+  } catch (e) {
+    // B17-#7：队列满不是「密码错」——必须让调用方看到 503，否则会被记成一次失败登录。
+    if (e?.code === 'SCRYPT_QUEUE_FULL') throw e;
     return false;
   }
   return actual.length === expected.length && timingSafeEqual(actual, expected);

@@ -145,7 +145,7 @@ docker compose logs --tail 20 core   # 能看到请求到达 + 被替换成池�
 docker compose up -d --force-recreate gateway   # 恢复默认
 ```
 
-**内存提示**：本机 2GB，已用四重封顶 —— `mem_limit`（core 512m / gateway 384m）+ `CC_MAX_BODY_MB`（默认 20）+ `CC_MAX_INFLIGHT`（默认 8）+ 网关自己的 `maxBodyBytes`（默认 8MB）/ `maxInflight`（默认 8）。公网/高并发还要另加 nginx 侧的连接数限制。
+**内存提示**：本机 2GB，已用四重封顶 —— `mem_limit`（core 512m / gateway 384m）+ `CC_MAX_BODY_MB`（默认 20）+ `CC_MAX_INFLIGHT`（默认 8）+ 网关自己的 `maxBodyBytes`（默认 8MB）/ `maxInflight`（默认 8）/ `maxConnections`（默认 512，慢连接上限）。公网/高并发还要另加 nginx 侧的连接数限制。
 
 ### 配置 `config.json`
 
@@ -168,6 +168,10 @@ docker compose up -d --force-recreate gateway   # 恢复默认
   "publicDashboard": true,
   "maxBodyBytes": 8388608,
   "maxInflight": 8,
+  "bodyReadTimeoutMs": 120000,
+  "requestTimeoutMs": 180000,
+  "maxConnections": 512,
+  "scryptMaxQueue": 8,
   "logLevel": "info",
   "logFile": ""
 }
@@ -188,8 +192,21 @@ docker compose up -d --force-recreate gateway   # 恢复默认
 - `publicDashboard`（`PUBLIC_DASHBOARD`）：`1`（默认）让 `/` 与 `/api/status` 公开只读；`0` 则要求后台登录 session。
 - 已废弃的 `protectAdminApi`（`PROTECT_ADMIN_API`）：旧版「面板接口要 `sk-cg-` key」开关，仅为老部署兼容保留；新部署请用 `PUBLIC_DASHBOARD=0`。
 - `upstreamTimeoutMs`（`UPSTREAM_TIMEOUT_MS`，默认 300000）：转到上游的请求超时（`src/proxy.mjs` 读取）。
+- `bodyReadTimeoutMs`（`BODY_READ_TIMEOUT_MS`，默认 120000）：**整个请求体**的最坏读取期限。`bodyPeekStartMs`
+  只管「首块之前」；客户端发 1 字节后停住时，这个期限到点会中止转发、回 **408** 并断开连接，同时释放在途名额
+  （否则默认 `maxInflight=8` 的 8 个连接就能让 `/v1` 全线长时间 503）。120s ≈ 8MB 上限下 67KB/s 的最低上传速度。
+- `requestTimeoutMs`（`REQUEST_TIMEOUT_MS`，默认 180000）：Node HTTP server 的 `requestTimeout`
+  （收完整请求的总时限，Node 默认 300s）。显式设置且略大于 `bodyReadTimeoutMs`，让网关自己带统计/日志的
+  408 先生效；实际生效值不会小于 `headersTimeout`。
+- `maxConnections`（`MAX_CONNECTIONS`，默认 512）：Node HTTP server 的并发连接上限（Node 默认无限），
+  防止慢连接把 socket 表打满。
+- `scryptMaxQueue`（`SCRYPT_MAX_QUEUE`，默认 8）：scrypt 串行队列的深度上限（含正在执行的一次）。
+  单线程 scrypt(N=2^16) 实测 ≈656ms（吞吐 ≈91 次/分钟），队列必须在深处拒绝而不是无限排队 ——
+  超限**不排队**，直接回 **503**（`服务器繁忙`，附 `Retry-After`），避免合法管理员登录被 FIFO 阻塞。
+  相应地把全局登录尝试上限（`LOGIN_GLOBAL_ATTEMPTS_PER_MINUTE` 未设置时）从历史的 `每来源×10=600`
+  校准到 **90**（≈实测吞吐）。
 
-环境变量覆盖：`MAX_INFLIGHT` `GATEWAY_PORT` `GATEWAY_HOST` `UPSTREAM_PROXY_URL` `CC_API_BASE` `QUOTA_POLL_INTERVAL_MS` `QUOTA_ACTIVE_POLL_INTERVAL_MS` `QUOTA_ACTIVE_WINDOW_MS` `PAUSED_RECHECK_INTERVAL_MS` `QUOTA_TIMEOUT_MS` `UPSTREAM_TIMEOUT_MS` `SESSION_AFFINITY_TTL_MS` `MAX_BODY_BYTES` `ALLOW_PASSTHROUGH` `PUBLIC_DASHBOARD` `LOG_FILE` `LOG_LEVEL`。
+环境变量覆盖：`MAX_INFLIGHT` `MAX_BODY_BYTES` `BODY_READ_TIMEOUT_MS` `REQUEST_TIMEOUT_MS` `MAX_CONNECTIONS` `SCRYPT_MAX_QUEUE` `GATEWAY_PORT` `GATEWAY_HOST` `UPSTREAM_PROXY_URL` `CC_API_BASE` `QUOTA_POLL_INTERVAL_MS` `QUOTA_ACTIVE_POLL_INTERVAL_MS` `QUOTA_ACTIVE_WINDOW_MS` `PAUSED_RECHECK_INTERVAL_MS` `QUOTA_TIMEOUT_MS` `UPSTREAM_TIMEOUT_MS` `SESSION_AFFINITY_TTL_MS` `MAX_BODY_BYTES` `ALLOW_PASSTHROUGH` `PUBLIC_DASHBOARD` `LOG_FILE` `LOG_LEVEL`。
 
 ### 账号池 `accounts.json`
 
@@ -291,6 +308,9 @@ curl -N -X POST 127.0.0.1:3051/v1/chat/completions \
 - 流式透传：`http.request` 拿到上游响应后边收边转，不整体缓冲；下游写阻塞时暂停读上游，`drain` 后恢复。
 - 请求头白名单：`content-type` `accept` `x-session-id`，`user-agent` 一律改写为 `commandcode-cli/1.53.1`；下游的 `authorization` / `x-api-key` **绝不**透传，一定替换成选中账号的 CC key。
 - 请求体流式转发，超过 `maxBodyBytes`（默认 8MB）返回 413。
+- 请求体读取有整体期限 `bodyReadTimeoutMs`（默认 120s）：客户端发到一半停住 → 中止转发并返回 **408**
+  （`Request body timeout`，`connection: close`），不会永久占住 socket 与在途名额。
+- 上游提前回 4xx/5xx（终态）时立刻停止请求体 tee 并丢弃剩余 body，内存不再随客户端上传增长。
 - 在途请求上限 `maxInflight`（默认 8），超出返回 `503` + `Retry-After`。
 - 上游把响应发到一半就断流时，网关**不会** `res.end()` 把半截内容伪装成完整的 200 —— 已写出的按连接异常 `res.destroy()` 中止，未写出的按 502，并计入 `stats.errors`。
 - 客户端断开立刻 abort 上游。

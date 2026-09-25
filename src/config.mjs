@@ -39,7 +39,9 @@ export const DEFAULTS = {
   // 登录尝试令牌桶（审查#3）：每来源每分钟最多多少次「真的要算 scrypt」的登录尝试，**不看用户名**。
   // 轮换用户名刷登录会被同一个桶挡住；用户名锁定（5 次连错）仍然单独生效。
   loginAttemptsPerMinute: 60,
-  // H2：进程级全局登录尝试上限（每分钟）。任何来源构造都绕不过；0 = 用 loginAttemptsPerMinute×10。
+  // H2：进程级全局登录尝试上限（每分钟）。任何来源构造都绕不过。
+  // B17-#7：0 = 按**实测吞吐**自动校准（单线程 scrypt 约 91 次/分钟 → 默认取 90），
+  // 不再是 loginAttemptsPerMinute×10 —— 配置上限高于系统容量只会让请求在队列里堆积。
   loginGlobalAttemptsPerMinute: 0,
   // 可信反代来源（审查 A5）：只有 TCP 来源落在这些网段内才采信 x-forwarded-for /
   // x-real-ip，按真实客户端分桶限速；否则忽略代理头，回落 socket 地址（防伪造）。
@@ -56,6 +58,23 @@ export const DEFAULTS = {
   headersTimeoutMs: 66000,
   // L5：peekBody 等待**首块 body 数据**的起始超时。慢速/挂起连接不能无限占住 socket。
   bodyPeekStartMs: 10000,
+  // B17-#2：peekBody 只管「首块之前」。客户端发 1 字节后停住仍会永久占住在途名额
+  // （默认上限 8 → 8 个这样的连接就能让 /v1 全线 503）。这里给**整个请求体**一个最坏期限：
+  // 超过仍未 end → 中止转发、断开连接并回 408（客户端可读的错误体）。
+  // 120s 对 8MB 上限相当于 ~67KB/s 的最低上传速度，正常客户端远高于它。
+  bodyReadTimeoutMs: 120000,
+  // B17-#2：Node HTTP server 的 requestTimeout（收完整请求的总时限）。Node 默认 300s 偏长，
+  // 这里显式设置（别依赖默认值），并取略大于 bodyReadTimeoutMs —— 让网关自己带统计/日志的
+  // 408 先于 Node 的裸断开生效（Node 的超时只是兜底）。
+  requestTimeoutMs: 180000,
+  // B17-#2：同时打开的连接数上限（Node 默认 Infinity）。默认 512，防止 socket 表被慢连接打满；
+  // 网关默认只绑 127.0.0.1 挂在反代后面，512 条并发连接对单实例足够。
+  maxConnections: 512,
+  // B17-#7：scrypt 串行队列的深度上限（含正在执行的那一次）。判过令牌的登录请求在队列里
+  // 排队时同样占内存与延迟；无上界时 2~3 个来源就能把队列堆满，合法管理员登录被 FIFO 阻塞。
+  // 超限**不排队**，直接 503（文案说明服务器繁忙）。单次 scrypt(N=2^16) ≈656ms，
+  // 8 深 ≈ 最多 ~5s 排队，远小于用户可接受的登录等待。
+  scryptMaxQueue: 8,
   // 前台只读面板（/ 与 /api/status）是否公开。默认 1 = 公开（只暴露账号名/keyId/keyPrefix/额度百分比，
   // 没有完整 key）；设 0 → 需要后台登录 session 才能看。
   publicDashboard: true,
@@ -93,6 +112,10 @@ const ENV_MAP = {
   KEEPALIVE_TIMEOUT_MS: ['keepAliveTimeoutMs', 'number'],
   HEADERS_TIMEOUT_MS: ['headersTimeoutMs', 'number'],
   BODY_PEEK_START_MS: ['bodyPeekStartMs', 'number'],
+  BODY_READ_TIMEOUT_MS: ['bodyReadTimeoutMs', 'number'],
+  REQUEST_TIMEOUT_MS: ['requestTimeoutMs', 'number'],
+  MAX_CONNECTIONS: ['maxConnections', 'number'],
+  SCRYPT_MAX_QUEUE: ['scryptMaxQueue', 'number'],
   ALLOW_PASSTHROUGH: ['allowPassthrough', 'boolean'],
   PUBLIC_DASHBOARD: ['publicDashboard', 'boolean'],
   PROTECT_ADMIN_API: ['protectAdminApi', 'boolean'],
