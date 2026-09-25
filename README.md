@@ -15,7 +15,7 @@ Command Code 多账号反代网关：在协议内核 [`vendor/commandcode-proxy/
 
 - **零外部依赖**：只用 Node 内置模块，`package.json` 里没有 `dependencies`。
 - **Node 22+ / ESM**：所有文件都是 `.mjs`。
-- **密钥不外泄**：日志、API、面板一律只出现 `keyId`（key 的 sha256 前 8 位）与 `keyPrefix`（前 9 个字符），完整 key 永不落日志、永不出现在响应里。
+- **密钥不外泄**：日志与已登录的后台 API 只出现 `keyId`（key 的 sha256 前 8 位）与 `keyPrefix`（前 9 个字符），完整 key 永不落日志、永不出现在响应里；匿名可读的公开面板连 `keyId` / `keyPrefix` 都不下发。
 
 ## 目录
 
@@ -109,7 +109,7 @@ curl -N -X POST 127.0.0.1:3051/v1/chat/completions \
 
 面板与后台：
 
-- `http://127.0.0.1:3051/` —— **公开只读**看板（账号名 / keyId / keyPrefix / 额度百分比，没有完整 key）。
+- `http://127.0.0.1:3051/` —— **公开只读**看板（账号备注名 / keyId / 额度百分比与统计；`keyPrefix` 与完整 key 都不下发）。
 - `http://127.0.0.1:3051/admin` —— 后台。首次打开是**初始化页**，设第一个管理员（用户名 + 至少 8 位密码）；
   初始化完成后该接口永久返回 403。之后用同一页登录，session 存 HttpOnly cookie（7 天）。
   后台里可以：新增/停用/改备注/删除 CC 上游 key、**测试连通性**（调 CC `whoami`，显示登录名与套餐或错误原因）、
@@ -192,7 +192,7 @@ docker compose up -d --force-recreate gateway   # 恢复默认
 （`"1"/"0"/"true"/"false"/"yes"/"no"/"on"/"off"` 均可；数字/数组字面量按对应类型解析）。
 
 - **未知键**（拼错的键，如 `quoatPollIntervalMs`）会产生告警并在启动时打印，**不会**静默并入配置。
-- **安全开关**（`publicDashboard` / `protectAdminApi` / `allowPassthrough` / `creditsProbeEnabled`）
+- **安全开关**（`publicDashboard` / `allowPassthrough` / `creditsProbeEnabled`）
   在 `config.json` 里给成**非布尔且无法无歧义解析**的值（数字、对象、数组、无法识别的字符串）时
   **直接拒绝启动**并报出「哪个键 / 期望什么类型 / 收到什么」，杜绝「以为关了其实没关」。
   因为网关对它们的判定是严格比较（如 `config.publicDashboard !== false`），字符串 `"false"`
@@ -200,7 +200,7 @@ docker compose up -d --force-recreate gateway   # 恢复默认
 
 - 额度轮询是**自适应**的：最近 `quotaActiveWindowMs`（默认 5 分钟）内有代理请求 → 用 `quotaActivePollIntervalMs`（默认 60 秒）同步 CC；一直空闲 → 退回 `quotaPollIntervalMs`（默认 600 秒）。实现是**单个自调度 `setTimeout`**，每轮跑完再决定下一次延迟；上一轮没跑完则跳过本轮。`quotaPollIntervalMs: 0` 表示**完全关闭**轮询（`quotaActivePollIntervalMs: 0` 则退化为纯空闲间隔）。
 - `publicDashboard`（`PUBLIC_DASHBOARD`）：`1`（默认）让 `/` 与 `/api/status` 公开只读；`0` 则要求后台登录 session。
-- 已废弃的 `protectAdminApi`（`PROTECT_ADMIN_API`）：旧版「面板接口要 `sk-cg-` key」开关，仅为老部署兼容保留；新部署请用 `PUBLIC_DASHBOARD=0`。
+- 面板可见性只有 `PUBLIC_DASHBOARD` 一个开关：旧版那套「面板接口再要一个本地 `sk-cg-` key」的做法已彻底移除 —— 前台既没有 key 输入框，也不把任何凭证写进浏览器存储（`sessionStorage` / `localStorage` / cookie 都没有）。
 - `upstreamTimeoutMs`（`UPSTREAM_TIMEOUT_MS`，默认 300000）：转到上游的请求超时（`src/proxy.mjs` 读取）。
 - `bodyReadTimeoutMs`（`BODY_READ_TIMEOUT_MS`，默认 120000）：**整个请求体**的最坏读取期限。`bodyPeekStartMs`
   只管「首块之前」；客户端发 1 字节后停住时，这个期限到点会中止转发、回 **408** 并断开连接，同时释放在途名额
@@ -330,9 +330,13 @@ curl -N -X POST 127.0.0.1:3051/v1/chat/completions \
 
 ## 面板
 
-浏览器打开 `http://127.0.0.1:3051/`：每个账号一张卡片，显示可辨识前缀（`keyId · keyPrefix`）、剩余额度、5h / 周 / 月进度条、在途数、暂停与鉴权状态、最近错误；顶部是账号数 / 可用数 / 暂停数 / 在途数 / 总请求 / 错误数 / 累计 token，并提供「立即刷新额度」按钮。
+浏览器打开 `http://127.0.0.1:3051/`：每个账号一张卡片，显示备注名、剩余额度、5h / 周 / 月进度条、暂停 / 限流 / 鉴权状态；顶部是账号数 / 可用数 / 暂停数 / 不可用数 / 总请求 / 错误数 / 累计 token，并提供「刷新额度」按钮（走公开的 `POST /api/accounts/refresh`，匿名可点、有节流）。前台卡片**不显示 key 的任何片段**（`keyId` / `keyPrefix` 都不渲染），`keyId · keyPrefix` 只在登录后的 `/admin` 账号表出现。
 
-**面板需要填 key**：`PROTECT_ADMIN_API=1`（默认）时 `/api/*` 要鉴权，所以右上角有一个 `type=password` 的 key 输入框——把 `keys.json` 里的 `sk-cg-…` 粘进去点「保存」，值只存在浏览器 `sessionStorage`（关标签页即失效，不落盘、不写 cookie），之后面板所有请求（含「立即刷新额度」）都会自动带上 `Authorization: Bearer <key>`。没填 key 时面板只显示一条提示，不会每 5 秒刷一堆 401 报错。key 只留在本机浏览器里，服务端不回显、不记录。
+**面板默认公开只读，但只公开一个只读状态接口**：`PUBLIC_DASHBOARD=1`（默认）时 `/` 与 `/api/status` 无需任何凭证。公开的内容只有账号备注名、`keyId`（sha256 前 8 位）、额度百分比 / 剩余量 / 用量、暂停 / 限流 / 鉴权状态、请求与 token 统计；**不公开**完整 key、`keyPrefix`（真实 key 前 9 字符）、上游账号身份（`lastQuota.displayName`）、`lastError` / `lastErrorAt` 原文 —— 这些键在 `/api/status` 的公开视图里**不存在**（连键名都没有，不是 null），只有登录后的 `/api/admin/*` 才看全量。
+
+要改配置、加账号、看运行日志，走 `/admin` 的账号密码登录（首次访问 `/admin` 初始化管理员）。`/api/admin/*` 一律要求登录 session，`sk-cg-` key 在那里无效；`/v1/*` 仍然只认 `keys.json` 里的 `sk-cg-` key。
+
+**前台没有 key 输入框**，也不把任何凭证存进浏览器（没有 `sessionStorage` / `localStorage` / cookie）：公开面板的每个请求都只读、且不带任何 Authorization。额度由后端自适应轮询自动同步（活跃 60s / 空闲 600s），页面上那个「刷新额度」按钮只是手动催一次，走公开的 `POST /api/accounts/refresh`（匿名调用按来源 + 全局节流；它只是催一次后端轮询，本身不需要任何凭证）。若连只读面板也不想公开，设 `PUBLIC_DASHBOARD=0`（此时 `/` 与 `/api/status` 都要求登录后台）。
 
 面板响应固定带 `X-Content-Type-Options: nosniff`。
 

@@ -11,12 +11,33 @@ import { startGateway } from '../gateway.mjs';
 // node --test 的子进程只要还有活着的 server/socket 就不会退出：套件看起来「跑完了」
 // 却一直挂着。这里用 unref 的定时器兜底：到点强制退出并说明原因；正常退出时
 // unref 不阻止进程结束。用 CC_TEST_HANG_GUARD_MS 可在测试里缩短（见 batch3-ops.test.mjs）。
+//
+// B20：预算不再对所有文件一刀切 120s——大文件（gateway.test.mjs 68 个用例、每个都起
+// 真实网关与 mock）在 8 并发下整体耗时远超小文件，固定 120s 会把「跑得慢」误报成
+// 「疑似 server/socket 未关闭」，而报错里连是哪个文件都看不出来。现在：
+//   1) 默认预算 = 200s 与「用例数 × 3s」取大（文件级预算按文件规模配置）；
+//   2) 报错信息带上当前测试文件路径，配合 node --test 的 --test-timeout（用例级上限，
+//      见 package.json）能直接定位到卡住的是哪个文件、哪个用例。
+const SELF_FILE = new URL(import.meta.url).pathname;
+let selfTestCount = 0;
+try {
+  const selfSrc = fs.readFileSync(SELF_FILE, 'utf8');
+  selfTestCount = (selfSrc.match(/(?:^|\n)[ \t]*test\s*\(/g) ?? []).length;
+} catch { /* 读不到就按 0 算，回落 120s 下限 */ }
 const rawGuardMs = Number(process.env.CC_TEST_HANG_GUARD_MS);
 // 非正数/非法值一律回落默认值：空串或拼错会算出 0/NaN，setTimeout 会立刻触发并假红。
-const HANG_GUARD_MS = Number.isFinite(rawGuardMs) && rawGuardMs > 0 ? rawGuardMs : 120000;
+// 预算下限 200s > package.json 的 --test-timeout=150s：卡住的用例由 runner 先报出
+// （node --test 的超时信息给的是被测文件），这条守卫只在「用例都跑完了、进程却因残留
+// handle 不退」时兜底，不会抢先把「跑得慢」误报成「疑似 socket 未关闭」。
+const HANG_GUARD_DEFAULT_MS = Math.max(200000, selfTestCount * 3000);
+const HANG_GUARD_MS = Number.isFinite(rawGuardMs) && rawGuardMs > 0 ? rawGuardMs : HANG_GUARD_DEFAULT_MS;
 const hangGuard = setTimeout(() => {
+  let active = '';
+  try { active = process.getActiveResourcesInfo().join(','); } catch { /* 取不到就算了 */ }
   console.error(`[test] ${HANG_GUARD_MS}ms 内进程没有退出：疑似有 server/socket 未关闭`
-    + '（检查每个测试是否都在 t.after / finally 里 await close()）。强制退出。');
+    + `（文件 ${SELF_FILE}，共 ${selfTestCount} 个用例；当前活跃句柄：${active || '未知'}。`
+    + '先看 node --test 的 --test-timeout 报出的文件名/用例名，再检查每个测试是否都在'
+    + ' t.after / finally 里 await close()）。强制退出。');
   process.exit(1);
 }, HANG_GUARD_MS);
 hangGuard.unref?.();
@@ -121,6 +142,12 @@ export async function closeServer(server, timeoutMs = 3000) {
 /** 起一个真实网关，上游指向 mock。返回 ctx，测试结束务必 await ctx.close()。 */
 export async function startTestGateway({
   accounts, keys, config = {}, plans, behavior, rootDir, noTimers = true, now,
+  // B20：默认对齐生产 —— 生产启动走的是 `if (!overrides.noInitialRefresh && accounts.length > 0)`
+  // （gateway.mjs 启动即刷一次额度）。这里原先写死 noInitialRefresh: true，于是「启动即刷」
+  // 这条容器每次启动都会走的路径在整套测试里从未被跑过。默认值改为 false 后它会在每个
+  // startTestGateway 用例里真的跑起来；不需要这轮刷新的用例必须**显式**传 true（显式化，
+  // 不是关闭覆盖）。相关用例见 test/gateway.test.mjs 的「启动即刷额度」三条。
+  noInitialRefresh = false,
   // 依赖注入点：让「启动失败时的回收」能在不起任何 server 的情况下被单测（batch3-ops.test.mjs）。
   deps = {},
 } = {}) {
@@ -153,7 +180,7 @@ export async function startTestGateway({
       return launchGateway({
         rootDir: dir,
         noTimers,
-        noInitialRefresh: true,
+        noInitialRefresh,
         now,
         env: { ...process.env, CC_ACCOUNTS: '', ASSET_NO: '1' },
         config: {
@@ -168,6 +195,16 @@ export async function startTestGateway({
         },
       });
     }, 3);
+
+    // B20：默认对齐生产 → 「启动即刷额度」真的跑。这里把它**等到跑完**再返回，避免调用方
+    // 与在途首刷竞争：首刷的 recordQuota 会清掉刚写入的 lastError、会消费探针 TTL、
+    // 也会让随后第一次 gw.refreshAll() 复用首轮的 in-flight promise（于是「手动刷新」其实
+    // 没刷）。startGateway 返回后的这一次续体是同步执行的，而首刷的 fetch 还停在 I/O 上，
+    // 所以这次 gw.refreshAll() 一定复用启动轮的那个 promise，不会多打一轮。
+    // 不需要这轮刷新的用例显式传 noInitialRefresh: true（见带该参数的用例注释）。
+    if (!noInitialRefresh && defaultAccounts.length > 0 && typeof gw?.refreshAll === 'function') {
+      await gw.refreshAll();
+    }
   } catch (e) {
     // 起网关失败也要把 mock server / 临时目录收掉（rootDir 是调用方给的就不能删）。
     await cleanupTestResources({ gateway: gw, upstream, dir, keepDir: !!rootDir });
@@ -204,6 +241,41 @@ export function request(url, { method = 'GET', headers = {}, body } = {}) {
 }
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * 条件轮询助手（B20）：等 predicate 成立再返回，而不是 sleep 一个「大概够了」的固定时长。
+ *
+ * 背景：一批用例用「固定 sleep + 很小余量」做时序同步（例如配置轮询 30ms、睡 150ms），
+ * 在 8 并发 / 2 核的 CI 上墙钟被拉长时窗口会被压缩 → 偶发红；反过来，sleep 太短又会
+ * 在「竞态其实还没发生」时假绿。waitFor 两个方向都堵住：条件成立立刻返回（不浪费墙钟），
+ * 超时则抛出带 label 的清晰错误（而不是一条含义不明的断言失败）。
+ *
+ * predicate 可以是同步或异步；抛错的 predicate 视为「条件不成立」，最后一次错误会写进
+ * 超时消息里便于定位。返回 predicate 的第一次 truthy 结果。
+ */
+export async function waitFor(predicate, { timeoutMs = 5000, intervalMs = 20, label = 'waitFor' } = {}) {
+  const timeout = Number.isFinite(Number(timeoutMs)) && Number(timeoutMs) > 0 ? Number(timeoutMs) : 5000;
+  const interval = Number.isFinite(Number(intervalMs)) && Number(intervalMs) > 0 ? Number(intervalMs) : 20;
+  const deadline = Date.now() + timeout;
+  let polls = 0;
+  let lastError = null;
+  for (;;) {
+    polls += 1;
+    let value;
+    try {
+      value = await predicate();
+    } catch (e) {
+      lastError = e;
+      value = undefined;
+    }
+    if (value) return value;
+    if (Date.now() >= deadline) {
+      throw new Error(`${label}：${timeout}ms 内条件始终不成立（轮询 ${polls} 次）`
+        + (lastError ? `；最后一次 predicate 抛错：${lastError.message}` : ''));
+    }
+    await sleep(Math.min(interval, Math.max(1, deadline - Date.now())));
+  }
+}
 
 /**
  * 在 Node 里跑页面内联脚本的极简 DOM 垫片（零依赖、无浏览器）。

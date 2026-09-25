@@ -233,7 +233,12 @@ test('回归#4c：暂停复查看所有窗口 —— weekly 仍耗尽不得恢�
 
 // ── 审查#5：refreshAll 不复用进行中的 Promise ───────────────────────────────
 test('回归#5：并发 refreshAll 复用同一个 Promise，不叠加全账号查询', async (t) => {
-  const ctx = await startTestGateway({ behavior: { delayMs: 100 } });
+  const ctx = await startTestGateway({
+    behavior: { delayMs: 100 },
+    // B20：本用例断言「一轮 = 2 账号 × 4 接口 = 8 次 /alpha 调用」；启动即刷会先打掉 8 次，
+    // 计数直接翻倍。显式关掉启动刷新，让计数只覆盖本用例自己发起的这一轮。
+    noInitialRefresh: true,
+  });
   t.after(() => ctx.close());
 
   const p1 = ctx.gateway.refreshAll();

@@ -14,18 +14,64 @@ const statusView = async (ctx) => JSON.parse((await request(`${ctx.baseUrl}/api/
 const byName = (ctx, name) => ctx.gateway.accounts.find((a) => a.name === name);
 
 // ── M1：匿名 /api/status 不得泄露上游拓扑 ─────────────────────────────
+//
+// 上游拓扑 = 内核主机名（core）+ 内核端口（3050）。它只会以「主机名字符串 / 端口号 /
+// 承载二者的字段名」的形态出现，所以按 **JSON 结构**逐字段判定，而不是对原始报文做子串
+// 匹配 —— 旧写法 `!body.includes('3050')` 会被 now / lastQuota.fetchedAt 这类毫秒时间戳
+// 的末四位恰好为 3050 伪命中（实测 ~19/20000）。
+const CORE_HOST = 'core';
+const CORE_PORT = '3050';
+// 字段名黑名单（小写比较）：这些名字本身就在描述上游地址/端口，出现即泄漏（哪怕值是 null）。
+const TOPOLOGY_KEYS = new Set([
+  'upstreamproxyurl', 'gateway', 'upstreambaseurl', 'coreurl', 'corehost', 'coreport', 'proxyurl',
+]);
+// 只有「独立 token」形态的 core / 3050 才算泄漏：core 前后不能是标识符字符，3050 前后不能是数字。
+// 时间戳是 13 位且必然作为 number 处理（走下面的数值分支），不会被字符串 token 命中。
+const hostTokenRe = new RegExp(`(^|[^\\w.-])${CORE_HOST}([^\\w-]|$)`);
+const portTokenRe = new RegExp(`(^|[^\\d])${CORE_PORT}([^\\d]|$)`);
+
+/**
+ * 递归遍历已解析的 JSON，收集所有上游拓扑泄漏点。数字只在**恰好等于端口号**时才可疑 ——
+ * 毫秒时间戳是 13 位（~1.7e12），永不等于 3050，这正是新写法对时间戳免疫的根本原因。
+ * @returns {{hits: string[], visited: number}} hits 空 = 干净；visited 用于防止「空遍历假绿」。
+ */
+function scanTopology(value, path = '$', acc = { hits: [], visited: 0 }) {
+  acc.visited += 1;
+  if (Array.isArray(value)) {
+    value.forEach((v, i) => scanTopology(v, `${path}[${i}]`, acc));
+  } else if (value !== null && typeof value === 'object') {
+    for (const [k, v] of Object.entries(value)) {
+      if (TOPOLOGY_KEYS.has(k.toLowerCase())) acc.hits.push(`${path}.${k}（禁用字段名）`);
+      scanTopology(v, `${path}.${k}`, acc);
+    }
+  } else if (typeof value === 'string') {
+    if (hostTokenRe.test(value)) acc.hits.push(`${path}=${JSON.stringify(value)}（含内核主机名 ${CORE_HOST}）`);
+    if (portTokenRe.test(value)) acc.hits.push(`${path}=${JSON.stringify(value)}（含内核端口 ${CORE_PORT}）`);
+  } else if (typeof value === 'number' && value === Number(CORE_PORT)) {
+    acc.hits.push(`${path}=${value}（数值等于内核端口 ${CORE_PORT}）`);
+  }
+  return acc;
+}
+
 test('M1：匿名 GET /api/status 不含 upstreamProxyUrl / gateway / core / 3050', async (t) => {
-  const ctx = await startTestGateway({ config: { upstreamProxyUrl: 'http://core:3050' } });
+  const ctx = await startTestGateway({
+    config: { upstreamProxyUrl: 'http://core:3050' },
+    noInitialRefresh: true,
+  });
   t.after(() => ctx.close());
 
   const res = await request(`${ctx.baseUrl}/api/status`);
   assert.equal(res.status, 200);
-  assert.ok(!res.body.includes('upstreamProxyUrl'), '不得出现 upstreamProxyUrl');
-  assert.ok(!res.body.includes('core'), '不得出现内核主机名 core');
-  assert.ok(!res.body.includes('3050'), '不得出现内核端口 3050');
   const d = JSON.parse(res.body);
+
+  // 顶层两个历史泄漏点的强断言（键必须不存在，不能是 null）。
   assert.equal(d.upstreamProxyUrl, undefined);
   assert.equal(d.gateway, undefined);
+
+  // 全树的语义检查：任何字段名/字符串/端口号形态的拓扑泄漏都要抓住。
+  const { hits, visited } = scanTopology(d);
+  assert.ok(visited >= 30, `拓扑检查只遍历了 ${visited} 个 JSON 节点，walk 可能坏了（不能靠空遍历假绿）`);
+  assert.deepEqual(hits, [], `匿名 /api/status 泄漏了上游拓扑：\n${hits.join('\n')}`);
 });
 
 // ── 后端-M5：keep-alive 时序抬到 65s（反代复用已关连接 → POST EPIPE 502）──
@@ -75,6 +121,9 @@ test('L2：触发 400 insufficient credits → state.json 落盘含该 keyId 的
   const ctx = await startTestGateway({
     accounts: [{ name: '账号A', key: 'user_test_alpha', enabled: true }],
     plans: { 'user_test_alpha': { creditsExhausted: true } },
+    // B20：本用例断言落盘的 creditsExhausted.remaining 是 null（即「撞 400 时还没有快照」）；
+    // 启动即刷会先把 lastQuota 填上，remaining 于是变成 55。显式关掉启动刷新保留原前置。
+    noInitialRefresh: true,
   });
   t.after(() => ctx.close());
 

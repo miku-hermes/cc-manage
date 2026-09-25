@@ -227,6 +227,9 @@ test('B6：没有其它可用账号时返回 502（单账号池 null 语义不�
   const ctx = await startTestGateway({
     accounts: [{ name: '独苗', key: 'user_b6_solo_xxxxxxx', enabled: true }],
     behavior: { failNext5xx: 1 },
+    // B20：该 key 不在 mock 的默认 plan 里，启动即刷会拿到 401 → 账号被判 authInvalid →
+    // 请求直接 503，考不到换号路径。显式关掉启动刷新。
+    noInitialRefresh: true,
   });
   t.after(() => ctx.close());
 
@@ -318,6 +321,8 @@ test('B9：撞额度耗尽 → data/state.json 里该账号 pausedUntil 非 null
   const ctx = await startTestGateway({
     accounts: [{ name: '单号', key: 'user_b9_persist_xxxx', enabled: true }],
     behavior: { quotaError: true },
+    // B20：同上——该 key 不在 mock 默认 plan 里，启动即刷会给它扣一顶 authInvalid 的帽子。
+    noInitialRefresh: true,
   });
   t.after(() => ctx.close());
 

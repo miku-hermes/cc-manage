@@ -74,7 +74,7 @@ fill_gateway_run_args() {
     -e GATEWAY_HOST=0.0.0.0 -e GATEWAY_PORT=3051
     -e UPSTREAM_PROXY_URL=http://cc-manage-core:3050
     -e CC_API_BASE="${CC_API_BASE:-https://api.commandcode.ai}"
-    -e PROTECT_ADMIN_API="${PROTECT_ADMIN_API:-1}"
+    -e PUBLIC_DASHBOARD="${PUBLIC_DASHBOARD:-1}"
     -e NODE_OPTIONS=--max-old-space-size=192
     -v "$(pwd)/accounts.json:/app/accounts.json:ro"
     -v "$(pwd)/keys.json:/app/keys.json:ro"
@@ -160,4 +160,4 @@ fi
 echo "==> 容器健康状态"
 health_of cc-manage-gateway cc-manage-core
 curl -sS "http://127.0.0.1:${GATEWAY_PORT}/ready"; echo
-echo "面板: http://127.0.0.1:${GATEWAY_PORT}/  （PROTECT_ADMIN_API=1 时需在页面填入 keys.json 里的 key）"
+echo "面板: http://127.0.0.1:${GATEWAY_PORT}/  （默认公开只读；PUBLIC_DASHBOARD=0 时需登录 /admin）"

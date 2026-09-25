@@ -2,8 +2,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
 import vm from 'node:vm';
-import { startTestGateway, request, sleep, createDomShim, runInlineScript, pageSource } from './helpers.mjs';
+import {
+  startTestGateway, request, sleep, waitFor, makeTmpDir,
+  createDomShim, runInlineScript, pageSource,
+} from './helpers.mjs';
 
 test('鉴权：无 key → 401，错的 sk-cg- key → 401，正确 key → 200', async (t) => {
   const ctx = await startTestGateway();
@@ -360,7 +365,12 @@ test('超过 64KB 的请求体被完整转发（peek 不能截断 body）', asyn
 });
 
 test('并发请求会按在途数分散到不同账号', async (t) => {
-  const ctx = await startTestGateway({ behavior: { delayMs: 120 } });
+  const ctx = await startTestGateway({
+    behavior: { delayMs: 120 },
+    // B20：本用例假定两个账号「初始同分」才会按在途数分散；启动即刷会写入真实额度快照
+    // （A 剩 0.88 / B 剩 0.12），分差大到在途数扳不回来。显式关掉启动刷新，保留原前置。
+    noInitialRefresh: true,
+  });
   t.after(() => ctx.close());
 
   const one = request(`${ctx.baseUrl}/v1/chat/completions`, {
@@ -569,11 +579,17 @@ test('手动刷新进行中时轮询跳过本轮（同一份 refreshAll 不叠�
 
   const p = ctx.gateway.poller;
   const slow = ctx.gateway.refreshAll();       // 模拟手动刷新（约 120ms）
-  await sleep(150);                            // 期间轮询应该已经到点好几次
+  // B20：这里等「轮询确实跳过了至少一拍」这个条件成立，而不是睡一个固定 150ms
+  // （30ms 间隔 vs 150ms 窗口只留 ~30ms 余量，8 并发下会被压没）。
+  await waitFor(() => p.stats.skips >= 1, {
+    timeoutMs: 3000, intervalMs: 10, label: '手动刷新进行中轮询应至少跳过一拍',
+  });
   assert.ok(p.stats.skips >= 1, `手动刷新进行中轮询应跳过，实际 skips=${p.stats.skips}`);
   await slow;
   const before = p.stats.runs;
-  await sleep(120);
+  await waitFor(() => p.stats.runs > before, {
+    timeoutMs: 3000, intervalMs: 10, label: '手动刷新结束后轮询恢复运行',
+  });
   assert.ok(p.stats.runs > before, '手动刷新结束后轮询恢复运行');
   p.stop();
 });
@@ -594,10 +610,11 @@ test('自适应轮询：定时器真的按间隔触发 refreshAll，stop() 后�
 
   const p = ctx.gateway.poller;
   assert.equal(p.enabled, true);
-  // 等待预算要留足余量：每轮要打 4 个上游接口，机器高负载（CI/并行任务）时
-  // 调度会被拖慢。轮询自身是「跳过重叠轮次」语义（skip-on-overlap），
-  // 所以等得久不会多跑出预期外的轮数，只会让 runs 单调增长到至少 2。
-  await sleep(400);
+  // B20：等「至少触发 2 轮」这个条件成立再断言，而不是睡固定 400ms。轮询自身是
+  // 「跳过重叠轮次」语义（skip-on-overlap），所以等得久不会多跑出预期外的轮数。
+  await waitFor(() => p.stats.runs >= 2, {
+    timeoutMs: 5000, intervalMs: 20, label: '定时器应至少触发 2 轮额度刷新',
+  });
   assert.ok(p.stats.runs >= 2, `定时器应至少触发 2 轮，实际 ${p.stats.runs}`);
   const polls = ctx.upstream.requestsTo((r) => r.url.startsWith('/alpha/')).length;
   assert.ok(polls >= 4, `每轮每个账号 4 个接口，应真的打到了上游，实际 ${polls}`);
@@ -622,6 +639,82 @@ test('配置默认值：新增的自适应字段有默认值，缺失也不会�
   t.after(() => ctx.close());
   assert.equal(ctx.gateway.poller.enabled, true);
   assert.equal(ctx.gateway.poller.nextDelayMs(), 120000);
+});
+
+// ── B20：启动即刷额度（容器每次启动都会走的代码路径）────────────────
+// 背景：startTestGateway 原先写死 `noInitialRefresh: true`，于是 gateway.mjs 里
+//   if (!overrides.noInitialRefresh && accounts.length > 0) refreshAll().then(...)
+// 这条**生产每次启动都会走**的路径在整套测试里从未真正执行过。现在默认对齐生产
+// （默认不关），startTestGateway 还会等这一轮跑完再返回，避免调用方与在途首刷竞争。
+test('B20：默认启动即刷额度——上游收到 /alpha/*，日志出现「首次额度刷新完成」', async (t) => {
+  const ctx = await startTestGateway({ noInitialRefresh: false });
+  t.after(() => ctx.close());
+
+  const alpha = ctx.upstream.requestsTo((r) => r.url.startsWith('/alpha/'));
+  assert.ok(alpha.length > 0, `启动后必须真的打上游额度接口，实际 ${alpha.length} 次`);
+  assert.ok(alpha.every((r) => /^Bearer user_/.test(r.headers.authorization ?? '')),
+    '额度查询必须带账号自己的 key');
+
+  const done = ctx.gateway.events.find((e) => e.message.startsWith('首次额度刷新完成'));
+  assert.ok(done,
+    `必须记录「首次额度刷新完成」事件，实际事件：${ctx.gateway.events.map((e) => e.message).join(' | ')}`);
+  assert.match(done.message, /^首次额度刷新完成：[1-9]\d*\/\d+ 个账号成功/, '两个账号都应刷新成功');
+});
+
+test('B20：启动即刷上游 500 → 启动仍然成功（只 warn，不崩）', async (t) => {
+  const upstream500 = http.createServer((_req, res) => {
+    res.writeHead(500, { 'content-type': 'application/json' });
+    res.end('{"error":{"message":"boom"}}');
+  });
+  await new Promise((r) => upstream500.listen(0, '127.0.0.1', r));
+  const dir = makeTmpDir();
+  let ctx;
+  try {
+    ctx = await startTestGateway({
+      rootDir: dir,
+      // 让首刷的 warn 落到文件里断言（gateway 的 createLogger 同时写 stdout 与 logFile）
+      config: { logLevel: 'warn', logFile: path.join(dir, 'gateway.log') },
+      deps: {
+        startUpstream: async () => ({
+          url: `http://127.0.0.1:${upstream500.address().port}`,
+          close: async () => {},
+        }),
+      },
+    });
+
+    // 启动没有被失败的首刷拖垮：面板照常 200
+    assert.equal((await request(`${ctx.baseUrl}/`)).status, 200, '首刷失败不能拖垮启动');
+
+    // 只 warn：逐账号记一条「额度查询失败」，绝不往上抛
+    const logFile = path.join(dir, 'gateway.log');
+    await waitFor(
+      () => fs.existsSync(logFile) && fs.readFileSync(logFile, 'utf8').includes('额度查询失败'),
+      { timeoutMs: 3000, intervalMs: 20, label: '首刷失败必须写一条 warn（额度查询失败）' },
+    );
+    const logged = fs.readFileSync(logFile, 'utf8');
+    assert.match(logged, /\[warn\] 账号「账号A」额度查询失败: /,
+      `首刷失败必须逐账号 warn，实际日志：${logged.slice(0, 400)}`);
+
+    // 失败的首刷也要记录结果（0/N 成功），不能静默
+    const done = ctx.gateway.events.find((e) => e.message.startsWith('首次额度刷新完成'));
+    assert.ok(done, '失败的首刷也要记录「首次额度刷新完成」事件');
+    assert.match(done.message, /0\/2 个账号成功/);
+  } finally {
+    await ctx?.close();
+    await new Promise((r) => upstream500.close(r));
+  }
+});
+
+test('B20：账号池为空时启动不发任何额度刷新', async (t) => {
+  const ctx = await startTestGateway({ accounts: [], noInitialRefresh: false });
+  t.after(() => ctx.close());
+
+  // 负向断言：给「万一存在」的刷新一点时间暴露出来（accounts.length > 0 才是前置条件）
+  await sleep(200);
+  assert.equal(ctx.upstream.requestsTo((r) => r.url.startsWith('/alpha/')).length, 0,
+    '空账号池不该打上游额度接口');
+  assert.equal(ctx.gateway.events.some((e) => e.message.startsWith('首次额度刷新完成')), false,
+    '空账号池不该有首刷事件');
 });
 
 // ── token 统计（Bug 1）──────────────────────────────────────────────

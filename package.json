@@ -8,7 +8,7 @@
   "scripts": {
     "start": "node gateway.mjs",
     "dev": "node --watch gateway.mjs",
-    "test": "node --test --test-concurrency=8 test/*.test.mjs && npm --prefix vendor/commandcode-proxy test",
+    "test": "node --test --test-timeout=150000 --test-concurrency=8 test/*.test.mjs && npm --prefix vendor/commandcode-proxy test",
     "lint": "node scripts/lint.mjs"
   },
   "engines": {

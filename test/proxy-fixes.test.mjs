@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { startTestGateway, request, sleep } from './helpers.mjs';
+import { startTestGateway, request, sleep, waitFor } from './helpers.mjs';
 
 const AUTH = (ctx) => ({ authorization: `Bearer ${ctx.localKey}`, 'content-type': 'application/json' });
 /** POST 到代理路由（request() 默认是 GET，漏写 method 会落到 404 路由）。 */
@@ -190,7 +190,12 @@ test('F5：超限时 drainRemaining 会置 complete（不再被当成可重放�
 
 // ── F6：换号成功后 sessionAffinity 必须指到真正服务的账号 ─────────────
 test('F6：换号重试成功后 affinity 指向新账号，下个同 session 请求粘到同一个', async (t) => {
-  const ctx = await startTestGateway({ behavior: { failNext5xx: 1 } });
+  const ctx = await startTestGateway({
+    behavior: { failNext5xx: 1 },
+    // B20：启动即刷写入真实快照后，让位阈值（FLOOR/GAP）会把 affinity 让回高余额账号；
+    // 本用例考的是「换号后 affinity 指到真正服务的账号」，需要不带快照的干净池。
+    noInitialRefresh: true,
+  });
   t.after(() => ctx.close());
 
   const session = 'sess-failover-1';
@@ -326,15 +331,21 @@ test('F18：超过在途上限的请求被拒（503 + Retry-After），不会把
 
   const fire = () => post(ctx, '/v1/chat/completions');
   const two = [fire(), fire()];
-  await sleep(80);
+  // B20：等「两个请求都真的进入在途」这个条件成立（而不是睡固定 80ms 赌它们已经到了），
+  // 否则第三个请求可能在在途数还没涨上去时就被放行 → 假绿。
+  await waitFor(() => ctx.gateway.proxy.inflightCount() === 2, {
+    timeoutMs: 2000, intervalMs: 5, label: '两个请求都应进入在途（inflight=2）',
+  });
   const third = await fire();
   assert.equal(third.status, 503, '超出在途上限必须 503');
   assert.equal(third.headers['retry-after'], '1');
   assert.equal(JSON.parse(third.body).error.type, 'overloaded');
   await Promise.all(two);
 
-  // 释放后又能正常处理
-  await sleep(150);
+  // 释放后又能正常处理：等「在途数真的归零」再发，而不是睡 150ms 赌它降下来了
+  await waitFor(() => ctx.gateway.proxy.inflightCount() === 0, {
+    timeoutMs: 2000, intervalMs: 5, label: '请求结束后在途数应归零',
+  });
   assert.equal((await fire()).status, 200, '在途数回落后应恢复正常');
 });
 

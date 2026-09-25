@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import os from 'node:os';
-import { startTestGateway, request, sleep } from './helpers.mjs';
+import { startTestGateway, request, sleep, waitFor } from './helpers.mjs';
 import {
   createSessionSigner,
   createLoginLimiter,
@@ -90,20 +90,33 @@ test('F8：上一轮暂停复查未跑完时，下一拍直接跳过（不放大
     gw.scheduler.runtime(a).pausedUntil = Date.now() - 1000;
   }
   let calls = 0;
+  let finished = 0;
+  let timer = null;
   const original = gw.scheduler.recheckPaused;
   gw.scheduler.recheckPaused = async (opts = {}) => {
     calls++;
-    return original.call(gw.scheduler, {
-      ...opts,
-      fetchQuota: async (a) => { await sleep(300); return opts.fetchQuota(a); },
-    });
+    try {
+      return await original.call(gw.scheduler, {
+        ...opts,
+        fetchQuota: async (a) => { await sleep(300); return opts.fetchQuota(a); },
+      });
+    } finally {
+      finished++;
+      // B20：单轮一跑完就在**这里**收掉打拍定时器。此刻 runPausedRecheck 的 recheckRunning
+      // 还没被清（外层 .finally 在更晚的微任务里），所以不可能出现「单轮跑完之后又打进来的一拍
+      // 开出第二轮」；原来的 700ms 固定 sleep 与 ≈600ms 单轮之间只有 ~100ms 余量，负载高时
+      // 会出现 calls=2 的偶发红。
+      if (finished === 1) clearInterval(timer);
+    }
   };
 
-  // 间隔 100ms，单轮 ≈600ms：没有互斥时 600ms 内会叠 6 轮
-  const timer = setInterval(() => gw.runPausedRecheck(), 100);
-  await sleep(700);
+  // 间隔 100ms，单轮 ≈600ms：没有互斥时这 600ms 内会叠 6 轮（下面每一拍都应被挡）。
+  timer = setInterval(() => gw.runPausedRecheck(), 100);
+  // B20：等「单轮真的跑完」这个条件成立，而不是睡固定 700ms 赌它跑完了。
+  await waitFor(() => finished >= 1, {
+    timeoutMs: 5000, intervalMs: 20, label: '暂停复查单轮应跑完（≈600ms）',
+  });
   clearInterval(timer);
-  await sleep(400);
 
   assert.equal(calls, 1, `一轮没跑完就不能再开一轮，实际 ${calls} 轮`);
 });
@@ -409,11 +422,25 @@ test('F20：匿名刷新节流不再是一个全局单变量（分来源 + 全�
   assert.equal(second.status, 200);
   assert.equal(JSON.parse(second.body).throttled, true, '同来源紧接着再刷应被节流');
 
-  // 节流状态按来源分桶，不是一个全局单变量；另有全局兜底间隔
-  const src = fs.readFileSync(new URL('../gateway.mjs', import.meta.url), 'utf8');
-  assert.match(src, /lastPublicRefreshBySource/, '节流必须按来源分桶（历史 bug：单个全局变量）');
-  const globalMin = Number((src.match(/const PUBLIC_REFRESH_GLOBAL_MIN_MS = (\d+)/) ?? [])[1]);
-  assert.ok(globalMin >= 1000, `必须有全局兜底间隔，实际 ${globalMin}`);
+  // B20：以下两条不再从 gateway.mjs 源码正则抠常量/变量名，改成**行为断言**。
+  // 127.0.0.0/8 默认在可信反代集合里，所以带 x-forwarded-for 的请求会被按真实来源分桶。
+  const refreshFrom = (ip) => request(`${ctx.baseUrl}/api/accounts/refresh`, {
+    method: 'POST', headers: { 'x-forwarded-for': ip },
+  });
+
+  // ① 全局兜底：另一个来源在全局兜底窗口内同样被节流（分来源桶之外还有一层全局上限）。
+  const other = JSON.parse((await refreshFrom('203.0.113.9')).body);
+  assert.equal(other.throttled, true, '不同来源在全局兜底窗口内也必须被节流');
+
+  // ② 分来源桶（不是一个全局单变量）：全局窗口过去后新来源能刷，而老来源仍在自己的
+  //    单来源窗口内被挡。这条断言直接钉住「单来源窗口 > 全局兜底窗口」这个运行时关系 ——
+  //    反过来（全局窗口 ≥ 单来源窗口）分来源桶就没有意义了。
+  await waitFor(async () => {
+    const r = JSON.parse((await refreshFrom('203.0.113.9')).body);
+    return r.throttled === undefined;
+  }, { timeoutMs: 8000, intervalMs: 100, label: '全局兜底窗口过去后，新来源应能刷新（分来源桶生效）' });
+  const again = JSON.parse((await request(`${ctx.baseUrl}/api/accounts/refresh`, { method: 'POST' })).body);
+  assert.equal(again.throttled, true, '老来源仍在单来源窗口内：节流必须按来源独立计时');
 });
 
 test('F20：匿名刷新不会让上游被无限放大（节流后不再打上游）', async (t) => {

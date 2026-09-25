@@ -2,17 +2,30 @@
 // 零依赖 lint：只用 node: 内置模块（child_process / fs / path / url）。
 // 四类检查：
 //   1. 语法        —— node --check <file>，非 0 退出即失败（抓没被测试 import 的文件里的语法错误）。
+//                     B20：vendor/ 也纳入（部署出去的 core 内核同样是我们的产物，语法错了要在
+//                     CI 里红，而不是等容器起不来）。
 //   2. debugger    —— 源码里不得出现 debugger 语句。
-//   3. .only(      —— 测试文件里不得出现 .only( 调用（会静默跳过其余用例）。
-//   4. console.log(—— src/ 与 gateway.mjs 必须走 createLogger，不得直接 console.log。
+//   3. .only(      —— 测试文件里不得出现 .only( 调用（会静默跳过其余用例）。B20：改为对
+//                     整个文件文本用 /\b(?:test|it|describe)\s*\.only\s*\(/ 扫描，跨行/带空格
+//                     的形态（test\n.only(、test.only (）也拦得住；逐行正则会漏掉这些。
+//   4. console.log(—— src/、gateway.mjs 与 public/js/** 必须走 createLogger / 页面自己的
+//                     日志策略，不得直接 console.log（B20 补上面板脚本：它直接决定线上页面的
+//                     控制台行为）。vendor/ 是别人的代码，跳过这一条。
+//
+// B20：walk() 还要有**下界断言** —— 目录改名 / 被整体排除时 walk 会「空跑却报绿」，
+// 那种绿比红更危险（lint 形同虚设）。检查文件数低于 MIN_FILES 直接失败。
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const EXCLUDE_DIRS = new Set(['vendor', 'node_modules', '.git', 'data', 'config']);
+// vendor 不再整体排除：它的 .mjs/.js 也要过语法检查（见文件头第 1 条）。
+const EXCLUDE_DIRS = new Set(['node_modules', '.git', 'data', 'config']);
 const EXTENSIONS = ['.mjs', '.js'];
+// 检查文件数的下界：当前仓库 ~80 个（含 vendor 4 个）。目录改名/被排除时 walk() 会返回
+// 远小于它的集合，这时必须失败而不是打印「lint ok」。
+const MIN_FILES = 60;
 
 function walk(dir, out) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -33,11 +46,21 @@ function rel(abs) {
   return path.relative(ROOT, abs).split(path.sep).join('/');
 }
 
+if (files.length < MIN_FILES) {
+  console.error(`lint 失败：只走到 ${files.length} 个待检查文件（下界 ${MIN_FILES}）——`
+    + '目录结构变了或 EXCLUDE_DIRS/walk() 被改坏，lint 不能「空跑报绿」。');
+  process.exit(1);
+}
+
 // 整行注释（// 或块注释续行 *）跳过：只用于 .only / console.log 这类文本检查，避免误判文案。
 function isCommentLine(line) {
   const t = line.trim();
   return t.startsWith('//') || t.startsWith('*') || t.startsWith('/*');
 }
+
+// .only( 的整文件扫描（跨行也能命中）。命中后要定位到行做「整行注释跳过」，
+// 否则一句「别写 test.only(」的注释会把 lint 自己判红。
+const ONLY_RE = /\b(?:test|it|describe)\s*\.only\s*\(/g;
 
 for (const abs of files) {
   const name = rel(abs);
@@ -56,6 +79,7 @@ for (const abs of files) {
 
   const isTest = name.startsWith('test/');
   const isSrcCore = name.startsWith('src/') || name === 'gateway.mjs';
+  const isPublicJs = name.startsWith('public/js/');   // B20：面板脚本也在线上跑，同样不许留调试输出
 
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
@@ -66,13 +90,21 @@ for (const abs of files) {
     if (/(?:^|[;{}]\s*|\s)debugger\s*;?\s*$/.test(line)) {
       violations.push({ file: name, line: i + 1, message: '禁止 debugger 语句' });
     }
-    // 3) .only(
-    if (isTest && /\.only\(/.test(line)) {
-      violations.push({ file: name, line: i + 1, message: '测试里禁止 .only( 调用' });
-    }
     // 4) console.log(
-    if (isSrcCore && /console\.log\(/.test(line)) {
-      violations.push({ file: name, line: i + 1, message: 'src/ 与 gateway.mjs 禁止 console.log(，请走 createLogger' });
+    if ((isSrcCore || isPublicJs) && /console\.log\(/.test(line)) {
+      const where = isSrcCore ? 'src/ 与 gateway.mjs' : 'public/js/ 面板脚本';
+      violations.push({ file: name, line: i + 1, message: `${where}禁止 console.log(，请走 createLogger / 页面统一的日志策略` });
+    }
+  }
+
+  // 3) .only(：整文件扫描（跨行/任意空白形态），命中行若是注释则跳过。
+  if (isTest) {
+    ONLY_RE.lastIndex = 0;
+    let m;
+    while ((m = ONLY_RE.exec(text))) {
+      const lineNo = text.slice(0, m.index).split('\n').length;
+      if (isCommentLine(lines[lineNo - 1] ?? '')) continue;
+      violations.push({ file: name, line: lineNo, message: '测试里禁止 .only( 调用（会静默跳过其余用例）' });
     }
   }
 }
@@ -83,4 +115,4 @@ if (violations.length > 0) {
   process.exit(1);
 }
 
-console.log(`lint ok：检查 ${files.length} 个文件，0 处问题（语法 / debugger / .only / console.log）`);
+console.log(`lint ok：检查 ${files.length} 个文件（含 vendor 语法），0 处问题（语法 / debugger / .only / console.log）`);

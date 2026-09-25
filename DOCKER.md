@@ -89,7 +89,7 @@ services:
       GATEWAY_PORT: "3051"
       UPSTREAM_PROXY_URL: "http://core:3050"
       CC_API_BASE: "${CC_API_BASE:-https://api.commandcode.ai}"
-      PROTECT_ADMIN_API: "${PROTECT_ADMIN_API:-1}"     # 容器内绑 0.0.0.0，默认开启保护
+      PUBLIC_DASHBOARD: "${PUBLIC_DASHBOARD:-1}"       # 前台只读面板公开；设 0 则需登录后台
       QUOTA_POLL_INTERVAL_MS: "${QUOTA_POLL_INTERVAL_MS:-600000}"
       QUOTA_ACTIVE_POLL_INTERVAL_MS: "${QUOTA_ACTIVE_POLL_INTERVAL_MS:-60000}"
       QUOTA_ACTIVE_WINDOW_MS: "${QUOTA_ACTIVE_WINDOW_MS:-300000}"
@@ -115,8 +115,11 @@ volumes:
 说明（要写进 README）：
 - `core` **不映射宿主端口**是刻意设计：内核本身不做账号池，暴露出去等于绕过网关直接用一个 key。
 - 宿主只绑 `127.0.0.1:3051`，公网访问需要你自己在前面再放一个 nginx（README 里给一句提示即可，不用展开）。
-- `PROTECT_ADMIN_API=1` 时面板/管理 API 也要带 `sk-cg-` key；如果你只在宿主本机用、想要面板免密，
-  用环境变量覆盖 `PROTECT_ADMIN_API=0` 并在 README 里写明风险（同机其他用户可读）。
+- `PUBLIC_DASHBOARD=1`（默认）让 `/` 与 `/api/status` 公开只读 —— 公开的只有账号备注名 / `keyId` /
+  额度百分比与统计；**不下发** `keyPrefix`、完整 key、上游账号身份（`lastQuota.displayName`）、
+  `lastError` 原文；要改配置或看全量信息必须登录 `/admin`（`/api/admin/*` 只认登录 session，
+  `sk-cg-` key 无效）。若连只读面板也不想公开，用 `PUBLIC_DASHBOARD=0`（面板与 `/api/status`
+  都要先登录）。
 
 ## 4. `src/store.mjs` 健壮性小改
 
@@ -156,8 +159,8 @@ config.local.json
 GATEWAY_BIND_PORT=3051
 # 上游地址
 CC_API_BASE=https://api.commandcode.ai
-# 管理 API 是否要求本地 key（1=要求；只在 127.0.0.1 自用时可设 0）
-PROTECT_ADMIN_API=1
+# 前台只读面板是否公开（1=公开只读，0=需要登录后台才能看；默认 1）
+PUBLIC_DASHBOARD=1
 # 额度轮询间隔（毫秒）：空闲间隔，设 0 完全关闭轮询
 QUOTA_POLL_INTERVAL_MS=600000
 # 最近 5 分钟内有代理请求时改用的活跃间隔（毫秒）
@@ -186,7 +189,7 @@ LOG_LEVEL=info
 3. `docker compose up -d --build`。
 4. 健康检查：`docker compose ps`（期望两行 healthy）+ `curl -s 127.0.0.1:3051/health`。
 5. 调用示例：带 `Authorization: Bearer sk-cg-xxx` 打 `/v1/chat/completions`（流式给一条 `curl -N`）。
-6. 面板：`http://127.0.0.1:3051/`（带 key 访问的说明；`PROTECT_ADMIN_API=0` 时免密）。
+6. 面板：`http://127.0.0.1:3051/`（默认公开只读，无需任何凭证；`PUBLIC_DASHBOARD=0` 时要求登录 `/admin`。前台没有 key 输入框，额度自动轮询）。
 7. **密钥安全说明**：key 只通过只读 bind mount 进容器，镜像内 `/app` 不含任何密钥文件；换 key 只需改宿主文件后 `docker compose restart gateway`。
 8. 日志与排障：`docker compose logs -f gateway` / `core`；常见坑（端口占用、`core` 未 healthy 时 gateway 会等）。
 9. 内存提示：本机 2GB，已通过 `mem_limit` + `CC_MAX_BODY_MB` + `CC_MAX_INFLIGHT` 三重封顶；公网/高并发要另加 nginx 限制。
