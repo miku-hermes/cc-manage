@@ -464,7 +464,11 @@ export function createStore({ rootDir = process.cwd(), env = process.env, log = 
       accounts[id] = { ...rt, concurrency: 0 };
     }
     // pool 一并落盘：下次加载据此识别「删掉又加回来的同 keyId 新账号」（B4）。
-    const pool = Array.isArray(state.pool) ? state.pool : [];
+    // H3：pool 未知（null，例如 state.json 损坏后重建）时必须落盘为 null —— 绝不能写成 []。
+    // 空数组会让下次 loadState 把每个既存账号都当成「删掉又加回来的新账号」，
+    // 于是 pruneState 的 B4 分支静默清空 authInvalid / pausedUntil / creditsExhausted。
+    // 写 null 会让 pruneState 在「池成员未知」时跳过 B4 判定（宁可不清理，也不能误清）。
+    const pool = Array.isArray(state.pool) ? state.pool : null;
     atomicWrite(stateFile, JSON.stringify({ accounts, stats: state.stats, pool, history: state.history }, null, 2), { log });
   }
 

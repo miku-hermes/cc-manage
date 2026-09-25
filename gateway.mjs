@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadConfig } from './src/config.mjs';
+import { loadConfig, configWarnings } from './src/config.mjs';
 import { createStore, CC_KEY_PREFIX, LOCAL_KEY_PREFIX } from './src/store.mjs';
 import { createHistory, HISTORY_BUCKET_MS, HISTORY_TICK_MS } from './src/history.mjs';
 import { createLogger, keyIdOf, keyPrefixOf, redact, sanitizeForLog } from './src/log.mjs';
@@ -92,8 +92,12 @@ function peekSessionFromBody(chunks) {
 }
 
 export async function startGateway(overrides = {}) {
-  const config = { ...loadConfig(overrides.configPath ?? path.join(ROOT, 'config.json'), overrides.env ?? process.env), ...(overrides.config ?? {}) };
+  // M1：loadConfig 会拒绝 config.json 里类型不合法的安全开关（直接抛错阻止启动）；
+  // 未知键 / 无法解析的值收集成 warnings，这里在 logger 就绪后打出来，别静默吞掉。
+  const loadedConfig = loadConfig(overrides.configPath ?? path.join(ROOT, 'config.json'), overrides.env ?? process.env);
+  const config = { ...loadedConfig, ...(overrides.config ?? {}) };
   const log = createLogger({ level: config.logLevel, file: config.logFile });
+  for (const w of configWarnings(loadedConfig)) log.warn?.(`配置告警：${w}`);
   // 可注入的墙钟：测试用可控 now 驱动探针 TTL / 退避，生产默认 Date.now。
   const nowFn = typeof overrides.now === 'function' ? overrides.now : () => Date.now();
 

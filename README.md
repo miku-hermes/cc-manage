@@ -162,6 +162,7 @@ docker compose up -d --force-recreate gateway   # 恢复默认
   "quotaActiveWindowMs": 300000,
   "pausedRecheckIntervalMs": 60000,
   "quotaTimeoutMs": 15000,
+  "upstreamTimeoutMs": 300000,
   "sessionAffinityTtlMs": 1800000,
   "allowPassthrough": false,
   "publicDashboard": true,
@@ -172,11 +173,23 @@ docker compose up -d --force-recreate gateway   # 恢复默认
 }
 ```
 
+**类型校验（M1）**：`config.json` 的取值不再原样塞进配置 —— 与环境变量走**同一套类型规则**
+（boolean / number / string / list），所以写字符串 `"false"` 也会解析成布尔 `false`
+（`"1"/"0"/"true"/"false"/"yes"/"no"/"on"/"off"` 均可；数字/数组字面量按对应类型解析）。
+
+- **未知键**（拼错的键，如 `quoatPollIntervalMs`）会产生告警并在启动时打印，**不会**静默并入配置。
+- **安全开关**（`publicDashboard` / `protectAdminApi` / `allowPassthrough` / `creditsProbeEnabled`）
+  在 `config.json` 里给成**非布尔且无法无歧义解析**的值（数字、对象、数组、无法识别的字符串）时
+  **直接拒绝启动**并报出「哪个键 / 期望什么类型 / 收到什么」，杜绝「以为关了其实没关」。
+  因为网关对它们的判定是严格比较（如 `config.publicDashboard !== false`），字符串 `"false"`
+  不等于布尔 `false` 会让开关被静默绕过。
+
 - 额度轮询是**自适应**的：最近 `quotaActiveWindowMs`（默认 5 分钟）内有代理请求 → 用 `quotaActivePollIntervalMs`（默认 60 秒）同步 CC；一直空闲 → 退回 `quotaPollIntervalMs`（默认 600 秒）。实现是**单个自调度 `setTimeout`**，每轮跑完再决定下一次延迟；上一轮没跑完则跳过本轮。`quotaPollIntervalMs: 0` 表示**完全关闭**轮询（`quotaActivePollIntervalMs: 0` 则退化为纯空闲间隔）。
 - `publicDashboard`（`PUBLIC_DASHBOARD`）：`1`（默认）让 `/` 与 `/api/status` 公开只读；`0` 则要求后台登录 session。
 - 已废弃的 `protectAdminApi`（`PROTECT_ADMIN_API`）：旧版「面板接口要 `sk-cg-` key」开关，仅为老部署兼容保留；新部署请用 `PUBLIC_DASHBOARD=0`。
+- `upstreamTimeoutMs`（`UPSTREAM_TIMEOUT_MS`，默认 300000）：转到上游的请求超时（`src/proxy.mjs` 读取）。
 
-环境变量覆盖：`MAX_INFLIGHT` `GATEWAY_PORT` `GATEWAY_HOST` `UPSTREAM_PROXY_URL` `CC_API_BASE` `QUOTA_POLL_INTERVAL_MS` `QUOTA_ACTIVE_POLL_INTERVAL_MS` `QUOTA_ACTIVE_WINDOW_MS` `PAUSED_RECHECK_INTERVAL_MS` `QUOTA_TIMEOUT_MS` `SESSION_AFFINITY_TTL_MS` `MAX_BODY_BYTES` `ALLOW_PASSTHROUGH` `PUBLIC_DASHBOARD` `LOG_FILE` `LOG_LEVEL`。
+环境变量覆盖：`MAX_INFLIGHT` `GATEWAY_PORT` `GATEWAY_HOST` `UPSTREAM_PROXY_URL` `CC_API_BASE` `QUOTA_POLL_INTERVAL_MS` `QUOTA_ACTIVE_POLL_INTERVAL_MS` `QUOTA_ACTIVE_WINDOW_MS` `PAUSED_RECHECK_INTERVAL_MS` `QUOTA_TIMEOUT_MS` `UPSTREAM_TIMEOUT_MS` `SESSION_AFFINITY_TTL_MS` `MAX_BODY_BYTES` `ALLOW_PASSTHROUGH` `PUBLIC_DASHBOARD` `LOG_FILE` `LOG_LEVEL`。
 
 ### 账号池 `accounts.json`
 

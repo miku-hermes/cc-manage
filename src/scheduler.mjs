@@ -10,6 +10,12 @@ export const QUOTA_RETRY_BACKOFF_MS = 60 * 1000;
 // 查询失败不能按「窗口耗尽」顺延 5 小时，否则上游额度接口故障 = 账号永久停用。
 export const QUOTA_RECHECK_MAX_BACKOFF_MS = 15 * 60 * 1000;
 export const QUOTA_RECHECK_FAIL_OPEN_AT = 5;
+// H1：fail-open 的宽限期。连续失败达标后仅把 pausedUntil 清空是**死代码** —— 若旧快照
+// 仍显示窗口耗尽、或账号带 creditsExhausted 标记，isAvailable 照样判 false，账号永远回
+// 不到池子，日志却声称「已恢复」。因此同时设 failOpenUntil = now + 该宽限，宽限期内
+// isAvailable 忽略「基于旧快照」的耗尽判定，按中性比例参与调度
+//（宁可撞一次上游，也不要把账号永久关在门外），宽限过后恢复原判。
+export const FAIL_OPEN_GRACE_MS = 10 * 60 * 1000;
 // 快照过旧（B8）：lastQuota 可能来自任意久以前（重启后从 state.json 恢复），
 // 默认取「2 × 空闲轮询间隔」；调度器自身拿不到轮询配置时回退 20 分钟。
 export const DEFAULT_SNAPSHOT_STALE_MS = 20 * 60 * 1000;
@@ -45,50 +51,83 @@ export function isSnapshotStale(q, now = Date.now(), staleMs = DEFAULT_SNAPSHOT_
  * 二者都看不见 —— 账号既被判定「可用」，又因 5h 剩余 100% 拿到最高分被优先选中，
  * 于是每次路由都先撞一次 429 再 failover。
  */
+/** H2：上游点名了超限窗口、但我们认不出它属于哪个已知槽位时的哨兵。 */
+const UNKNOWN_EXCEEDED_WINDOW = Symbol('unknown-exceeded-window');
+
 /**
  * B4：把上游 `exceededWindow` 点名的窗口对应的键名归一化。
- * 实测顶层 exceeded 是窗口名字符串（如 "weekly" / "fiveHour"）；这里做宽松匹配，
- * 认不出来又找不到同名槽位时返回 null。
+ * 实测顶层 exceeded 是窗口名字符串（如 "weekly" / "fiveHour"）；这里做宽松匹配。
+ *
+ * H2：认不出来时**不再返回 null**，而是返回哨兵 UNKNOWN_EXCEEDED_WINDOW ——
+ * 上游已经明确「有窗口超限」，认不出名字也应保守判不可用，绝不能因为解析不了
+ * 就把账号当作「可用 + 剩 100%」放回池子反复吃 429。
+ * 中文别名：5 小时窗口除了 five / hour / 5h 还要认「5 小时」（含「5小时额度」后缀写法），
+ * 周窗口认「周」，月窗口认「月」。
  */
 function exceededSlotKey(quota) {
   const name = quota?.exceededWindow;
   if (typeof name !== 'string' || !name) return null;
-  if (/five|hour|5h/i.test(name)) return 'fiveHour';
+  if (/five|hour|5\s*小时|5h/i.test(name)) return 'fiveHour';
   if (/week|周/i.test(name)) return 'weekly';
   if (/month|月/i.test(name)) return 'monthly';
-  return Object.prototype.hasOwnProperty.call(quota, name) ? name : null;
+  if (Object.prototype.hasOwnProperty.call(quota, name)) return name;
+  return UNKNOWN_EXCEEDED_WINDOW;
 }
 
 /**
  * B4：`exceededWindow` 点名的窗口对象（对象缺失时给一个 exceeded:true 的占位）。
  * 上游点名是「哪个窗口超限」的权威判据；若只因为它省略了窗口对象就不纳入可用性判定，
  * 账号会被判「可用 + 剩 98%」并拿最高优先级，全部流量打到已知超限的账号。
+ *
+ * H2：`label` 保留上游的**原始窗口名**，方便排障（面板/日志能看到 "daily" 这类又叫不出
+ * 槽位、又被判不可用的原因）。不认识的窗口同样产出 exceeded 占位窗口。
  */
 function exceededWindowSlot(quota) {
   const key = exceededSlotKey(quota);
-  if (!key) return null;
+  if (key === null) return null;
+  const rawLabel = String(quota.exceededWindow);
+  if (key === UNKNOWN_EXCEEDED_WINDOW) {
+    return { exceeded: true, used: null, cap: 0, usedRatio: null, resetAt: null, incomplete: true, label: rawLabel };
+  }
   const w = quota?.[key];
-  if (w && typeof w === 'object') return { ...w, exceeded: true };
-  return { exceeded: true, used: null, cap: 0, usedRatio: null, resetAt: null, incomplete: true };
+  if (w && typeof w === 'object') return { ...w, exceeded: true, label: rawLabel };
+  return { exceeded: true, used: null, cap: 0, usedRatio: null, resetAt: null, incomplete: true, label: rawLabel };
 }
 
 export function quotaWindows(quota) {
   const out = [];
   const seen = new Set();
+  const byKey = new Map();   // H2：已纳入的已知槽位 → out 下标，用于「点名 = 真实窗口」时去重
   const push = (w) => {
     if (w && typeof w === 'object' && !seen.has(w)) {
       seen.add(w);
       out.push(w);
+      return true;
     }
+    return false;
   };
-  for (const w of [quota?.fiveHour, quota?.weekly]) {
+  for (const key of ['fiveHour', 'weekly']) {
+    const w = quota?.[key];
     // 审查#7：缺有效 cap 的窗口 usedRatio=null，早先直接被这里过滤掉 ——
     // 于是上游**明确**的 exceeded=true 反而不参与可用性判断。判定条件：
     // 有 usedRatio（可算比例）**或** 上游点了 exceeded（权威超限标记）。
-    if (w && (typeof w.usedRatio === 'number' || w.exceeded === true)) push(w);
+    if (w && (typeof w.usedRatio === 'number' || w.exceeded === true) && push(w)) {
+      byKey.set(key, out.length - 1);
+    }
   }
   // B4：上游点名的超限窗口也纳入（对象缺失时用占位窗口），可用性判定为 false。
-  push(exceededWindowSlot(quota));
+  const key = exceededSlotKey(quota);
+  if (key !== null) {
+    const existing = typeof key === 'string' ? byKey.get(key) : undefined;
+    if (existing !== undefined) {
+      // H2：点名的就是已纳入的真实窗口 → 原地补 exceeded 标记，绝不重复 push。
+      // 复制一份再替换：不要污染调用方持有的快照对象。
+      out[existing] = { ...out[existing], exceeded: true, label: String(quota.exceededWindow) };
+      seen.add(out[existing]);
+    } else {
+      push(exceededWindowSlot(quota));
+    }
+  }
   return out;
 }
 
@@ -262,6 +301,8 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
     authInvalid: false, authInvalidReason: null, authInvalidAt: null,
     // 额度复查连续失败次数（审查 A3）：用于指数退避与 fail-open
     quotaRecheckFails: 0,
+    // H1：fail-open 宽限期的截止时刻。> now 时忽略「旧快照耗尽 / creditsExhausted」判定。
+    failOpenUntil: null,
   });
 
   /** 账号是否还在池子里（热删除后即为 false）。 */
@@ -343,6 +384,10 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
     if (rt.pausedUntil && rt.pausedUntil > now) return false;
     if (rt.rateLimitedUntil && rt.rateLimitedUntil > now) return false;
     if (rt.authInvalid) return false;
+    // H1：fail-open 宽限期内，忽略「基于旧快照」的耗尽判定（creditsExhausted / 窗口耗尽）。
+    // 上游额度接口连续失败时，旧快照已经不可信 —— 不能拿它把账号永久关在门外；
+    // 让真实上游来裁决（宁可撞一次 429，也不至于整池停摆）。宽限期过后恢复原判。
+    if (Number.isFinite(rt.failOpenUntil) && rt.failOpenUntil > now) return true;
     if (rt.creditsExhausted) return false;
     const q = rt.lastQuota;
     // 任一窗口超限即不可用：只看 5h 会让「周额度已打满」的账号被继续调度。
@@ -360,7 +405,11 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
    * 也不判不可用（避免全池 503；刷新由 A4 的「全池无可用 → 自动刷新」负责）。
    */
   function effectiveRatio(account, now = Date.now()) {
-    const q = runtime(account).lastQuota;
+    const rt = runtime(account);
+    // H1：fail-open 宽限期内旧快照不可信，统一按中性比例参与调度 ——
+    // 既不能因旧快照显示耗尽而拿 0 分被永远排在最后，也不能拿满分抢流量。
+    if (Number.isFinite(rt.failOpenUntil) && rt.failOpenUntil > now) return NEUTRAL_RATIO;
+    const q = rt.lastQuota;
     return isSnapshotStale(q, now, snapshotStaleMs) ? NEUTRAL_RATIO : remainingRatio(q);
   }
 
@@ -448,6 +497,8 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
       rt.lastError = null;
       rt.lastErrorAt = null;
       rt.rateLimitedUntil = null;
+      // H1：查询成功 = 重新拿到可信快照，fail-open 宽限期到此为止（继续按新快照判定）。
+      rt.failOpenUntil = null;
       // 审查#3：**绝不**在这里动 authInvalid。额度查询成功不代表出错的那条鉴权路径恢复了，
       // 失败更不能把它重置成 false —— 两者都会让 markAuthInvalid() 的停用被下一轮额度
       // 刷新悄悄撤销。恢复只走明确路径：clearAuthInvalid()（上游鉴权类请求成功时调用）。
@@ -646,8 +697,18 @@ export function createScheduler({ accounts = [], state, ttlMs = 1800000, maxAffi
         if (fails >= QUOTA_RECHECK_FAIL_OPEN_AT) {
           rt.pausedUntil = null;
           rt.quotaRecheckFails = 0;
-          recovered.push(account.keyId);
-          logger?.warn?.(`账号「${account.name}」额度复查连续失败 ${fails} 次，恢复调度（按旧快照评估）`);
+          // H1：只清 pausedUntil 是死代码（旧快照耗尽 / creditsExhausted 仍会判不可用）。
+          // 同时开一个宽限期，让 isAvailable 忽略「基于旧快照」的判定。
+          rt.failOpenUntil = now + FAIL_OPEN_GRACE_MS;
+          // recovered 只收「确实回到池子」的账号；宽限期也救不回来的（如 authInvalid）
+          // 绝不进 recovered —— 日志同样要如实说明，不能谎报「已恢复」。
+          if (isAvailable(account, now)) {
+            recovered.push(account.keyId);
+            logger?.warn?.(`账号「${account.name}」额度复查连续失败 ${fails} 次，强制放行 ${Math.round(FAIL_OPEN_GRACE_MS / 60000)} 分钟（按中性比例参与调度）`);
+          } else {
+            const why = rt.authInvalid ? '鉴权失效' : (rt.pausedUntil ? '仍在暂停' : '仍被其他标记停用');
+            logger?.warn?.(`账号「${account.name}」额度复查连续失败 ${fails} 次，但${why}，未恢复调度`);
+          }
           continue;
         }
         const backoff = quotaFetchBackoffMs(fails);

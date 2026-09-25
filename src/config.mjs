@@ -16,6 +16,9 @@ export const DEFAULTS = {
   quotaActiveWindowMs: 300000,
   pausedRecheckIntervalMs: 60000,
   quotaTimeoutMs: 15000,
+  // 转到上游的请求超时（proxy.mjs 读取；缺省 5 分钟）。此前只在 proxy.mjs 里有 ?? 300000 兜底，
+  // DEFAULTS / ENV_MAP 都没有它 —— 改了不生效也不报错，这里补齐。
+  upstreamTimeoutMs: 300000,
   // 余额见底时的主动探针：余额低于 creditsProbeBelowUsd（或上游 belowThreshold=true）
   // 就打一发 max_tokens=1 的最小推理，用上游的回答判定账号还能不能用。
   // 阈值只决定「什么时候去问」，不决定结论 —— 上游的余额规则不公开，自己拍阈值会误判。
@@ -73,6 +76,7 @@ const ENV_MAP = {
   QUOTA_ACTIVE_WINDOW_MS: ['quotaActiveWindowMs', 'number'],
   PAUSED_RECHECK_INTERVAL_MS: ['pausedRecheckIntervalMs', 'number'],
   QUOTA_TIMEOUT_MS: ['quotaTimeoutMs', 'number'],
+  UPSTREAM_TIMEOUT_MS: ['upstreamTimeoutMs', 'number'],
   CREDITS_PROBE_ENABLED: ['creditsProbeEnabled', 'boolean'],
   CREDITS_PROBE_BELOW_USD: ['creditsProbeBelowUsd', 'number'],
   CREDITS_PROBE_BELOW_RATIO: ['creditsProbeBelowRatio', 'number'],
@@ -110,9 +114,82 @@ function coerce(value, type) {
   return String(value);
 }
 
-/** 加载配置。configPath 为空 / 文件不存在时全部走默认值。 */
-export function loadConfig(configPath = path.resolve('config.json'), env = process.env) {
+/** field → 期望类型（复用 ENV_MAP 的类型信息，env 与 config.json 走同一套规则）。 */
+const FIELD_TYPE = Object.fromEntries(Object.values(ENV_MAP).map(([field, type]) => [field, type]));
+/** DEFAULTS 里出现的合法配置键；不在其中且出现在 config.json 的键一律 warn 并忽略。 */
+const KNOWN_FIELDS = new Set(Object.keys(DEFAULTS));
+
+/**
+ * 安全开关（M1）：这些键在 config.json 里给错类型会被**静默绕过** ——
+ * gateway 用严格比较（`config.publicDashboard !== false`）判定，字符串 "false" 不等于布尔 false，
+ * 于是以为关了面板其实还开着。这里对它们做严格校验：只接受布尔或可无歧义解析的布尔字面量，
+ * 其余（数字 / 对象 / 数组 / 无法识别的字符串）直接拒绝启动。
+ */
+const SECURITY_BOOL_FIELDS = new Set(['publicDashboard', 'protectAdminApi', 'allowPassthrough', 'creditsProbeEnabled']);
+const BOOL_LITERALS = new Set(['1', '0', 'true', 'false', 'yes', 'no', 'on', 'off']);
+
+/**
+ * config.json 的取值归一（M1）：与 env 路径同一套类型规则（boolean/number/string/list），
+ * 让 `"false"`（字符串）也能解析成布尔 false。返回 undefined 表示「类型不匹配 / 无法解析」，
+ * 由调用方决定是拒绝启动（安全开关）还是 warn + 忽略（普通键）。
+ */
+function coerceConfigValue(value, type) {
+  // 字符串输入直接复用 env 的 coerce()，保证两条路径行为完全一致。
+  if (typeof value === 'string') {
+    if (type === 'boolean') {
+      const v = value.trim().toLowerCase();
+      if (!BOOL_LITERALS.has(v)) return undefined;
+      return coerce(v, 'boolean');
+    }
+    return coerce(value, type);
+  }
+  if (type === 'boolean') return typeof value === 'boolean' ? value : undefined;
+  if (type === 'number') return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+  if (type === 'list') {
+    if (!Array.isArray(value)) return undefined;
+    return value.map((x) => String(x).trim()).filter(Boolean);
+  }
+  // string：只接受标量，对象/数组明确拒绝（避免 [object Object] 混进配置）。
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return undefined;
+}
+
+/** 报错/告警里的人类可读类型描述。 */
+function describeValue(value) {
+  if (Array.isArray(value)) return `array(${JSON.stringify(value)})`;
+  if (value === null) return 'null';
+  const t = typeof value;
+  if (t === 'string' || t === 'number' || t === 'boolean') return `${t}(${JSON.stringify(value)})`;
+  return t;
+}
+
+// 挂 warnings 的弱表：不往 cfg 上塞可枚举字段（否则会被 `{ ...cfg }` 带进运行期配置）。
+const CONFIG_WARNINGS = new WeakMap();
+
+/** 取 loadConfig() 收集到的 config.json 告警（未知键 / 无法解析的值），供启动时打印。 */
+export function configWarnings(cfg) {
+  return CONFIG_WARNINGS.get(cfg) ?? [];
+}
+
+/**
+ * 加载配置。configPath 为空 / 文件不存在时全部走默认值。
+ *
+ * M1：config.json 的值不再**原样**塞进 cfg —— 复用 ENV_MAP 的类型信息做归一，
+ * 与 env 路径同一套规则（boolean/number/string/list）。否则 `"publicDashboard": "false"`
+ * 这种字符串会因 `!== false` 的严格比较让安全开关「以为关了其实没关」。
+ *  - 未知键（拼错的键）收集成 warn 列表（configWarnings()），绝不静默并进 cfg；
+ *  - 安全开关（publicDashboard / protectAdminApi / allowPassthrough / creditsProbeEnabled）
+ *    收到非布尔且无法无歧义解析的值 → 直接抛错拒绝启动；
+ *  - 普通键类型不匹配 → warn + 保持默认值。
+ * opts.log 提供时，告警同时即时打印。
+ */
+export function loadConfig(configPath = path.resolve('config.json'), env = process.env, opts = {}) {
   const cfg = { ...DEFAULTS };
+  const warnings = [];
+  const warn = (msg) => {
+    warnings.push(msg);
+    opts?.log?.warn?.(msg);
+  };
   if (configPath && fs.existsSync(configPath)) {
     let raw;
     try {
@@ -120,9 +197,29 @@ export function loadConfig(configPath = path.resolve('config.json'), env = proce
     } catch (e) {
       throw new Error(`config.json 解析失败: ${e.message}`);
     }
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new Error('config.json 顶层必须是对象（JSON object），当前不是');
+    }
     for (const [k, v] of Object.entries(raw)) {
       if (v === undefined || v === null) continue;
-      cfg[k] = v;
+      if (!KNOWN_FIELDS.has(k)) {
+        warn(`config.json 含未知配置键 "${k}"（已忽略）；请检查拼写，合法键见 config.example.json`);
+        continue;
+      }
+      const type = FIELD_TYPE[k] ?? 'string';
+      const coerced = coerceConfigValue(v, type);
+      if (coerced === undefined) {
+        const desc = describeValue(v);
+        if (SECURITY_BOOL_FIELDS.has(k)) {
+          throw new Error(
+            `config.json 的 "${k}" 类型不合法：期望 boolean（true/false，或可识别的 "true"/"false"/"1"/"0"），`
+            + `收到 ${desc}。安全开关不接受非布尔值 —— 否则会被静默绕过。`,
+          );
+        }
+        warn(`config.json 的 "${k}" 无法按 ${type} 解析（收到 ${desc}），已忽略并保持默认值`);
+        continue;
+      }
+      cfg[k] = coerced;
     }
   }
   for (const [envKey, [field, type]] of Object.entries(ENV_MAP)) {
@@ -133,5 +230,6 @@ export function loadConfig(configPath = path.resolve('config.json'), env = proce
   }
   cfg.upstreamProxyUrl = String(cfg.upstreamProxyUrl).replace(/\/+$/, '');
   cfg.ccApiBase = String(cfg.ccApiBase).replace(/\/+$/, '');
+  CONFIG_WARNINGS.set(cfg, warnings);
   return cfg;
 }
