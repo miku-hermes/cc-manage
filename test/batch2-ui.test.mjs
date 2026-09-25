@@ -8,7 +8,8 @@ import vm from 'node:vm';
 import { createDomShim, runInlineScript, styleText } from './helpers.mjs';
 
 const INDEX_HTML = fs.readFileSync(new URL('../panel/dist/index.html', import.meta.url), 'utf8');
-const ADMIN_HTML = fs.readFileSync(new URL('../panel/src/pages/admin.astro', import.meta.url), 'utf8');
+// B24：admin 的样式/结构断言要在构建产物上做（.astro 源码含 frontmatter，取不到内联 <style>）。
+const ADMIN_HTML = fs.readFileSync(new URL('../panel/dist/admin.html', import.meta.url), 'utf8');
 const delay = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function dom(html, fetchImpl) {
@@ -254,8 +255,9 @@ test('B2-8：无快照账号卡片显示 —，hero 合计排除并注明未同�
 
   assert.equal(page.usableRemaining(noQ), null, '无快照 → null，不当 0');
   const out = page.card(noQ);
-  assert.doesNotMatch(out, /<b>0\.00<\/b>/, '卡片不得显示 0.00');
-  assert.match(out, /<b>—<\/b><small>剩余额度<\/small>/);
+  // B24：余额是 <b class="usable-balance …">；标签「剩余额度」已上移到 Hero 大数字旁，不重复。
+  assert.doesNotMatch(out, /class="usable-balance[^"]*">0\.00</, '卡片不得显示 0.00');
+  assert.match(out, /<b class="usable-balance[^"]*">—<\/b>/, '无快照余额显示 —（不是 0.00）');
 
   page.render({
     now: Date.now(), quotaPoll: {},
@@ -293,21 +295,35 @@ test('B2-10：后台 lastQuota=null + lastError → 显示真实原因', async (
 });
 
 // ── 11 / 12：手机端运行日志 + 触控目标 ────────────────────────────
+// B24 改写：事件行改用 Tailwind 工具类，且行结构由 admin.astro 的 <template id="tpl-event"> 承载
+//（logs.js 只做克隆 + 填值，不再手拼 HTML）。
+// 原来查：admin.css 里 `.event{flex-wrap:wrap}` 与 `.event-msg{flex…}`，外加 logs.js 的类名字符串；
+// 现在查同一行为的两个来源：构建页面里的模板类名（ADMIN_HTML） + 构建 CSS（≤820px 块 flex-basis:100%）。
+// 等价性：类名一字未改、断点行为一致，只是从「JS 源码里的字符串」变成了「页面模板里的标记」。严格度不变。
 test('B2-11：≤820px 运行日志正文可换行，不再被挤到 ~80px', () => {
   const css = styleText(ADMIN_HTML).replace(/\/\*[\s\S]*?\*\//g, '');
-  const mobile = mediaBlocks(css, 'max-width: 820px').join('\n');
-  assert.ok(mobile, '存在 @media (max-width: 820px) 块');
-  assert.match(mobile, /\.event\s*\{[^}]*flex-wrap:\s*wrap/, '窄屏 .event 要允许换行');
-  assert.match(mobile, /\.event-msg\s*\{[^}]*flex/, '窄屏 .event-msg 要独占一行');
+  const mobile = mediaBlocks(css, 'not all and (min-width:820px)').join('\n')
+    || mediaBlocks(css, 'max-width: 820px').join('\n');
+  assert.ok(mobile, '存在 ≤820px 断点块');
+  assert.match(mobile, /flex-basis:\s*100%/, '窄屏日志正文独占一行（basis-full）');
+  assert.match(ADMIN_HTML, /class="event flex flex-wrap items-center gap-2"/, '窄屏 .event 要允许换行');
+  assert.match(ADMIN_HTML, /class="event-msg min-w-0 flex-1 max-\[820px\]:basis-full"/, '窄屏 .event-msg 要独占一行');
 });
 
-test('B2-12：≤820px .load-error .btn / .filter-select 触控高度 ≥34px', () => {
+// B24 改写：触控高度改用 Tailwind `max-[820px]:min-h-9`（36px，--spacing:.25rem）。
+// 原来查：admin.css ≤820px 块里 `.load-error .btn, .filter-select { height: ≥34px }`；
+// 现在查：两个控件都带 min-h-9 工具类，且构建 CSS 的 ≤820px 块里确实产出 min-height ≥34px。
+test('B2-12：≤820px 加载重试按钮 / 级别下拉触控高度 ≥34px', () => {
   const css = styleText(ADMIN_HTML).replace(/\/\*[\s\S]*?\*\//g, '');
-  const mobile = mediaBlocks(css, 'max-width: 820px').join('\n');
-  const m = /\.load-error \.btn\s*,\s*\.filter-select\s*\{([^}]*)\}/.exec(mobile);
-  assert.ok(m, '窄屏块内要有这两个选择器的高度覆盖');
-  const hm = /height:\s*(\d+)px/.exec(m[1]);
-  assert.ok(hm && Number(hm[1]) >= 34, `高度必须 ≥34px，实得 ${hm && hm[1]}`);
+  const mobile = mediaBlocks(css, 'not all and (min-width:820px)').join('\n')
+    || mediaBlocks(css, 'max-width: 820px').join('\n');
+  const m = /min-height:\s*calc\(var\(--spacing\)\s*\*\s*([\d.]+)\)/.exec(mobile);
+  assert.ok(m, '窄屏块内要有触控高度覆盖（min-h-*）');
+  const px = Number(m[1]) * 4;   // --spacing = .25rem = 4px
+  assert.ok(px >= 34, `高度必须 ≥34px，实得 ${px}`);
+  assert.match(ADMIN_HTML, /id="load-retry"/, '重试按钮存在');
+  assert.match(ADMIN_HTML, /max-\[820px\]:min-h-9[^>]*id="load-retry"|id="load-retry"[^>]*max-\[820px\]:min-h-9/, '重试按钮带窄屏触控高度');
+  assert.match(ADMIN_HTML, /id="level"[^>]*class="select[^"]*max-\[820px\]:min-h-9[^"]*"/, '级别下拉带窄屏触控高度');
 });
 
 // ── 13：手动主题切换更新 color-scheme ─────────────────────────────
@@ -365,20 +381,27 @@ test('B2-16：.bar-group 带 aria-label（同 title 文案）', async () => {
   // （如本批次为让 aria-label 真正进无障碍树而补的 role="group"）都会被误判为失败 ——
   // 那是测试在断言实现细节而非行为。新写法不依赖顺序，且仍要求 class / title /
   // aria-label / role 四项同时落在同一个 .bar-group 标签内，因此是更强而非更弱的断言。
-  const groups = (out.match(/<div class="bar-group"[^>]*>/g) || []).filter((g) => g.includes('本周窗口'));
+  // B24：bar-group 现在同时挂 Tailwind 工具类（class="bar-group space-y-1"），选择器放宽为前缀匹配。
+  const groups = (out.match(/<div class="bar-group[^"]*"[^>]*>/g) || []).filter((g) => g.includes('本周窗口'));
   assert.equal(groups.length, 1, '恰好一个「本周窗口」.bar-group 起始标签');
   const tag = groups[0];
-  assert.match(tag, /class="bar-group"/, '保留 bar-group 类');
+  assert.match(tag, /class="bar-group[^"]*"/, '保留 bar-group 类');
   assert.match(tag, /title="本周窗口：已用 1\.00 \/ 2\.00"/, '金额进 title（鼠标悬停可见）');
   assert.match(tag, /aria-label="本周窗口：已用 1\.00 \/ 2\.00"/, '金额同步进 aria-label（触屏/键盘可达）');
   assert.match(tag, /role="group"/, 'aria-label 需要 role 才进无障碍树（role=generic 禁止 aria-label）');
 });
 
 // ── 17：标签条渐隐由状态类控制 ────────────────────────────────────
+// B24 改写：渐隐遮罩改由 Tailwind @utility（mask-fade-x / mask-fade-x-none）+ 状态变体承担。
+// 原来查：components.css ≤640px 块里 `.tags.…at-end { mask-image:none }`；现在查同一行为来自
+//   构建 CSS 的 ≤640px 块（is-scrollable 加遮罩 / at-end 撤遮罩）。选择器不再钉死 .tags 链，更稳。
 test('B2-17：≤640px 标签条 mask 由 .is-scrollable/.at-end 状态类控制', () => {
   const css = styleText(INDEX_HTML).replace(/\/\*[\s\S]*?\*\//g, '');
-  const mobile = mediaBlocks(css, 'max-width: 640px').join('\n');
-  assert.match(mobile, /\.tags[^{]*at-end[^{]*\{[^}]*mask-image:\s*none/, '滚到底要撤掉渐隐');
+  const mobile = mediaBlocks(css, 'max-width: 640px').join('\n')
+    || mediaBlocks(css, '40rem').join('\n');
+  assert.ok(mobile, '存在 ≤640px 断点块');
+  assert.match(mobile, /at-end[^{]*\{[^}]*mask-image:\s*none/, '滚到底要撤掉渐隐');
+  assert.match(mobile, /is-scrollable[^{]*\{[^}]*mask-image:\s*linear-gradient/, '溢出时给渐隐遮罩');
   assert.match(INDEX_HTML, /classList\.toggle\('is-scrollable'/, 'JS 要维护 is-scrollable');
   assert.match(INDEX_HTML, /classList\.toggle\('at-end'/, 'JS 要维护 at-end');
 });
@@ -436,4 +459,33 @@ test('B2-21：垫片最小选择器匹配可用，getElementById 不再现造节
   assert.ok(shim.document.querySelectorAll('#accounts .actions button').length === 0, '组合选择器要在空表时得 0');
   vm.runInContext("state.accounts = [" + JSON.stringify(account()) + "]; renderAccounts();", page);
   assert.ok(shim.document.querySelectorAll('#accounts .actions button').length >= 1, '#id .cls tag 组合要命中');
+});
+
+// ── 19（B24 新增交互）：账号行折叠展开必须同步 aria-expanded ──────────
+// 新交互是把卡片做成 daisyUI collapse（原生 <details>）：默认摘要、点行展开明细。
+// 原生 <details> 只暴露 open 状态，读屏用户需要 aria-expanded；模板初始 false，展开/收起由
+// index.astro 的 document 级 toggle 监听同步。这条守护保证该 a11y 契约不丢。
+test('B24-1：账号行 <details> 展开/收起同步 summary 的 aria-expanded', async () => {
+  const shim = dom(INDEX_HTML);
+  const page = await runInlineScript(INDEX_HTML, shim);
+  page.render({
+    now: Date.now(), quotaPoll: {},
+    summary: { accounts: 1, available: 1, paused: 0, unavailable: 0, concurrency: 0 },
+    stats: { total: 0, errors: 0, clientErrors: 0, totalTokens: 0 },
+    accounts: [account()],
+  });
+  const details = shim.el('cards').querySelector('details');
+  assert.ok(details, '账号行是 <details> 折叠（默认摘要 + 点开明细）');
+  const summary = details.querySelector('summary');
+  assert.ok(summary, '<details> 有 <summary>');
+  assert.equal(summary.getAttribute('aria-expanded'), 'false', '默认收起：aria-expanded=false');
+
+  // 浏览器展开 <details> 会置 open 并派发 toggle；这里模拟同一路径。
+  details.setAttribute('open', '');
+  shim.document.dispatchEvent({ type: 'toggle', target: details });
+  assert.equal(summary.getAttribute('aria-expanded'), 'true', '展开后 aria-expanded=true');
+
+  details.removeAttribute('open');
+  shim.document.dispatchEvent({ type: 'toggle', target: details });
+  assert.equal(summary.getAttribute('aria-expanded'), 'false', '收起后回到 false');
 });

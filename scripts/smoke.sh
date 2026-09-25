@@ -212,9 +212,14 @@ for marker in 'cc-manage' 'id="health"' '<script src="js/utils.js">'; do
   grep -q "$marker" "$WORK/body" || fail "面板 HTML 缺少骨架标记：$marker（说明静态资源没进镜像 / CMD 不对）"
 done
 
-echo "==> GET /css/tokens.css（静态资源真的在镜像里）"
-code="$(http_code "$BASE/css/tokens.css")"
-[ "$code" = "200" ] || fail "/css/tokens.css 期望 200，实际 $code（public/ 没进镜像？）"
+echo "==> GET /js/state.js 与首页外链 /assets/*.css（静态资源真的在镜像里）"
+code="$(http_code "$BASE/js/state.js")"
+[ "$code" = "200" ] || fail "/js/state.js 期望 200，实际 $code（public/ 没进镜像？）"
+# B24d：样式从内联改成独立可缓存文件；从首页 HTML 里取 /assets/*.css 并确认能取到。
+css_path="$(grep -o '/assets/[^"]*\.css' "$WORK/body" | head -n 1)"
+[ -n "$css_path" ] || fail "首页没有外链 /assets/*.css（面板未构建或样式仍被内联）"
+code="$(http_code "$BASE$css_path")"
+[ "$code" = "200" ] || fail "$css_path 期望 200，实际 $code（独立 CSS 没进镜像？）"
 
 echo "==> POST /v1/chat/completions（mock CC → 真内核 → 网关）"
 code="$(http_code -X POST "$BASE/v1/chat/completions" \

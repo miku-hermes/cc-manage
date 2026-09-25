@@ -1482,10 +1482,13 @@ export async function startGateway(overrides = {}) {
       return res.end();
     }
 
-    // 面板静态资源：public 下的 css/js/vendor（同源，无构建）；CSP 头已由 applySecurityHeaders 统一加上。
+    // 面板静态资源：public 下的 css/js/vendor/assets（同源，无构建）；CSP 头已由 applySecurityHeaders 统一加上。
     // B21：/vendor/ 放第三方前端库（ECharts），前端懒加载；只有命中真实文件才发长缓存（见 serveStatic）。
+    // B24d：/assets/ 放 Astro/Vite 构建产物（带内容哈希的 .css/.js）；与 /vendor 同走 serveStatic 的
+    //       路径穿越校验 + 扩展名白名单，命中真实文件才发 immutable 长缓存。
+    // 注：/css/ 前缀是 B22 之前的遗留入口，当前已无引用；按契约保留，不擅自删除。
     if (req.method === 'GET' && (url.pathname.startsWith('/css/') || url.pathname.startsWith('/js/')
-      || url.pathname.startsWith('/vendor/'))) {
+      || url.pathname.startsWith('/vendor/') || url.pathname.startsWith('/assets/'))) {
       return serveStatic(res, url.pathname);
     }
 
@@ -1719,7 +1722,8 @@ export async function startGateway(overrides = {}) {
     // B21：public/vendor/ 下是第三方库（文件名内嵌版本号，如 echarts.min.js），
     // 命中真实文件才发长缓存 immutable；public/css、public/js 仍是 no-cache 原行为。
     // 升级库必须改文件名（或加版本参数），否则客户端会一直吃旧缓存。
-    const immutable = rel.startsWith('vendor/');
+    // B24d：assets/ 是构建产物，文件名带内容哈希 —— 同样命中即 immutable，写法与 /vendor 一致。
+    const immutable = rel.startsWith('vendor/') || rel.startsWith('assets/');
     res.writeHead(200, {
       'content-type': mime,
       'x-content-type-options': 'nosniff',

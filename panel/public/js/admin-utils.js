@@ -24,7 +24,7 @@ function shortDate(ts) {
 }
 function shortId(id) { return String(id ?? '').slice(0, 8); }
 function maskedKey(prefix) {
-  return '<span class="key-mask"><span class="key-prefix">' + esc(prefix) + '</span>'
+  return '<span class="key-mask font-mono"><span class="key-prefix">' + esc(prefix) + '</span>'
     + '<span class="key-hidden" title="key 其余部分已遮蔽" aria-label="key 其余部分已遮蔽">••••</span></span>';
 }
 // null / undefined 表示「没有数」（如无额度快照）→ —，不要把 null 画成 0.00。
@@ -54,10 +54,42 @@ function planLabel(planId) {
 }
 function pctText(p) { const v = Number(p); return (p === null || p === undefined || !Number.isFinite(v)) ? '—' : v.toFixed(1) + '%'; }
 
+/* ── B24：模板克隆工具（渲染不再手拼 HTML 字符串）──────────────────────
+   行结构统一定义在 admin.astro 的 <template> 里，这里只克隆 + 用 textContent 填值。 */
+function cloneTemplate(id) {
+  const tpl = document.getElementById(id);
+  if (!tpl || !tpl.content || !tpl.content.firstElementChild) return null;
+  return tpl.content.firstElementChild.cloneNode(true);
+}
+function field(root, name) { return root.querySelector('[data-f="' + name + '"]'); }
+function fillText(root, name, text) { const el = field(root, name); if (el) el.textContent = text == null ? '' : text; return el; }
+function dropField(root, name) { const el = field(root, name); if (el) el.remove(); }
+/** 去掉内部钩子（data-f 不进产出 DOM）后序列化一行。 */
+function outerRow(node) {
+  for (const el of node.querySelectorAll('[data-f]')) el.removeAttribute('data-f');
+  return node.outerHTML;
+}
+/** 空态行：colspan + 一句真话（空态不撒谎）。 */
+function emptyRow(colspan, text) {
+  const node = cloneTemplate('tpl-empty-row');
+  if (!node) return '';
+  const td = field(node, 'empty');
+  if (td) { td.setAttribute('colspan', String(colspan)); td.textContent = text; }
+  return outerRow(node);
+}
+/** 空态单行（运行日志用）：根节点本身就是那一行。 */
+function emptyLine(text) {
+  const node = cloneTemplate('tpl-empty-line');
+  if (!node) return '';
+  node.textContent = text;
+  node.removeAttribute('data-f');
+  return node.outerHTML;
+}
+
 function toast(text, bad) {
   const el = $('toast');
   el.textContent = text;
-  el.className = 'toast show' + (bad ? ' bad' : '');
+  el.className = 'toast toast-end z-50 show' + (bad ? ' bad' : '');
   clearTimeout(el._t);
-  el._t = setTimeout(() => { el.className = 'toast' + (bad ? ' bad' : ''); }, 3200);
+  el._t = setTimeout(() => { el.className = 'toast toast-end z-50' + (bad ? ' bad' : ''); }, 3200);
 }

@@ -5,10 +5,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { styleText } from './helpers.mjs';
+const ACCOUNT_CARD = fs.readFileSync(new URL('../panel/src/components/AccountCard.astro', import.meta.url), 'utf8');
+const RENDER_CARDS = fs.readFileSync(new URL('../panel/public/js/render-cards.js', import.meta.url), 'utf8');
 
 const INDEX_HTML = fs.readFileSync(new URL('../panel/dist/index.html', import.meta.url), 'utf8');
-const TOKENS_CSS = fs.readFileSync(new URL('../panel/public/css/tokens.css', import.meta.url), 'utf8');
-const BASE_CSS = fs.readFileSync(new URL('../panel/public/css/base.css', import.meta.url), 'utf8');
+// B24：手写 CSS 已删除，令牌与降级规则迁进 panel/src/styles/panel.css（Tailwind @theme + 运行时令牌）。
+const TOKENS_CSS = fs.readFileSync(new URL('../panel/src/styles/panel.css', import.meta.url), 'utf8');
+const BASE_CSS = TOKENS_CSS;
 
 // 从 css[start]（'{' 缺失处）匹配成对花括号，返回块内文本
 function braceBlock(css, start) {
@@ -58,28 +61,27 @@ test('令牌#1：tokens.css 定义 --glass-bg / --glass-blur 与 --dur-250 / --e
   assert.match(TOKENS_CSS, /--elev-2:/, '柔和分层阴影 2');
 });
 
-// ── 2：dashboard.css ≤640px 标签条契约（合并样式源，同 mobile-tags）──
-test('令牌#2：dashboard.css ≤640px 标签条单行横滚契约仍成立', () => {
+// ── 2：≤640px 标签条契约（改由 Tailwind max-sm 工具类承担）──────────
+// 原来查：dashboard.css 的 @media (max-width:640px) 里 .tags { flex-wrap:nowrap; overflow-x:auto }
+//         和 .tags .tag { flex: 0 0 auto }。
+// 现在查：AccountCard 的 class 里有 max-sm:flex-nowrap / max-sm:overflow-x-auto，胶囊有 shrink-0；
+//         且构建后的 CSS 在同一个窄屏断点块里真的产出对应声明。等价性：断点、声明、不压缩三点不变，
+//         只是从手写选择器换成 Tailwind 工具类（构建产物里仍是同一条 CSS 声明）。
+test('令牌#2：≤640px 标签条单行横滚契约（Tailwind max-sm + shrink-0）', () => {
+  assert.match(ACCOUNT_CARD, /class="tags[^"]*max-sm:flex-nowrap[^"]*max-sm:overflow-x-auto/, '标签条窄屏单行横滚类');
+  assert.match(RENDER_CARDS, /shrink-0/, '标签胶囊不得被压缩');
   const css = styleText(INDEX_HTML).replace(/\/\*[\s\S]*?\*\//g, '');
-  const mobile = mediaBlocks(css, 'max-width: 640px').join('\n');
-  assert.ok(mobile, '存在 @media (max-width: 640px) 块');
-
-  const tagsRules = rules(mobile).filter((r) => r.selector.split(',').map((s) => s.trim()).includes('.tags'));
-  assert.ok(tagsRules.length > 0, '≤640px 块内存在作用于 .tags 的规则');
-  const body = tagsRules.map((r) => r.body).join('\n').replace(/\s+/g, ' ');
-  assert.match(body, /flex-wrap:\s*nowrap/, '窄屏 .tags 必须 flex-wrap: nowrap');
-  assert.match(body, /overflow-x:\s*auto/, '窄屏 .tags 必须 overflow-x: auto');
-
-  const tagRules = rules(mobile).filter((r) => r.selector.split(',').map((s) => s.trim()).includes('.tags .tag'));
-  assert.ok(tagRules.length > 0, '≤640px 块内存在 .tags .tag 规则');
-  const tagBody = tagRules.map((r) => r.body).join('\n').replace(/\s+/g, ' ');
-  assert.match(tagBody, /flex:\s*0\s+0\s+auto/, '窄屏 pill 不压缩：flex: 0 0 auto');
+  const mobile = mediaBlocks(css, 'max-width: 640px').join('\n') || mediaBlocks(css, '40rem').join('\n');
+  assert.ok(mobile, '存在窄屏断点块');
+  assert.match(mobile, /\.max-sm\\:flex-nowrap[^{]*\{[^}]*flex-wrap:\s*nowrap/, '窄屏 max-sm:flex-nowrap 产出 flex-wrap: nowrap');
+  assert.match(mobile, /\.max-sm\\:overflow-x-auto[^{]*\{[^}]*overflow-x:\s*auto/, '窄屏 max-sm:overflow-x-auto 产出 overflow-x: auto');
+  assert.match(css, /\.flex-wrap\s*\{[^}]*flex-wrap:\s*wrap/, '桌面端基础 flex-wrap: wrap 仍由 flex-wrap 工具类承担');
 });
 
-// ── 3：base.css 提供 prefers-reduced-motion 降级 ─────────────────
-test('令牌#3：base.css 含 prefers-reduced-motion 全局降级块', () => {
+// ── 3：全局 prefers-reduced-motion 降级块 ─────────────────────────
+test('令牌#3：panel.css 含 prefers-reduced-motion 全局降级块', () => {
   const blocks = mediaBlocks(BASE_CSS.replace(/\/\*[\s\S]*?\*\//g, ''), 'prefers-reduced-motion: reduce');
-  assert.ok(blocks.length > 0, 'base.css 要有 @media (prefers-reduced-motion: reduce) 块');
+  assert.ok(blocks.length > 0, 'panel.css 要有 @media (prefers-reduced-motion: reduce) 块');
   const body = blocks.join('\n');
   assert.match(body, /transition-duration:\s*0?\.01ms\s*!important/, '过渡时长为 0.01ms 且 !important');
   assert.match(body, /animation-duration:\s*0?\.01ms\s*!important/, '动画时长为 0.01ms 且 !important');

@@ -116,9 +116,10 @@ test('B2-2：后台额度条对已用完的窗口画满 100%，未耗尽仍显�
   const out = shim.el('accounts').innerHTML;
 
   assert.match(out, /月额度已用完 · 不可用/, '状态标签仍说已用完');
-  assert.match(out, /class="qbar-pct">100\.0%<\/span>/, '已用完的月额度条必须画满 100%');
+  // B24：qbar-pct 现在同时挂 Tailwind 工具类，选择器放宽为前缀匹配（数值断言不变）。
+  assert.match(out, /class="qbar-pct[^"]*">100\.0%<\/span>/, '已用完的月额度条必须画满 100%');
   assert.doesNotMatch(out, /99\.4%/, '不得再出现与状态标签自相矛盾的 99.4%');
-  assert.match(out, /class="qbar-pct">40\.0%<\/span>/, '未耗尽的账号仍显示真实百分比（不回归）');
+  assert.match(out, /class="qbar-pct[^"]*">40\.0%<\/span>/, '未耗尽的账号仍显示真实百分比（不回归）');
 
   assert.match(page.quotaBar('月', { percent: 99.36 }, { spent: true }), /100\.0%/, 'spent 覆盖直接生效');
   assert.match(page.quotaBar('月', { percent: 99.36 }), /99\.4%/, '没有 spent 时保持真实值');
@@ -133,9 +134,11 @@ test('B2-3：额度构成明细各显真实值，不被 usableRemaining 门控�
     lastQuota: quota(0, { credits: { monthlyCredits: 0.098, purchasedCredits: 1.5, freeCredits: 0 } }),
   });
   const out = page.card(dead);
-  assert.match(out, /月度 0\.10 · 购买 1\.50 · 赠送 0\.00/, '构成明细必须是真实数值');
+  // B24：恒为 0 的构成段不占位（赠送 0 直接省略），但非 0 的月度/购买仍是真实值，不被门控。
+  assert.match(out, /月度 0\.10 · 购买 1\.50/, '构成明细必须是真实数值');
+  assert.doesNotMatch(out, /赠送/, '赠送恒为 0 → 不占位');
   assert.doesNotMatch(out, /月度 0\.00/, '独立构成字段不得被门控成 0');
-  assert.match(out, /<b>0\.00<\/b><small>剩余额度<\/small>/, '剩余额度结论仍按「用不了算 0」');
+  assert.match(out, /<b class="usable-balance[^"]*">0\.00<\/b>/, '剩余额度结论仍按「用不了算 0」');
 
   const ok = page.card(account({ lastQuota: quota(9.9, { credits: { monthlyCredits: 2, purchasedCredits: 1, freeCredits: 0.5 } }) }));
   assert.match(ok, /月度 2\.00 · 购买 1\.00 · 赠送 0\.50/, '正常账号构成不回归');
@@ -205,14 +208,18 @@ function mediaBlocks(css, query) {
   return blocks;
 }
 
+// B24 改写：渐隐遮罩 / 4px 滚动条改由 Tailwind @utility（mask-fade-x / scrollbar-thin-x）承担。
+// 原来查：components.css ≤640px 块里 `.tags{mask-image:…}` 与 `.tags::-webkit-scrollbar`；
+// 现在查：≤640px 块里同样的三个声明（选择器不再钉死 .tags 链，覆盖等价）。
 test('B2-6：≤640px 标签条有可滑动提示（渐隐遮罩 + 极窄滚动条）', () => {
   const css = styleText(INDEX_HTML).replace(/\/\*[\s\S]*?\*\//g, '');
-  const mobile = mediaBlocks(css, 'max-width: 640px').join('\n');
-  assert.ok(mobile, '存在 @media (max-width: 640px) 块');
+  const mobile = mediaBlocks(css, 'max-width: 640px').join('\n')
+    || mediaBlocks(css, '40rem').join('\n');
+  assert.ok(mobile, '存在 ≤640px 断点块');
   assert.match(mobile, /mask-image:\s*linear-gradient/, '窄屏标签条要有右侧渐隐遮罩');
   assert.match(mobile, /-webkit-mask-image:\s*linear-gradient/, '同时给 webkit 前缀（Safari）');
-  assert.match(mobile, /\.tags::-webkit-scrollbar\s*\{[^}]*height:\s*4px/, '还要有极窄滚动条样式');
-  assert.match(mobile, /\.tags\s*\{[^}]*flex-wrap:\s*nowrap/, '窄屏仍是单行横向滚动（既有契约不回归）');
+  assert.match(mobile, /::-webkit-scrollbar\s*\{[^}]*height:\s*4px/, '还要有极窄滚动条样式');
+  assert.match(mobile, /flex-wrap:\s*nowrap/, '窄屏仍是单行横向滚动（既有契约不回归）');
 });
 
 // ── B2-7：日志轮询 / 手动筛选的 generation 竞态守卫 ─────────────────

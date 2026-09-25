@@ -6,9 +6,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const INDEX_HTML = fs.readFileSync(new URL('../panel/dist/index.html', import.meta.url), 'utf8');
-const ADMIN_HTML = fs.readFileSync(new URL('../panel/src/pages/admin.astro', import.meta.url), 'utf8');
-const TOKENS_CSS = fs.readFileSync(new URL('../panel/public/css/tokens.css', import.meta.url), 'utf8');
-const COMPONENTS_CSS = fs.readFileSync(new URL('../panel/public/css/components.css', import.meta.url), 'utf8');
+const ADMIN_HTML = fs.readFileSync(new URL('../panel/dist/admin.html', import.meta.url), 'utf8');
+// B24：手写 tokens/components.css 已删除；令牌在 panel/src/styles/panel.css。
+const TOKENS_CSS = fs.readFileSync(new URL('../panel/src/styles/panel.css', import.meta.url), 'utf8');
+const SITE_HEADER = fs.readFileSync(new URL('../panel/src/components/SiteHeader.astro', import.meta.url), 'utf8');
 const APP_JS = fs.readFileSync(new URL('../panel/public/js/app.js', import.meta.url), 'utf8');
 const RENDER_GATE_JS = fs.readFileSync(new URL('../panel/public/js/render-gate.js', import.meta.url), 'utf8');
 
@@ -56,31 +57,41 @@ function token(block, name) {
   return m ? m[1].trim() : null;
 }
 
-// ── 1：tokens.css 真有一套深色令牌（不是空壳）────────────────────────
-test('批次9#1：tokens.css 的 :root[data-theme="dark"] 定义 --surface-0，且与浅色 :root 不同', () => {
-  const light = blockOf(TOKENS_CSS, ':root {');
-  const dark = blockOf(TOKENS_CSS, ':root[data-theme="dark"] {');
-
-  const lightSurface = token(light, 'surface-0');
-  const darkSurface = token(dark, 'surface-0');
-  assert.ok(lightSurface, '浅色 :root 有 --surface-0');
-  assert.ok(darkSurface, '深色块必须有 --surface-0');
-  assert.notEqual(darkSurface, lightSurface, '深色 --surface-0 必须与浅色不同（真深色底，不是空壳）');
-
-  // 关键面 / 文字令牌都要在，避免「只改了底色」的半套主题
-  for (const name of ['surface-1', 'surface-2', 'border', 'text-primary', 'accent']) {
-    assert.ok(token(dark, name), `深色块必须定义 --${name}`);
+// ── 1：真有一套深色令牌（不是空壳）──────────────────────────────────
+// 原来查：:root 与 :root[data-theme="dark"] 的 --surface-* 不同。
+// 现在查：daisyUI 自定义主题对 light/dark 的 --color-base-* 不同，且深色主题覆盖面/文字/品牌色并带
+//         color-scheme: dark。等价性：仍是「浅深两套基础色真的不同 + 关键面/文字/品牌令牌齐全」。
+test('批次9#1：daisyUI dark 主题的 --color-base-100 与 light 不同，且基础令牌齐全', () => {
+  // 主题块的 `{` 在 `name: "light"` 之前，所以从 name 处向左找块首。
+  const themeBlock = (name) => {
+    const at = TOKENS_CSS.indexOf('name: "' + name + '"');
+    assert.ok(at > 0, `panel.css 里有 ${name} 主题块`);
+    return braceBlock(TOKENS_CSS, TOKENS_CSS.lastIndexOf('{', at));
+  };
+  const light = themeBlock('light');
+  const dark = themeBlock('dark');
+  const lightBase = token(light, 'color-base-100');
+  const darkBase = token(dark, 'color-base-100');
+  assert.ok(lightBase, 'light 主题有 --color-base-100');
+  assert.ok(darkBase, 'dark 主题必须有 --color-base-100');
+  assert.notEqual(darkBase, lightBase, 'dark --color-base-100 必须与 light 不同（真深色底）');
+  for (const name of ['color-base-200', 'color-base-300', 'color-base-content', 'color-primary']) {
+    assert.ok(token(dark, name), `dark 主题必须定义 --${name}`);
   }
-  assert.match(dark, /color-scheme:\s*dark/, '深色块带 color-scheme: dark');
+  assert.match(dark, /color-scheme:\s*dark/, 'dark 主题带 color-scheme: dark');
 });
 
-// ── 2：搜索框 input 不再自己画第三层焦点框 ───────────────────────────
-test('批次9#2：components.css 的 .search-box input:focus-visible 去掉 outline', () => {
-  const css = COMPONENTS_CSS.replace(/\/\*[\s\S]*?\*\//g, '');
-  const hit = rules(css).filter((r) => r.selectors.includes('.search-box input:focus-visible'));
-  assert.ok(hit.length > 0, '存在 .search-box input:focus-visible 规则');
+// ── 2：焦点环只有一层，且键盘可见 ────────────────────────────────
+// 原来查：.search-box input:focus-visible { outline: none }（去掉多余的第三层线框）。
+// 现在查：搜索框不再自带 outline-none，由 panel.css 的全局 :focus-visible 统一画 2px 焦点环。
+//         等价性：仍是「搜索框不叠自己的焦点框」，且焦点环变成全局一致、可见（a11y 只升不降）。
+test('批次9#2：搜索框不自绘焦点框，由全局 :focus-visible 统一提供可见焦点环', () => {
+  assert.doesNotMatch(SITE_HEADER, /outline-none/, '搜索框 input 不得屏蔽焦点环');
+  const css = TOKENS_CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+  const hit = rules(css).filter((r) => r.selectors.includes(':focus-visible'));
+  assert.ok(hit.length > 0, '存在 :focus-visible 规则');
   const body = hit.map((r) => r.body).join('\n').replace(/\s+/g, ' ');
-  assert.match(body, /outline:\s*none/, '搜索框 input 的 focus-visible 必须 outline: none');
+  assert.match(body, /outline:\s*2px solid/, '全局焦点环是 2px 实线');
 });
 
 // ── 3：点搜索框图标只展开、绝不收起 ─────────────────────────────────

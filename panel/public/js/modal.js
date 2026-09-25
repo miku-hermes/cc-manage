@@ -8,11 +8,15 @@ function modalBackgrounds() {
   const body = document.body;
   if (!body || !body.children) return [];
   const out = [];
-  for (const child of body.children) {
-    if (!child || child.nodeType !== 1) continue;
-    if (child.classList && child.classList.contains('modal')) continue;
-    out.push(child);
-  }
+  const push = (el) => {
+    if (!el || el.nodeType !== 1) return;
+    if (el.classList && el.classList.contains('modal')) return;
+    if (!out.includes(el)) out.push(el);
+  };
+  for (const child of body.children) push(child);
+  // B24：抽屉布局把 #admin-head / #admin-main 放进了 .drawer-content，不再是 body 直接子节点；
+  // 但它们仍是要 inert 的背景区，显式补上（inert 可叠加，重复设置无害）。
+  for (const id of ['admin-head', 'admin-main']) push($(id));
   return out;
 }
 function setBackgroundInert(on) {
@@ -59,7 +63,7 @@ function openModal(id) {
   modalFocusReturn = document.activeElement && document.activeElement.focus ? document.activeElement : null;
   setBackgroundInert(true);
   const modal = $(id);
-  modal.classList.add('open');
+  modal.classList.add('open', 'modal-open');
   // aria-modal="true" 不能只是声明：把焦点移进弹窗（caller 可再聚焦到具体字段）。
   const focusables = focusableIn(dialogOf(modal));
   if (focusables.length && !(modal.contains && modal.contains(document.activeElement))) focusables[0].focus();
@@ -67,7 +71,7 @@ function openModal(id) {
 
 function closeModal(id) {
   const modal = $(id);
-  if (modal) modal.classList.remove('open');
+  if (modal) modal.classList.remove('open', 'modal-open');
   if (document.querySelectorAll('.modal.open').length) return;   // 还有别的弹窗开着
   setBackgroundInert(false);
   if (modalFocusReturn && modalFocusReturn.focus) modalFocusReturn.focus();
@@ -76,7 +80,7 @@ function closeModal(id) {
 
 /** 一次性关掉全部弹窗并还原背景 inert（登出 / session 失效用，不归还焦点）。 */
 function resetModalState() {
-  for (const m of document.querySelectorAll('.modal')) m.classList.remove('open');
+  for (const m of document.querySelectorAll('.modal')) m.classList.remove('open', 'modal-open');
   setBackgroundInert(false);
   modalFocusReturn = null;
 }
@@ -86,7 +90,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   const open = document.querySelectorAll('.modal.open');
   if (!open.length) return;
-  for (const m of open) m.classList.remove('open');
+  for (const m of open) m.classList.remove('open', 'modal-open');
   setBackgroundInert(false);
   if (modalFocusReturn && modalFocusReturn.focus) modalFocusReturn.focus();
   modalFocusReturn = null;

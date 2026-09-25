@@ -1,10 +1,10 @@
 ---
-/* 额度构成分段条：三段横向拼接，段宽 = 该段金额 / 三段之和。
-   role="img" + aria-label：金额是「图形信息」，必须有无障碍名字（同 title）。
-   宽度 / 名字都由 render-cards.js 填值（数据是运行时的）。 */
+/* 额度构成分段条（join）：三段横向拼接，段宽 = 该段金额 / 三段之和。
+   role="img" + aria-label：金额是图形信息，必须有无障碍名字（同 title）。
+   宽度 / 名字由 render-cards.js 填；恒为 0 的段不占位（JS 直接移除）。 */
 ---
-<div class="credits-bar" role="img" data-f="credits-bar">
-  <i class="seg-month" data-f="seg-month"></i>
-  <i class="seg-buy" data-f="seg-buy"></i>
-  <i class="seg-gift" data-f="seg-gift"></i>
+<div class="credits-bar join h-2 w-full overflow-hidden rounded-full bg-base-300" role="img" data-f="credits-bar">
+  <i class="seg-month bg-primary" data-f="seg-month"></i>
+  <i class="seg-buy bg-secondary" data-f="seg-buy"></i>
+  <i class="seg-gift bg-accent" data-f="seg-gift"></i>
 </div>

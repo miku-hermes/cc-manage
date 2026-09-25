@@ -1,41 +1,56 @@
 ---
-/* 账号卡片：结构只在这里出现一次（index.astro 用它在 <template id="tpl-account"> 里产出唯一模板）。
-   所有可变文本都由 render-cards.js 用 textContent / createTextNode 填；不存在手拼 HTML 字符串。
-   没有数据的区块（额度条 / 用量行 / 新鲜度行 / 计划标签）由 JS 直接 remove，不留空壳。 */
+/* 账号行（daisyUI collapse，行式：默认只显示摘要，点开看明细）。
+   结构只在这里出现一次（index.astro 产出 <template id="tpl-account">）。
+   可变文本全部由 render-cards.js 用 textContent 填；没有数据的区块 JS 直接 remove。 */
 import CreditsBar from './CreditsBar.astro';
 import StatusPill from './StatusPill.astro';
 ---
-<article class="card">
-  <div class="card-head">
-    <h2 data-f="account-head"></h2>
-    <StatusPill />
-  </div>
-  <div class="card-body">
-    <div class="credits-block" data-f="credits-block">
-      <div class="credits-title">额度构成</div>
+<details class="card row-card collapse collapse-arrow border border-base-300 bg-base-100 transition-colors">
+  <!-- B24d：summary 从 flex 改成网格 —— 名称列 minmax(0,max-content) 按内容自适应，
+       多出来的宽度给右侧米数（1fr 右对齐）。旧 flex + min-w-0 会把名字挤到 133px 还截断，
+       而同行右侧空着；网格首列只受内容与可用宽度约束，不再出现「有空余还省略」。 -->
+  <summary class="collapse-title row-summary grid grid-cols-[minmax(0,max-content)_minmax(0,1fr)] items-center gap-x-3 gap-y-1 max-sm:grid-cols-1" aria-expanded="false">
+    <span class="row-title flex min-w-0 items-center gap-2">
+      <h2 class="card-head truncate text-base font-semibold" data-f="account-head"></h2>
+      <StatusPill />
+    </span>
+    <span class="row-meters flex items-center justify-end gap-3 max-sm:justify-start">
+      <span class="card-fresh aux-text text-xs text-base-content/60" data-f="card-fresh"></span>
+      <b class="usable-balance text-lg font-bold tabular-nums" data-f="usable-balance"></b>
+    </span>
+    <!-- 补充标签条移进 summary（原来挂在 .collapse 网格第 3 行会跑到行外）：
+         固定在 1.5rem 高，无论有没有徽章，4 行高度都一致。 -->
+    <div class="tags col-span-full mt-0.5 flex min-h-6 flex-wrap items-center gap-1 max-sm:flex-nowrap max-sm:overflow-x-auto max-sm:[&.is-scrollable]:mask-fade-x max-sm:[&.at-end]:mask-fade-x-none max-sm:scrollbar-thin-x" data-f="tags"></div>
+  </summary>
+  <div class="collapse-content card-body gap-3 pt-0">
+    <div class="credits-block space-y-1.5" data-f="credits-block">
+      <div class="credits-title text-xs text-base-content/60">额度构成</div>
       <CreditsBar />
-      <div class="card-credits aux-text" data-f="credits-legend"></div>
+      <div class="card-credits aux-text text-xs text-base-content/60" data-f="credits-legend"></div>
     </div>
-    <div class="card-money"><b data-f="usable-balance"></b><small>剩余额度</small></div>
-    <div class="bars">
-      <div class="bar-group" data-f="bar-5h">
-        <div class="bar-head"><span class="bar-label">5 小时窗口</span><span class="bar-pct" data-f="bar-5h-pct"></span></div>
-        <div class="bar" data-f="bar-5h-track"><i data-f="bar-5h-fill"></i></div>
-        <div class="bar-reset" data-f="bar-5h-reset"></div>
+    <div class="bars grid gap-2 @md:grid-cols-3">
+      <div class="bar-group space-y-1" role="group" data-f="bar-5h">
+        <div class="bar-head flex items-center justify-between gap-2 text-xs">
+          <span class="bar-label">5 小时窗口</span>
+          <span class="bar-tail flex items-center gap-2 text-base-content/60"><span class="bar-pct font-mono" data-f="bar-5h-pct"></span><span class="bar-reset" data-f="bar-5h-reset"></span></span>
+        </div>
+        <progress class="progress bar h-1.5 w-full" max="100" value="0" data-f="bar-5h-track"></progress>
       </div>
-      <div class="bar-group" data-f="bar-week">
-        <div class="bar-head"><span class="bar-label">本周窗口</span><span class="bar-pct" data-f="bar-week-pct"></span></div>
-        <div class="bar" data-f="bar-week-track"><i data-f="bar-week-fill"></i></div>
-        <div class="bar-reset" data-f="bar-week-reset"></div>
+      <div class="bar-group space-y-1" role="group" data-f="bar-week">
+        <div class="bar-head flex items-center justify-between gap-2 text-xs">
+          <span class="bar-label">本周窗口</span>
+          <span class="bar-tail flex items-center gap-2 text-base-content/60"><span class="bar-pct font-mono" data-f="bar-week-pct"></span><span class="bar-reset" data-f="bar-week-reset"></span></span>
+        </div>
+        <progress class="progress bar h-1.5 w-full" max="100" value="0" data-f="bar-week-track"></progress>
       </div>
-      <div class="bar-group" data-f="bar-month">
-        <div class="bar-head"><span class="bar-label">本月周期</span><span class="bar-pct" data-f="bar-month-pct"></span></div>
-        <div class="bar" data-f="bar-month-track"><i data-f="bar-month-fill"></i></div>
-        <div class="bar-reset" data-f="bar-month-reset"></div>
+      <div class="bar-group space-y-1" role="group" data-f="bar-month">
+        <div class="bar-head flex items-center justify-between gap-2 text-xs">
+          <span class="bar-label">本月周期</span>
+          <span class="bar-tail flex items-center gap-2 text-base-content/60"><span class="bar-pct font-mono" data-f="bar-month-pct"></span><span class="bar-reset" data-f="bar-month-reset"></span></span>
+        </div>
+        <progress class="progress bar h-1.5 w-full" max="100" value="0" data-f="bar-month-track"></progress>
       </div>
     </div>
-    <div class="card-usage aux-text" data-f="card-usage"></div>
-    <div class="card-fresh aux-text" data-f="card-fresh"></div>
+    <div class="card-usage aux-text text-xs text-base-content/60" data-f="card-usage"></div>
   </div>
-  <div class="tags" data-f="tags"></div>
-</article>
+</details>

@@ -13,7 +13,9 @@ import { startTestGateway, request } from './helpers.mjs';
 const INDEX_HTML = fs.readFileSync(new URL('../panel/dist/index.html', import.meta.url), 'utf8');
 const TREND_HTML = fs.readFileSync(new URL('../panel/dist/trend.html', import.meta.url), 'utf8');
 const TREND_JS = fs.readFileSync(new URL('../panel/public/js/render-trend.js', import.meta.url), 'utf8');
-const TOKENS_CSS = fs.readFileSync(new URL('../panel/public/css/tokens.css', import.meta.url), 'utf8');
+// B24：手写 tokens.css 已删除；--chart-* 运行时令牌（浅色 :root + 深色 :root[data-theme="dark"]）
+// 现在定义在 panel/src/styles/panel.css 的 @layer base 里。
+const TOKENS_CSS = fs.readFileSync(new URL('../panel/src/styles/panel.css', import.meta.url), 'utf8');
 const VENDOR_README = fs.readFileSync(new URL('../panel/public/vendor/README.md', import.meta.url), 'utf8');
 const PKG = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
@@ -347,8 +349,8 @@ test('B21-18：DOM —— 副标题、摘要色点、0 错误正向徽章（不�
   });
   const zero = Array.from({ length: 6 }, (_, i) => ({ t: T0 + i * 300000, r: 3, e: 0, m: 1 }));
   context.renderTrend({ bucketMs: 5 * 60 * 1000, samples: zero });
-  assert.match(host.innerHTML, /class="trend-sub"/, '区间文案进副标题（不再是靠右的纯灰小字）');
-  assert.match(host.innerHTML, /class="trend-pill trend-pill-ok">0 错误/, '错误全 0 → 正向「0 错误」徽章');
+  assert.match(host.innerHTML, /class="trend-sub[^"]*"/, '区间文案进副标题（不再是靠右的纯灰小字）');
+  assert.match(host.innerHTML, /class="trend-pill trend-pill-ok[^"]*">0 错误/, '错误全 0 → 正向「0 错误」徽章');
   assert.equal((host.innerHTML.match(/class="trend-dot /g) || []).length, 3, '摘要三条读数各带一枚色点');
   assert.match(host.innerHTML, /trend-dot-request/, '请求色点');
   assert.match(host.innerHTML, /trend-dot-balance/, '余额色点');
@@ -359,7 +361,7 @@ test('B21-18：DOM —— 副标题、摘要色点、0 错误正向徽章（不�
   const withErr = zero.map((s, i) => ({ ...s, e: i === 3 ? 2 : 0 }));
   context.renderTrend({ bucketMs: 5 * 60 * 1000, samples: withErr });
   assert.ok(!/trend-pill-ok/.test(host.innerHTML), '有错误时不出现「0 错误」徽章');
-  assert.match(host.innerHTML, /trend-dot-error"/, '有错误时色点用语义红');
+  assert.match(host.innerHTML, /trend-dot-error\b[^"]*"/, '有错误时色点用语义红');
 });
 
 // ── 10：懒加载（假 document + 假 echarts）───────────────────────────
@@ -416,8 +418,8 @@ test('B21-11：没有 ECharts 时 mountTrendChart 安全返回 false（不抛、
 
   // 渲染本身不抛，且文本摘要始终在
   context.renderTrend({ bucketMs: 5 * 60 * 1000, samples: samplesOf(8) });
-  assert.match(host.innerHTML, /class="trend-summary"/, '挂载失败也保留文本摘要');
-  assert.match(host.innerHTML, /class="trend-fallback"[^>]*hidden/, '失败说明默认隐藏，只有真失败才亮出');
+  assert.match(host.innerHTML, /class="trend-summary[^"]*"/, '挂载失败也保留文本摘要');
+  assert.match(host.innerHTML, /class="trend-fallback[^"]*"[^>]*hidden/, '失败说明默认隐藏，只有真失败才亮出');
 });
 
 // ── 12：首屏不引 ECharts（懒加载证据）──────────────────────────────
@@ -447,10 +449,11 @@ test('B21-13：/vendor/ 命中真实文件才发 immutable 长缓存，css/js �
   assert.equal(versioned.status, 200, '带 ?v= 查询串仍命中静态文件（路由用 url.pathname，查询串不参与命中）');
   assert.equal(versioned.headers['cache-control'], 'public, max-age=31536000, immutable', '带版本串仍走 immutable 长缓存');
 
-  const css = await request(`${ctx.baseUrl}/css/tokens.css`);
-  assert.equal(css.headers['cache-control'], 'no-cache', 'public/css 行为不变');
+  // B24：不再有 public/css/；同一条 no-cache 契约改由两个 public/js 资源验证（覆盖等价）。
+  const jsA = await request(`${ctx.baseUrl}/js/state.js`);
+  assert.equal(jsA.headers['cache-control'], 'no-cache', 'public/js 行为不变（state.js）');
   const js = await request(`${ctx.baseUrl}/js/render-trend.js`);
-  assert.equal(js.headers['cache-control'], 'no-cache', 'public/js 行为不变');
+  assert.equal(js.headers['cache-control'], 'no-cache', 'public/js 行为不变（render-trend.js）');
 
   const miss = await request(`${ctx.baseUrl}/vendor/definitely-missing.js`);
   assert.equal(miss.status, 404, '没有真实文件就 404');

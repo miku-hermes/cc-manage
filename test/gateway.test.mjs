@@ -1217,7 +1217,10 @@ test('面板：额度用尽的账号必须渲染成「额度已用完 + 重置�
   const healthy = page.card({ name: '健康', keyId: 'bbbbbbbb', enabled: true, available: true,
     creditsExhausted: false, creditsExhaustedAt: null, exhausted: null, concurrency: 0, paused: false,
     pausedUntil: null, authInvalid: false, lastError: null, lastQuota: quota(9.9) });
-  assert.match(healthy, /可调度/);
+  // B24：不再有独立的「可调度」标签 —— 可调度 = summary 里的绿色状态徽章（is-ok）。选择器变了，
+  // 语义不变：健康号一眼看出可用，穷号绝不能被标成可用。
+  assert.match(healthy, /<span class="status badge[^"]*is-ok"/, '健康号状态 = ok（可调度）');
+  assert.doesNotMatch(broke, /class="status badge[^"]*is-ok"/, '穷号不得被标成 ok/可用');
   assert.doesNotMatch(healthy, /余额不足|额度已用完/, '健康账号不该被误标');
 });
 
@@ -1324,24 +1327,25 @@ test('进度条只报百分比（金额收进 title），被证明用完的窗�
     creditsExhausted: true, exhausted: { kind: 'monthly', label: '月额度已用完', resetAt: 0 } });
   assert.match(spent, /title="本月周期：已用 9\.94 \/ 10\.00"/, '金额收进 title，且分母是整数 10 而不是 10.03');
   assert.doesNotMatch(spent, /bar-num/, '进度条行不再摆具体金额');
-  assert.match(spent, /本月周期<\/span><span class="bar-pct">100\.0%<\/span>/, '用完就该显示 100%');
-  assert.match(spent, /<div class="bar s-bad"><i style="width:100%"><\/i><\/div>/, '用完要画满，不能停在 99.4% 像还剩一点');
-  assert.match(spent, /本周窗口<\/span><span class="bar-pct">65\.0%<\/span>/, '别的窗口不受影响');
+  // B24：进度条改 daisyUI <progress>（单元素），百分比正文仍在 .bar-pct；画满 = value="100" + s-bad。
+  assert.match(spent, /bar-label">本月周期<\/span>[\s\S]{0,240}?<span class="bar-pct[^"]*">100\.0%<\/span>/, '用完就该显示 100%');
+  assert.match(spent, /<progress class="progress bar[^"]*s-bad[^"]*"[^>]*value="100"><\/progress>/, '用完要画满，不能停在 99.4% 像还剩一点');
+  assert.match(spent, /bar-label">本周窗口<\/span>[\s\S]{0,240}?<span class="bar-pct[^"]*">65\.0%<\/span>/, '别的窗口不受影响');
   assert.ok(!/10\.03/.test(spent), '页面上不该再出现 10.03 这种推算分母');
 
   // ② 副号：上游点名周窗口超限 → 周窗口画满，月度按推算显示
   const weekly = page.card({ ...base, name: '副号', keyId: 'bbbbbbbb', available: false,
     creditsExhausted: false, exhausted: { kind: 'window', window: 'weekly', label: '周额度已用完', resetAt: 0 } });
-  assert.match(weekly, /本周窗口<\/span><span class="bar-pct">100\.0%<\/span>/);
-  assert.match(weekly, /本月周期<\/span><span class="bar-pct">99\.4%<\/span>/, '没被证明用完的窗口老实显示推算值');
+  assert.match(weekly, /bar-label">本周窗口<\/span>[\s\S]{0,240}?<span class="bar-pct[^"]*">100\.0%<\/span>/);
+  assert.match(weekly, /bar-label">本月周期<\/span>[\s\S]{0,240}?<span class="bar-pct[^"]*">99\.4%<\/span>/, '没被证明用完的窗口老实显示推算值');
 
   // ③ 健康账号：只有百分比，没有金额行
   const ok = page.card({ ...base, name: '副号2', keyId: 'cccccccc', available: true,
     creditsExhausted: false, exhausted: null,
     lastQuota: { ...q, remaining: 9.73, monthly: w(0.2, 10, 2) } });
   assert.doesNotMatch(ok, /bar-num/);
-  assert.match(ok, /本月周期<\/span><span class="bar-pct">2\.0%<\/span>/);
-  assert.match(ok, /可调度/);
+  assert.match(ok, /bar-label">本月周期<\/span>[\s\S]{0,240}?<span class="bar-pct[^"]*">2\.0%<\/span>/);
+  assert.match(ok, /<span class="status badge[^"]*is-ok"/, '健康号 = ok（可调度）');
 });
 
 // ── 用不了的钱就是 0（usableRemaining 唯一口径）─────────────────────
@@ -1362,19 +1366,22 @@ test('额度已用完的账号卡片显示 0.00，window 卡住的钱照常显�
   // ① 主号：周期额度用完 + 账上还剩 0.098 → 用不了的钱算 0，卡片显示 0.00
   const spent = page.card({ ...base, name: '主号', keyId: 'aaaaaaaa', available: false, creditsExhausted: true,
     exhausted: { kind: 'monthly', label: '月额度已用完', resetAt: 0 }, lastQuota: q(0.098) });
-  assert.match(spent, /<b>0\.00<\/b><small>剩余额度<\/small>/,
+  // B24：余额是 <b class="usable-balance …">；构成明细里恒为 0 的段不占位（购买/赠送省略），
+  // 但非 0 的月度仍是真实账面值 —— 行为断言（用不了的钱=0；构成不被门控）一字未改。
+  assert.match(spent, /<b class="usable-balance[^"]*">0\.00<\/b>/,
     '用不了的钱就是 0：卡片必须显示 0.00，不能与「月额度已用完」打脸');
-  assert.doesNotMatch(spent, /<b>0\.10<\/b><small>剩余额度<\/small>/,
+  assert.doesNotMatch(spent, /<b class="usable-balance[^"]*">0\.10<\/b>/,
     '死账号的零头不许再出现在「剩余额度」结论数字上');
-  assert.match(spent, /月度 0\.10 · 购买 0\.00 · 赠送 0\.00/,
+  assert.match(spent, /月度 0\.10/,
     'B2-3：额度构成明细各显真实值，不随剩余额度被门控成 0.00');
+  assert.doesNotMatch(spent, /购买 0\.00|赠送 0\.00/, '恒为 0 的构成段不占位');
   assert.doesNotMatch(spent, /不可支付|money-note/, '不再需要「不可支付」标签');
   assert.doesNotMatch(spent, /title="周期额度已用完/, '不再需要悬停解释');
 
   // ② 窗口超限但钱还能用（副号）→ 照常显示真实余额，不许算成 0
   const weekly = page.card({ ...base, name: '副号', keyId: 'dddddddd', available: false, creditsExhausted: false,
     exhausted: { kind: 'window', window: 'weekly', label: '周额度已用完', resetAt: 0 }, lastQuota: q(4) });
-  assert.match(weekly, /<b>4\.00<\/b><small>剩余额度<\/small>/,
+  assert.match(weekly, /<b class="usable-balance[^"]*">4\.00<\/b>/,
     '周窗口超限只是排队，钱没坏，必须显示 4.00');
 });
 
@@ -1407,7 +1414,7 @@ test('顶部与卡片用同一个 usableRemaining：死账号两处都体现为 
     lastQuota: { ok: true, remaining: 0.098 },
   };
   const cardOut = page.card(dead);
-  assert.match(cardOut, /<b>0\.00<\/b><small>剩余额度<\/small>/, '卡片用 usableRemaining：dead → 0.00');
+  assert.match(cardOut, /<b class="usable-balance[^"]*">0\.00<\/b>/, '卡片用 usableRemaining：dead → 0.00');
 
   const d = {
     summary: { accounts: 1, available: 0, paused: 0, concurrency: 0 },
@@ -1572,7 +1579,8 @@ test('前台卡片：不再显示最近错误，状态词/标签照旧', async (
     exhausted: { kind: 'monthly', label: '月额度已用完', resetAt: periodEndSec },
     lastQuota: null });
   assert.match(out, /月额度已用完/, '状态词照旧');
-  assert.match(out, /不可用/, '标签照旧');
+  // B24：不再有独立「不可用」标签；不可调度 = 红色状态徽章（is-bad）。语义不变，选择器变了。
+  assert.match(out, /<span class="status badge[^"]*is-bad"/, '状态照旧 = 不可调度（bad）');
   assert.doesNotMatch(out, /最近错误/, '卡片不再渲染最近错误');
   assert.doesNotMatch(out, /class="err"/, '也不应出现 .err 元素');
 });

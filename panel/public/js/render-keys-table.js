@@ -1,20 +1,26 @@
+/* B24：客户端 key 表 —— 行结构在 admin.astro 的 <template id="tpl-key-row">，只克隆 + 填值。 */
+function keyRow(k) {
+  const node = cloneTemplate('tpl-key-row');
+  if (!node) return '';
+  const id = String(k.keyId ?? '');
+  fillText(node, 'name', k.name);
+  fillText(node, 'key-id', id);
+  const kp = field(node, 'key-prefix');
+  if (kp) kp.innerHTML = maskedKey(k.keyPrefix);
+  fillText(node, 'created', k.createdAt ? timeText(k.createdAt) : '—');
+  const del = field(node, 'btn-del');
+  if (del) del.setAttribute('data-id', id);
+  return outerRow(node);
+}
+
 function renderKeys() {
   const list = state.keys;
   $('key-count').textContent = list.length + ' 个';
   if (!list.length) {
-    $('keys').innerHTML = '<tr><td colspan="5" class="empty">还没有客户端 key，点「生成新 key」创建</td></tr>';
+    $('keys').innerHTML = emptyRow(5, '还没有客户端 key，点「生成新 key」创建');
     applyWritable(state.writable, state.readonlyReason);
     return;
   }
-  $('keys').innerHTML = list.map((k) => {
-    const id = esc(k.keyId);
-    return '<tr>'
-      + '<td data-label="名称"><div class="cell-name">' + esc(k.name) + '</div></td>'
-      + '<td data-label="keyId" class="mono cell-sub">' + id + '</td>'
-      + '<td data-label="keyPrefix" class="mono cell-sub">' + maskedKey(k.keyPrefix) + '</td>'
-      + '<td data-label="创建时间" class="cell-sub">' + esc(k.createdAt ? timeText(k.createdAt) : '—') + '</td>'
-      + '<td data-label="操作" class="actions"><button class="btn danger" type="button" data-act="delkey" data-id="' + id + '">删除</button></td>'
-      + '</tr>';
-  }).join('');
+  $('keys').innerHTML = list.map(keyRow).join('');
   applyWritable(state.writable, state.readonlyReason);
 }

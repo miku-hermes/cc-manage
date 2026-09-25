@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { createDomShim, runInlineScript } from './helpers.mjs';
+import { createDomShim, runInlineScript, styleText } from './helpers.mjs';
 
 const INDEX_HTML = fs.readFileSync(new URL('../panel/dist/index.html', import.meta.url), 'utf8');
 
@@ -81,24 +81,24 @@ test('B4-2：本月已用百分比按 Σused/Σcap 加权（只算 cap>0）', as
 // ── ③ 分段进度条三段宽度 = 各段金额 / 三段之和 ───────────────────────
 test('B4-3：额度构成分段条三段宽度按金额占比（月度/购买/赠送）', async () => {
   const { shim, page } = await boot();
+  // B24：分段条挂 daisyUI/Tailwind 类，段仍按金额占比；选择器放宽为前缀，比例数值不变。
   const out = page.card(account({ lastQuota: quota({ credits: { monthlyCredits: 2, purchasedCredits: 1, freeCredits: 1 } }) }));
-  assert.match(out, /class="credits-bar"/, '要有分段条容器');
-  assert.match(out, /<i class="seg-month" style="width:50%"><\/i>/, '月度 2/4 = 50%');
-  assert.match(out, /<i class="seg-buy" style="width:25%"><\/i>/, '购买 1/4 = 25%');
-  assert.match(out, /<i class="seg-gift" style="width:25%"><\/i>/, '赠送 1/4 = 25%');
-  // 三段全 0 → 空条（宽度都为 0，不画假比例）
+  assert.match(out, /class="credits-bar[^"]*"/, '要有分段条容器');
+  assert.match(out, /<i class="seg-month[^"]*" style="width:50%"><\/i>/, '月度 2/4 = 50%');
+  assert.match(out, /<i class="seg-buy[^"]*" style="width:25%"><\/i>/, '购买 1/4 = 25%');
+  assert.match(out, /<i class="seg-gift[^"]*" style="width:25%"><\/i>/, '赠送 1/4 = 25%');
+  // B24 设计约束 4：三段全 0 → 不画假比例，空条整个移除，只留一句真话。
   const empty = page.card(account({ lastQuota: quota({ credits: { monthlyCredits: 0, purchasedCredits: 0, freeCredits: 0 } }) }));
-  assert.match(empty, /<i class="seg-month" style="width:0%"><\/i>/);
-  assert.match(empty, /<i class="seg-buy" style="width:0%"><\/i>/);
-  assert.match(empty, /<i class="seg-gift" style="width:0%"><\/i>/);
+  assert.doesNotMatch(empty, /credits-bar/, '三段全 0 不再画空条（恒为 0 不占位）');
+  assert.match(empty, /额度构成待同步/, '空态给真话，不撒谎');
 });
 
 // ── ④ 无快照账号：构成区块显示「尚未获取额度快照」，不出分段条 ──────────
 test('B4-4：无 lastQuota 快照的账号构成区块显示兜底文案，无假分段条', async () => {
   const { shim, page } = await boot();
   const out = page.card(account({ name: '无快照号', lastQuota: null }));
-  assert.match(out, /class="card-credits aux-text">尚未获取额度快照</);
-  assert.doesNotMatch(out, /class="credits-bar"/, '没有快照就不该画构成条');
+  assert.match(out, /class="card-credits aux-text[^"]*">尚未获取额度快照</);
+  assert.doesNotMatch(out, /credits-bar/, '没有快照就不该画构成条');
   // Hero 明细：全部账号都无快照 → 整行兜底
   page.render(status([account({ keyId: 'aaaa1111', lastQuota: null })]));
   assert.equal(shim.el('bal-breakdown').textContent, '尚未获取额度快照');
@@ -108,25 +108,27 @@ test('B4-4：无 lastQuota 快照的账号构成区块显示兜底文案，无�
 test('B4-5：名称右侧计划标签渲染 plan.planId 派生的套餐名', async () => {
   const { shim, page } = await boot();
   const out = page.card(account({ lastQuota: quota({ plan: { planId: 'individual-go' } }) }));
-  assert.match(out, /<span class="plan-pill mono">Go 个人版 · \$10\/月<\/span>/, '计划标签要渲染套餐名');
+  assert.match(out, /<span class="plan-pill[^"]*">Go 个人版 · \$10\/月<\/span>/, '计划标签要渲染套餐名');
   assert.doesNotMatch(out, /individual-go/, '不暴露原始 planId（沿用既有隐私/可读性契约）');
   // 未知 planId 原样透出；没有 plan 就不渲染标签
-  assert.match(page.card(account({ lastQuota: quota({ plan: { planId: 'individual-xyz' } }) })), /plan-pill mono">individual-xyz</);
+  assert.match(page.card(account({ lastQuota: quota({ plan: { planId: 'individual-xyz' } }) })), /plan-pill[^"]*">individual-xyz</);
   assert.doesNotMatch(page.card(account({ lastQuota: quota({ plan: null }) })), /plan-pill/);
 });
 
 // ── ⑥ 状态胶囊 tone 类名：ok/warn/bad ────────────────────────────────
 test('B4-6：状态胶囊按 accountStatus.tone 输出 is-ok / is-warn / is-bad', async () => {
   const { shim, page } = await boot();
+  // B24：胶囊 = daisyUI badge + 语义色 + 原 tone 钩子（status badge badge-success is-ok …），
+  // 选择器放宽为「class 里含 is-*」；文案与 tone 分类断言不变。
   const okOut = page.card(account({ available: true }));
-  assert.match(okOut, /<span class="status is-ok"><span class="dot" aria-hidden="true"><\/span>可用<\/span>/);
+  assert.match(okOut, /<span class="status badge[^"]*is-ok"><span class="dot" aria-hidden="true"><\/span>可用<\/span>/);
 
   const pausedOut = page.card(account({ available: false, paused: true, pausedUntil: Date.now() + 3600e3 }));
-  assert.match(pausedOut, /class="status is-warn"/, '冷却中 = 琥珀');
+  assert.match(pausedOut, /class="status badge[^"]*is-warn"/, '冷却中 = 琥珀');
 
   const deadOut = page.card(account({ available: false, exhausted: { kind: 'monthly', label: '月额度已用完', resetAt: 0 } }));
-  assert.match(deadOut, /class="status is-bad"/, '耗尽 = 红');
-  assert.match(deadOut, /<span class="status is-bad">[\s\S]*月额度已用完<\/span>/, '胶囊里是 accountStatus 的 t');
+  assert.match(deadOut, /class="status badge[^"]*is-bad"/, '耗尽 = 红');
+  assert.match(deadOut, /<span class="status badge[^"]*is-bad">[\s\S]*月额度已用完<\/span>/, '胶囊里是 accountStatus 的 t');
 });
 
 // ── ⑦ 筛选条计数 + 点击「耗尽」后只剩耗尽账号（document 委托）────────
@@ -192,7 +194,9 @@ test('B4-9：所有账号都没有 cap 时明细行给兜底文案，不出现 N
   const a = account({ keyId: 'aaaa1111', lastQuota: quota({ credits: { monthlyCredits: 1, purchasedCredits: 0, freeCredits: 0 }, monthly: { used: 5, cap: 0, percent: 0, resetAt: 0 } }) });
   page.render(status([a]));
   const text = shim.el('bal-breakdown').textContent;
-  assert.match(text, /月度 \$1\.00 · 购买 \$0\.00 · 赠送 \$0\.00/);
+  // B24 设计约束 4：购买/赠送恒为 0 → 不占位；非 0 的月度仍是真实值。
+  assert.match(text, /月度 \$1\.00/);
+  assert.doesNotMatch(text, /购买 \$0\.00|赠送 \$0\.00/, '恒为 0 的构成段不出现');
   assert.match(text, /本月用量待同步/, '无 cap 时给兜底文案');
   assert.doesNotMatch(text, /NaN|undefined|%/, '不得出现 NaN / 伪百分比');
 });
@@ -232,8 +236,8 @@ test('B4-11：前台卡片不渲染 keyId/keyPrefix 文本（keyId 仅存于 dat
   assert.ok(shim.el('filters'), '#filters 容器存在于 HTML');
 });
 
-// ── 批次 5（B23 改写）：KPI 卡结构唯一化 + 语义图标 ──────────────────
-const DASHBOARD_CSS = fs.readFileSync(new URL('../panel/public/css/dashboard.css', import.meta.url), 'utf8');
+// ── 批次 5（B23/B24 改写）：KPI 卡结构唯一化 + 语义图标 ──────────────
+// B24：手写 dashboard.css 已删除；KPI 卡改由 daisyUI stat + Tailwind 工具类承载。
 const KPI_COMPONENT = fs.readFileSync(new URL('../panel/src/components/KpiCard.astro', import.meta.url), 'utf8');
 
 /** 取模板里 KpiCard 的 HTML 块（结构唯一来源）。 */
@@ -243,34 +247,49 @@ function kpiTemplateHtml() {
   return m[1];
 }
 
+// B24 改写：图标改由 @lucide/astro 组件渲染，路径数据不再写在源码里（也不可能手写）。
+// 原来查：KpiCard.astro 里的内联 <path d="…">；现在查：源码 import 的 Lucide 组件名 + 构建产物里
+// 对应图标 svg 的 lucide-* 类名（证明真的用对了图标，比字符串匹配更贴最终 DOM）。
 test('B5-1：KPI 结构只存在一处：kpi-head(图标+标签) → 大数字 → sub，且无 kpi-body', () => {
   const html = kpiTemplateHtml();
   assert.doesNotMatch(html, /kpi-body/, '旧 .kpi-body 包裹层必须删除');
-  const order = [...html.matchAll(/kpi-head|(<b data-f="kpi-value">)|(class="kpi-sub")/g)].map((m) => m[0]);
-  assert.deepEqual(order, ['kpi-head', '<b data-f="kpi-value">', 'class="kpi-sub"'], '顺序 head→b→sub');
-  assert.match(KPI_COMPONENT, /<div class="kpi-head">/);
-  assert.equal((KPI_COMPONENT.match(/class="kpi-head"/g) || []).length, 1, 'KpiCard.astro 里 kpi-head 只出现一次');
+  const order = [...html.matchAll(/kpi-head|<b[^>]*data-f="kpi-value"|class="kpi-sub[^"]*"/g)].map((m) => m[0]);
+  assert.equal(order.length, 3, 'head / 大数字 / sub 各出现一次');
+  assert.match(order[0], /kpi-head/);
+  assert.match(order[1], /data-f="kpi-value"/);
+  assert.match(order[2], /kpi-sub/);
+  assert.match(KPI_COMPONENT, /class="kpi-head[^"]*"/);
+  assert.equal((KPI_COMPONENT.match(/\bkpi-head\b/g) || []).length, 1, 'KpiCard.astro 里 kpi-head 只出现一次');
 });
 
-test('B5-2：总请求卡用 activity 脉搏线图标', () => {
-  assert.match(KPI_COMPONENT, /data-f="kpi-icon-total"[\s\S]*?M22 12h-4l-3 9L9 3l-3 9H2/, '总请求 = 脉搏线');
-  assert.doesNotMatch(KPI_COMPONENT, /M8 6h13/, '旧 list 三横线图标必须换掉');
+test('B5-2：总请求卡用 Lucide activity 脉搏线图标', () => {
+  assert.match(KPI_COMPONENT, /import\s*\{[^}]*\bActivity\b[^}]*\}\s*from\s*'@lucide\/astro'/, 'activity 来自 Lucide');
+  assert.match(KPI_COMPONENT, /<Activity\s+data-f="kpi-icon-total"/, '总请求 = activity');
+  assert.match(kpiTemplateHtml(), /class="lucide lucide-activity"[^>]*data-f="kpi-icon-total"/, '渲染出 activity 图标');
+  assert.doesNotMatch(KPI_COMPONENT, /<svg/, '不再手写 <svg>');
 });
 
-test('B5-3：上游错误卡用 triangle-alert 三角感叹图标', () => {
-  assert.match(KPI_COMPONENT, /data-f="kpi-icon-errors"[\s\S]*?M10\.29 3\.86/, '上游错误 = 三角感叹');
+test('B5-3：上游错误卡用 Lucide triangle-alert 三角感叹图标', () => {
+  assert.match(KPI_COMPONENT, /import\s*\{[^}]*\bTriangleAlert\b[^}]*\}\s*from\s*'@lucide\/astro'/, 'triangle-alert 来自 Lucide');
+  assert.match(KPI_COMPONENT, /<TriangleAlert\s+data-f="kpi-icon-errors"/, '上游错误 = 三角感叹');
+  assert.match(kpiTemplateHtml(), /class="lucide lucide-triangle-alert\b[^"]*"[^>]*data-f="kpi-icon-errors"/, '渲染出 triangle-alert');
 });
 
-test('B5-4：暂停中卡用 pause 双竖条图标', () => {
-  assert.match(KPI_COMPONENT, /data-f="kpi-icon-paused"[\s\S]*?<rect x="14" y="4"/, '暂停中 = 双竖条');
-  assert.doesNotMatch(KPI_COMPONENT, /M8\.2 12\.4l2\.6 2\.6 5-5\.6/, '旧 circle-check 对勾必须换掉');
+test('B5-4：暂停中卡用 Lucide pause 双竖条图标', () => {
+  assert.match(KPI_COMPONENT, /import\s*\{[^}]*\bPause\b[^}]*\}\s*from\s*'@lucide\/astro'/, 'pause 来自 Lucide');
+  assert.match(KPI_COMPONENT, /<Pause\s+data-f="kpi-icon-paused"/, '暂停中 = 双竖条');
+  assert.match(kpiTemplateHtml(), /class="lucide lucide-pause"[^>]*data-f="kpi-icon-paused"/, '渲染出 pause');
+  assert.doesNotMatch(KPI_COMPONENT, /<svg/, '不再手写 <svg>');
 });
 
-test('B5-5：dashboard.css 的 .kpi 为竖排 flex，且 .kpi-head 横向并排规则存在', () => {
-  assert.match(DASHBOARD_CSS, /\.kpi-head\s*\{[^}]*display:\s*flex/);
-  assert.match(DASHBOARD_CSS, /\.kpi-head\s*\{[^}]*align-items:\s*center/);
-  const rule = DASHBOARD_CSS.match(/\n\.kpi\s*\{([^}]*)\}/);
-  assert.ok(rule, '.kpi 规则存在');
-  assert.match(rule[1], /flex-direction:\s*column/, '卡片整体竖排');
-  assert.match(rule[1], /align-items:\s*flex-start/);
+// B24 改写：原来查 dashboard.css 的 `.kpi{flex-direction:column}` 与 `.kpi-head{display:flex;align-items:center}`。
+// 现在查：KPI 卡走 daisyUI stat（单列 inline-grid → 竖排），kpi-head 自带 flex items-center 工具类，
+// 且构建 CSS 里确实产出这两条声明。等价性：仍是「卡片竖排 + 标题行横向居中并排」。
+test('B5-5：KPI 竖排（daisyUI stat），kpi-head 横向并排（flex items-center）', () => {
+  assert.match(KPI_COMPONENT, /class="kpi-head stat-title flex items-center/, 'kpi-head 横向并排');
+  assert.match(KPI_COMPONENT, /class="kpi stat bg-base-100"/, 'KPI 卡走 daisyUI stat');
+  const css = styleText(INDEX_HTML);
+  assert.match(css, /\.stat\{[^}]*grid-template-columns:repeat\(1,\s*1fr\)/, 'stat 单列（竖排）');
+  assert.match(css, /\.flex\{display:flex\}/, 'flex 工具类存在');
+  assert.match(css, /\.items-center\{align-items:center\}/, 'items-center 工具类存在');
 });

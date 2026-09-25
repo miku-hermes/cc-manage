@@ -6,7 +6,8 @@ import vm from 'node:vm';
 import { createDomShim, runInlineScript, styleText } from './helpers.mjs';
 
 const INDEX_HTML = fs.readFileSync(new URL('../panel/dist/index.html', import.meta.url), 'utf8');
-const ADMIN_HTML = fs.readFileSync(new URL('../panel/src/pages/admin.astro', import.meta.url), 'utf8');
+// B24：admin 的内联样式只在构建产物里（.astro 源码无 <style>）；运行时行为两个来源都可用。
+const ADMIN_HTML = fs.readFileSync(new URL('../panel/dist/admin.html', import.meta.url), 'utf8');
 const delay = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function dom(html, fetchImpl) {
@@ -82,12 +83,14 @@ test('回归#10：statusTag 读取 exhausted/creditsExhausted/available/rateLimi
   for (const a of cases) assert.deepEqual(JSON.parse(JSON.stringify(admin.accountStatus(a))), JSON.parse(JSON.stringify(front.accountStatus(a))));
   adminAccounts(admin, cases);
   const out = shim.el('accounts').innerHTML;
-  assert.match(out, /class="tag bad"[^>]*data-account-status="invalid"[^>]*>月额度已用完 · 不可用/);
+  // B24：徽章 = daisyUI badge + 语义色（badge-error/warning/success）+ 原 tone 钩子类，选择器放宽为
+  // 「class 里含该 tone」；文案与 data-account-status 断言一字未改。
+  assert.match(out, /class="tag badge[^"]*\bbad\b[^"]*"[^>]*data-account-status="invalid"[^>]*>月额度已用完 · 不可用/);
   assert.match(out, /data-account-status="invalid"[^>]*>余额不足 · 不可用/);
   // 普通限流（rateLimited）后台单独说「限流冷却中」，不混进「额度不可用」
-  assert.match(out, /class="tag warn"[^>]*data-account-status="paused"[^>]*>限流冷却中 · 不可用/);
-  assert.match(out, /class="tag ok"[^>]*data-account-status="ok"[^>]*>可用 · 可调度/);
-  assert.doesNotMatch(out, /class="tag ok"[^>]*>可用<\/span>/, '耗尽/限流账号不得单独显示绿色可用');
+  assert.match(out, /class="tag badge[^"]*\bwarn\b[^"]*"[^>]*data-account-status="paused"[^>]*>限流冷却中 · 不可用/);
+  assert.match(out, /class="tag badge[^"]*\bok\b[^"]*"[^>]*data-account-status="ok"[^>]*>可用 · 可调度/);
+  assert.doesNotMatch(out, /class="tag[^"]*\bok\b[^"]*"[^>]*>可用<\/span>/, '耗尽/限流账号不得单独显示绿色可用');
 });
 
 // ── bug 3：后台余额复用 usableRemaining，账面值只进 title ──
@@ -135,13 +138,16 @@ test('视觉#5：删除红描边、停用琥珀警示，三个表格按钮语义
   const accounts = shim.el('accounts').innerHTML;
   const keys = shim.el('keys').innerHTML;
   const users = shim.el('users').innerHTML;
-  assert.match(styleText(ADMIN_HTML), /\.btn\.danger \{ color: var\(--danger-ink\); border-color: var\(--danger\);/);
-  assert.match(styleText(ADMIN_HTML), /\.btn\.warning \{ color: var\(--warning-ink\);/);
-  assert.match(accounts, /class="btn warning"[^>]*data-act="toggle"[^>]*>停用/);
-  assert.match(accounts, /class="btn outline"[^>]*data-act="test"[^>]*>测试连通性/);
-  assert.match(accounts, /class="btn danger"[^>]*data-act="del"[^>]*>删除/);
-  assert.match(keys, /class="btn danger"[^>]*data-act="delkey"[^>]*>删除/);
-  assert.match(users, /class="btn danger"[^>]*data-act="deluser"[^>]*>删除/);
+  // B24：三个按钮改用 daisyUI 语义变体（btn-warning / btn-outline / btn-error），不再自绘 .btn.danger。
+  // 等价性：仍是「停用=琥珀警示、测试=中性描边、删除=红」，且语义令牌确实由构建 CSS 提供。
+  const css = styleText(ADMIN_HTML);
+  assert.match(css, /\.btn-error\{[^}]*--color-error/, '删除用 daisyUI error 语义（红）');
+  assert.match(css, /\.btn-warning\{[^}]*--color-warning/, '停用用 daisyUI warning 语义（琥珀）');
+  assert.match(accounts, /class="btn btn-xs btn-warning"[^>]*data-act="toggle"[^>]*>停用/);
+  assert.match(accounts, /class="btn btn-outline btn-xs"[^>]*data-act="test"[^>]*>测试连通性/);
+  assert.match(accounts, /class="btn btn-error btn-xs"[^>]*data-act="del"[^>]*>删除/);
+  assert.match(keys, /class="btn btn-error btn-xs"[^>]*data-act="delkey"[^>]*>删除/);
+  assert.match(users, /class="btn btn-error btn-xs"[^>]*data-act="deluser"[^>]*>删除/);
 });
 
 // ── UI 6：最近错误不再是套餐同档小灰字 ──
@@ -150,9 +156,10 @@ test('视觉#6：最近错误/查询失败用 cell-error 琥珀红色强调并�
   const page = await runInlineScript(ADMIN_HTML, shim);
   adminAccounts(page, [account({ lastError: '上游拒付', lastQuota: quota(1) }), account({ lastQuota: null, lastError: '探针失败' })]);
   const out = shim.el('accounts').innerHTML;
-  assert.match(out, /class="cell-error">最近错误：上游拒付/);
-  assert.match(out, /class="cell-error">额度未同步：探针失败/);
-  assert.match(styleText(ADMIN_HTML), /\.cell-error::before \{ content: '⚠ '; \}/);
+  // B24：cell-error 仍带 text-error，并新增「⚠ 」前缀（Tailwind @utility，不再是手写 ::before 规则）。
+  assert.match(out, /class="cell-error[^"]*">最近错误：上游拒付/);
+  assert.match(out, /class="cell-error[^"]*">额度未同步：探针失败/);
+  assert.match(styleText(ADMIN_HTML), /\.cell-error:before\{content:"⚠ "\}|\\.cell-error::before\{content:"⚠ "\}/);
 });
 
 // ── UI 7：0% 进度条不是 2px 细线 ──
@@ -163,9 +170,10 @@ test('视觉#7：0% 进度条保留完整 6px 空轨道，填充条与轨道同�
   const empty = page.card(account({
     lastQuota: quota(9.9, { fiveHour: { used: 0, cap: 3, percent: 0, usedRatio: 0, resetAt: 0 } }),
   }));
-  assert.match(empty, /class="bar s-ok is-empty"><i style="width:0%"><\/i>/);
-  assert.match(styleText(INDEX_HTML), /\.bar \{\s*height: 6px; min-height: 6px;/);
-  assert.match(styleText(INDEX_HTML), /\.bar\.is-empty \{ height: 6px; min-height: 6px; \}/);
+  // B24：进度条改 daisyUI <progress>（单元素 → 轨道与填充天然同粗）；h-1.5 = 6px，0% 也保留空轨道。
+  assert.match(empty, /<progress class="progress bar h-1\.5 w-full[^"]*"[^>]*max="100" value="0"><\/progress>/,
+    '0% 仍是完整 6px 轨道（不是 2px 细线）');
+  assert.match(styleText(INDEX_HTML), /\.h-1\\\.5\{height:calc\(var\(--spacing\) \* 1\.5\)\}/, 'h-1.5 = 6px');
 });
 
 // ── UI 8：启用/不可用合并为一个清晰主徽章 ──
@@ -173,10 +181,10 @@ test('视觉#8：卡片状态徽章合并层级，不可用不再是暗灰低对
   const shim = dom(INDEX_HTML);
   const page = await runInlineScript(INDEX_HTML, shim);
   const out = page.card(account({ available: false, exhausted: { kind: 'monthly', label: '月额度已用完', resetAt: 0 } }));
-  assert.match(out, /<span class="tag bad">已启用 · 不可用<\/span>/);
-  assert.doesNotMatch(out, /<span class="tag ok">已启用<\/span>/, '不再并排两个语义冲突徽章');
-  assert.doesNotMatch(out, /<span class="tag bad">不可用<\/span>/, '可用性并入主徽章');
-  assert.match(styleText(INDEX_HTML), /\.tag\.bad \{ color: var\(--danger-ink\);/);
+  // B24：只有一个状态徽章（summary 里的 .status badge badge-error is-bad），不再并排「已启用」次徽章。
+  assert.match(out, /class="status badge badge-error is-bad"/);
+  assert.doesNotMatch(out, /已启用/, '不再并排两个语义冲突徽章');
+  assert.match(styleText(INDEX_HTML), /\.badge-error\{--badge-color:var\(--color-error\)/, '错误态用 AA 语义色，不再是暗灰低对比');
 });
 
 // ── UI 9：辅助小灰字与浅灰徽章文字达到 AA 对比度 ──
@@ -184,15 +192,16 @@ test('视觉#9：额度/更新时间/内核辅助文字统一 aux-text，小字�
   const shim = dom(INDEX_HTML);
   const page = await runInlineScript(INDEX_HTML, shim);
   const out = page.card(account({ lastQuota: quota(9.9) }));
-  assert.match(INDEX_HTML, /class="hero-meta aux-text"/);
-  assert.match(out, /class="card-credits aux-text"/);
+  assert.match(INDEX_HTML, /class="hero-meta aux-text[^"]*"/);
+  assert.match(out, /class="card-credits aux-text[^"]*"/);
   assert.match(out, /class="card-fresh aux-text/);
-  assert.match(styleText(INDEX_HTML), /\.aux-text \{ color: var\(--text-secondary\); \}/);
-  // 批次2：单一浅色主题，令牌值现代化（次文字 #5c6779 / 弱文字 #6a7386），语义不变（AA 小字）。
-  assert.match(styleText(INDEX_HTML), /--text-secondary: #5c6779;/);
-  assert.match(styleText(INDEX_HTML), /--text-tertiary: #6a7386;/);
-  assert.match(styleText(INDEX_HTML), /\.tag\.warn \{ color: var\(--warning-ink\);/);
-  assert.match(styleText(INDEX_HTML), /\.tag\.bad \{ color: var\(--danger-ink\);/);
+  // B24：aux-text 改由 Tailwind @utility 提供颜色（同一 --text-secondary 令牌，选择器语法变了）。
+  assert.match(styleText(INDEX_HTML), /\.aux-text\{color:var\(--text-secondary\)\}/);
+  // 令牌值语义不变（AA 小字）；徽章色改用 daisyUI 语义令牌（warning→--color-warning / error→--color-error）。
+  assert.match(styleText(INDEX_HTML), /--text-secondary:\s*#5c6779/);
+  assert.match(styleText(INDEX_HTML), /--text-tertiary:\s*#6a7386/);
+  assert.match(styleText(INDEX_HTML), /\.badge-warning\{--badge-color:var\(--color-warning\)/);
+  assert.match(styleText(INDEX_HTML), /\.badge-error\{--badge-color:var\(--color-error\)/);
 });
 
 // ── UI 10：3 张卡最后一张跨整行，4 张恢复 2×2 ──
@@ -204,7 +213,12 @@ test('视觉#10：三卡时最后一张 card-wide 跨整行，四卡时恢复两
   assert.equal((shim.el('cards').innerHTML.match(/class="card[^\"]*card-wide/g) || []).length, 1);
   page.render(make(4));
   assert.equal((shim.el('cards').innerHTML.match(/class="card[^\"]*card-wide/g) || []).length, 0);
-  assert.match(styleText(INDEX_HTML), /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
+  // B24/B24d：账号区是容器查询网格 —— 窄屏单列（每行跨满整宽，等价于旧的整行式列表），
+  // 超宽屏（2xl）两列，避免 1600px 页壳下出现超长单行。card-wide 仍由 render-cards.js 作为
+  // 奇数尾行钩子输出。@container 让行内明细按容器宽度自适应（而非视口断点）。
+  assert.match(INDEX_HTML, /class="@container accounts grid grid-cols-1 gap-2 2xl:grid-cols-2[^"]*"/,
+    '账号区是容器查询网格（窄屏单列 / 超宽两列）');
+  assert.match(styleText(INDEX_HTML), /container-type:\s*inline-size/, '@container 产出容器查询上下文');
 });
 
 // ── UI 11：key 前缀明确遮蔽，keyId 仍完整 ──
@@ -216,7 +230,7 @@ test('视觉#11：keyPrefix 改为可读前缀 + 明确 •••• 遮蔽尾�
   const accounts = shim.el('accounts').innerHTML;
   const keys = shim.el('keys').innerHTML;
   for (const out of [accounts, keys]) {
-    assert.match(out, /class="key-mask"/);
+    assert.match(out, /class="key-mask[^"]*"/);
     assert.match(out, /class="key-prefix"/);
     assert.match(out, /class="key-hidden"[^>]*>••••<\/span>/);
     assert.doesNotMatch(out, /2XyP…/);

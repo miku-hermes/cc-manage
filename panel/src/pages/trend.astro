@@ -1,46 +1,14 @@
 ---
+import Layout from '../layouts/Layout.astro';
 import SiteHeader from '../components/SiteHeader.astro';
 import TrendCard from '../components/TrendCard.astro';
-
-/* 与 index 同源的 color-scheme 分派（B2-13 契约：内联 <style> 里保留）。 */
-const styleTag = `<style>
-  :root { color-scheme: light dark; }
-  :root[data-theme="light"] { color-scheme: light; }
-  :root[data-theme="dark"] { color-scheme: dark; }
-</style>`;
+import { ChevronLeft } from '@lucide/astro';
 ---
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light dark">
-<title>cc-manage · 近 24 小时趋势</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20fill='%23e8668a'%20d='M12%202.6l2.5%206.2%206.2%202.5-6.2%202.5-2.5%206.2-2.5-6.2L3.3%2011.3l6.2-2.5z'/%3E%3C/svg%3E">
-<meta name="description" content="cc-manage 近 24 小时趋势：请求数 / 错误数 / 可用余额的 ECharts 折线图。">
-<Fragment set:html={styleTag} />
-<script is:raw>
-try {
-  var t = localStorage.getItem('cc-manage-theme');
-  if (t === 'light' || t === 'dark') {
-    document.documentElement.setAttribute('data-theme', t);
-  } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-    document.documentElement.setAttribute('data-theme', 'dark');
-  }
-} catch (e) { /* 忽略 */ }
-</script>
-<link rel="stylesheet" href="css/tokens.css">
-<link rel="stylesheet" href="css/base.css">
-<link rel="stylesheet" href="css/components.css">
-<link rel="stylesheet" href="css/dashboard.css">
-</head>
-<body>
-<div class="petals" id="petals" aria-hidden="true"></div>
-
+<Layout title="cc-manage · 近 24 小时趋势" description="cc-manage 近 24 小时趋势：请求数 / 错误数 / 可用余额的 ECharts 折线图。">
 <SiteHeader search={false} />
 
-<main>
-  <p class="trend-back"><a href="/">← 返回面板</a></p>
+<main class="mx-auto flex w-full max-w-6xl flex-col gap-3 px-4 py-4 2xl:max-w-[1600px]">
+  <p class="trend-back"><a class="btn btn-ghost btn-sm gap-1" href="/"><ChevronLeft size={15} />返回面板</a></p>
   <TrendCard />
 </main>
 
@@ -61,5 +29,4 @@ function bootTrendPage() {
 }
 bootTrendPage();
 </script>
-</body>
-</html>
+</Layout>

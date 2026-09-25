@@ -1,13 +1,15 @@
-// 批次 8：导航栏三处缺陷的回归（搜索框展开态不可见 / 图标未居中 / 登录后台裸图标）。
-// 只读 panel/public/css/components.css、panel/public/css/dashboard.css 与 panel/public/js/app.js；
-// 不联网、不起服务。用例在批次 7 的（修复前）源码上必须变红。
+// 导航（B24 改写）：搜索框展开态、登录后台按钮、极窄屏断点。
+// 只读 panel/src/components/SiteHeader.astro、panel/src/styles/panel.css 与 js/app.js；不联网。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { styleText } from './helpers.mjs';
 
-const COMPONENTS_CSS = fs.readFileSync(new URL('../panel/public/css/components.css', import.meta.url), 'utf8');
-const DASHBOARD_CSS = fs.readFileSync(new URL('../panel/public/css/dashboard.css', import.meta.url), 'utf8');
+const INDEX_HTML = fs.readFileSync(new URL('../panel/dist/index.html', import.meta.url), 'utf8');
+const SITE_HEADER = fs.readFileSync(new URL('../panel/src/components/SiteHeader.astro', import.meta.url), 'utf8');
+const PANEL_CSS = fs.readFileSync(new URL('../panel/src/styles/panel.css', import.meta.url), 'utf8');
 const APP_JS = fs.readFileSync(new URL('../panel/public/js/app.js', import.meta.url), 'utf8');
+const BUILD_CSS = styleText(INDEX_HTML).replace(/\/\*[\s\S]*?\*\//g, '');
 
 // 从 css[start]（'{' 缺失处）匹配成对花括号，返回块内文本
 function braceBlock(css, start) {
@@ -16,89 +18,57 @@ function braceBlock(css, start) {
   let depth = 0;
   for (let i = open; i < css.length; i += 1) {
     if (css[i] === '{') depth += 1;
-    else if (css[i] === '}') {
-      depth -= 1;
-      if (depth === 0) return css.slice(open + 1, i);
-    }
+    else if (css[i] === '}') { depth -= 1; if (depth === 0) return css.slice(open + 1, i); }
   }
   throw new Error('花括号不配平');
 }
-
-// 返回所有 header 含 query 的 @media 块内容
 function mediaBlocks(css, query) {
   const blocks = [];
   const re = /@media[^{]*\{/g;
   let m;
   while ((m = re.exec(css))) {
-    const header = m[0].slice(0, -1).replace(/\s+/g, ' ').trim();
-    if (header.includes(query)) blocks.push(braceBlock(css, m.index));
+    if (m[0].slice(0, -1).replace(/\s+/g, ' ').trim().includes(query)) blocks.push(braceBlock(css, m.index));
   }
   return blocks;
 }
 
-// 解析规则 [{ selector, body, selectors: [...] }]
-function rules(css) {
-  const list = [];
-  const re = /([^{}]+)\{([^{}]*)\}/g;
-  let m;
-  while ((m = re.exec(css))) {
-    const selector = m[1].replace(/\s+/g, ' ').trim();
-    list.push({
-      selector,
-      selectors: selector.split(',').map((s) => s.replace(/\s+/g, ' ').trim()),
-      body: m[2],
-    });
-  }
-  return list;
-}
-
-// ── 1：搜索框展开态文字可见，且不依赖 .expanded 类 ───────────────
-test('导航#1：components.css 展开态 input 同时挂 .expanded 与 :focus-within，且 opacity: 1', () => {
-  const css = COMPONENTS_CSS.replace(/\/\*[\s\S]*?\*\//g, '');
-  const hit = rules(css).filter((r) => r.selectors.includes('.search-box.expanded input')
-    && r.selectors.includes('.search-box:focus-within input'));
-  assert.ok(hit.length > 0,
-    '存在同时匹配 .search-box.expanded input 与 .search-box:focus-within input 的规则');
-  const body = hit.map((r) => r.body).join('\n').replace(/\s+/g, ' ');
-  assert.match(body, /opacity:\s*1/, '展开态规则体必须含 opacity: 1（打字可见）');
+// ── 1：展开态宽度真的变大（.expanded 与 :focus-within 两条路径）──
+// 原来查：components.css 里 `.search-box.expanded input, .search-box:focus-within input { opacity: 1 }`。
+// 现在查：SiteHeader 的 search-box 同时带 [&.expanded]:w-44 与 focus-within:w-44，且构建 CSS 里
+//         两条选择器都产出 width 声明。等价性：都是「展开态让输入框可见/可用」，从 opacity 换成宽度。
+test('导航#1：展开态同时由 .expanded 与 :focus-within 驱动，且宽度真的展开', () => {
+  assert.match(SITE_HEADER, /\[&\.expanded\]:w-44/, 'expanded 类展开宽度');
+  assert.match(SITE_HEADER, /focus-within:w-44/, 'focus-within 也展开');
+  // Tailwind v4 把 w-44 编译成 calc(var(--spacing) * 44)；配合根 --spacing:.25rem 即 11rem。
+  assert.match(BUILD_CSS, /\.expanded[^{]*\{[^}]*width:\s*calc\(var\(--spacing\)\s*\*\s*44\)/, '.expanded 产出宽度声明（w-44）');
+  assert.match(BUILD_CSS, /:focus-within[^{]*\{[^}]*width:\s*calc\(var\(--spacing\)\s*\*\s*44\)/, ':focus-within 产出宽度声明（w-44）');
+  assert.match(BUILD_CSS, /--spacing:\s*\.25rem/, '根 --spacing:.25rem → w-44 实际就是 11rem');
 });
 
-// ── 2：折叠态 36px 盒子里只留图标，靠 justify-content 居中 ────────
-test('导航#2：components.css 的 .search-box input 为 flex: 0 0 auto（图标居中）', () => {
-  const css = COMPONENTS_CSS.replace(/\/\*[\s\S]*?\*\//g, '');
-  const hit = rules(css).filter((r) => r.selectors.includes('.search-box input'));
-  assert.ok(hit.length > 0, '存在 .search-box input 规则');
-  const body = hit.map((r) => r.body).join('\n').replace(/\s+/g, ' ');
-  assert.match(body, /flex:\s*0\s+0\s+auto/, '.search-box input 必须 flex: 0 0 auto');
+// ── 2：折叠态固定窄盒，输入框可收缩 ───────────────────────────────
+test('导航#2：折叠态是固定窄盒（w-9），输入框 min-w-0 可收缩', () => {
+  assert.match(SITE_HEADER, /class="search-box[^"]*\bw-9\b/, '折叠态固定宽度');
+  assert.match(SITE_HEADER, /id="search"[^>]*class="[^"]*min-w-0/, '输入框 min-w-0（不撑破窄盒）');
 });
 
-// ── 3：登录后台恢复按钮外观，与 .icon-btn 成组 ────────────────────
-test('导航#3：components.css 的 .admin-link 有描边与底色，不再是裸图标', () => {
-  const css = COMPONENTS_CSS.replace(/\/\*[\s\S]*?\*\//g, '');
-  const hit = rules(css).filter((r) => r.selectors.includes('.admin-link'));
-  assert.ok(hit.length > 0, '存在 .admin-link 规则');
-  const body = hit.map((r) => r.body).join('\n').replace(/\s+/g, ' ');
-  assert.match(body, /border:\s*1px solid/, '.admin-link 必须有 1px solid 描边');
-  assert.match(body, /background:\s*var\(--surface-1\)/, '.admin-link 必须有 surface-1 底色');
-  assert.doesNotMatch(body, /border:\s*none/, '.admin-link 不再允许 border: none');
-
-  const hover = rules(css).filter((r) => r.selectors.includes('.admin-link:hover'));
-  assert.ok(hover.length > 0, '存在 .admin-link:hover 规则');
-  const hoverBody = hover.map((r) => r.body).join('\n').replace(/\s+/g, ' ');
-  assert.match(hoverBody, /border-color:\s*var\(--accent\)/, 'hover 描边用 accent（同 .icon-btn）');
-  assert.match(hoverBody, /background:\s*var\(--accent-light\)/, 'hover 底色用 accent-light（同 .icon-btn）');
+// ── 3：登录后台按钮用 daisyUI 的圆形按钮 ──────────────────────────
+test('导航#3：.admin-link 用 daisyUI btn/btn-ghost/btn-circle，不再是裸图标', () => {
+  assert.match(SITE_HEADER, /class="admin-link btn btn-ghost btn-circle btn-sm/, '.admin-link 是 daisyUI 圆形按钮');
+  assert.match(BUILD_CSS, /\.btn-circle\s*\{[^}]*border-radius/, 'btn-circle 产出圆角声明');
+  // daisyUI 5 的 btn-ghost 用 --btn-bg:#0000 表达透明底（#0000 = 全透明），语义等价。
+  assert.match(BUILD_CSS, /\.btn-ghost\s*\{[^}]*--btn-bg:\s*#0000/, 'btn-ghost 产出透明底（--btn-bg:#0000）');
 });
 
-// ── 4：≤340px 极窄屏规则同步覆盖 :focus-within ────────────────────
-test('导航#4：dashboard.css ≤340px 块的 .search-box 展开规则覆盖 :focus-within', () => {
-  const css = DASHBOARD_CSS.replace(/\/\*[\s\S]*?\*\//g, '');
-  const blocks = mediaBlocks(css, 'max-width: 340px');
-  assert.ok(blocks.length > 0, '存在 @media (max-width: 340px) 块');
-  const narrow = blocks.join('\n');
-  const hit = rules(narrow).filter((r) => r.selectors.includes('.search-box.expanded'));
-  assert.ok(hit.length > 0, '≤340px 块内存在 .search-box.expanded 规则');
-  assert.ok(hit.some((r) => r.selectors.includes('.search-box:focus-within')),
-    '≤340px 块内同一规则要同时覆盖 .search-box:focus-within');
+// ── 4：≤340px 极窄屏的展开宽度被单独压住 ─────────────────────────
+test('导航#4：≤340px 极窄屏的展开宽度被单独收紧（max-[340px] 覆盖 :focus-within）', () => {
+  assert.match(SITE_HEADER, /max-\[340px\]:focus-within:w-28/, '极窄屏 focus-within 宽度');
+  assert.match(SITE_HEADER, /max-\[340px\]:\[&\.expanded\]:w-28/, '极窄屏 expanded 宽度');
+  // Tailwind v4 的 max-[340px] 编译成 `@media not all and (min-width:340px)`；旧写法是 max-width。
+  const narrow = mediaBlocks(BUILD_CSS, 'max-width: 340px').join('\n')
+    || mediaBlocks(BUILD_CSS, 'width < 340px').join('\n')
+    || mediaBlocks(BUILD_CSS, 'not all and (min-width:340px)').join('\n');
+  assert.ok(narrow, '存在 ≤340px 断点块');
+  assert.match(narrow, /focus-within[^{]*\{[^}]*width/, '≤340px 块里覆盖 :focus-within 的宽度');
 });
 
 // ── 5：JS 展开/收起健壮（点 input 也展开 + focusin 兜底）─────────

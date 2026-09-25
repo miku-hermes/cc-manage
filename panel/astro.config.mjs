@@ -1,14 +1,22 @@
 import { defineConfig } from 'astro/config';
+import tailwindcss from '@tailwindcss/vite';
 
-// B22：产物格式必须是 file —— Astro 默认的目录格式会把 /admin 输出成 admin/index.html，
-// 与 gateway 现有的显式路由（/、/admin）对不上，还会引入尾斜杠 / 重定向。
-// 这里保持与旧 public/*.html 一致的扁平产物：index.html / admin.html。
+// B24：前端完整重构 —— Astro 只做页面骨架，样式交给 Tailwind v4 + daisyUI 5。
+//
+// 产物格式仍是 file：/admin 输出 admin.html、/trend 输出 trend.html，与 gateway 的显式路由对齐。
+// B24d：样式改为**独立可缓存文件**，不再整包内联。
+//   - inlineStylesheets: 'never' → Tailwind/daisyUI 编译结果落成 dist/assets/panel.<hash>.css；
+//   - build.assets: 'assets' → 资源前缀就是 /assets/（Vite 默认的 /_astro/ 无对应静态路由）。
+//   gateway 的静态路由已加入 /assets 前缀（扩展名仍只放行 .css/.js），并对命中的产物发
+//   immutable 长缓存 —— 产物名带内容哈希，升级即换名，不会吃到旧缓存。
 export default defineConfig({
   build: {
     format: 'file',
+    assets: 'assets',
+    inlineStylesheets: 'never',
   },
-  // B22：产物必须是源码 HTML 的逐字节副本（零视觉变化）。Astro 默认会压缩 HTML
-  // （折叠空白 / 去掉结尾换行），这里关掉；页面根 <html is:raw> 保证 <style>/<script>/
-  // SVG 自闭合标签等全部原样输出（不会被作用域化或重写成 data-astro-cid）。
   compressHTML: false,
+  vite: {
+    plugins: [tailwindcss()],
+  },
 });

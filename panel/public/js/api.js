@@ -6,7 +6,7 @@ function apiFetch(path, opts = {}) {
 function setHint(text, bad) {
   const el = $('keyhint');
   el.textContent = text || '';
-  el.className = bad ? 'hint bad' : 'hint';
+  el.className = 'hint text-xs ' + (bad ? 'bad text-error' : 'text-base-content/60');
 }
 let loadGeneration = 0;
 async function load() {

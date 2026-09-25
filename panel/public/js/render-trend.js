@@ -870,24 +870,24 @@ function trendHeadHtml(samples, capacity, range) {
   const cap = Number(capacity) > 0 ? Math.round(Number(capacity)) : TREND_FULL_WINDOW_SAMPLES;
   const collecting = n < cap;
   const errZero = n >= 2 && isAllZero(list.map((s) => trendNum(s?.e)));
-  return '<div class="trend-head">'
-    + '<div class="trend-head-row">'
-    + '<span class="trend-heading">'
+  return '<div class="trend-head flex flex-col gap-1">'
+    + '<div class="trend-head-row flex flex-wrap items-center gap-2">'
+    + '<span class="trend-heading flex flex-wrap items-center gap-2 text-base font-semibold">'
     + '<span class="trend-title">近 24 小时趋势</span>'
-    + (collecting ? '<span class="trend-pill">数据收集中 ' + esc(n + '/' + cap) + '</span>' : '')
-    + (errZero ? '<span class="trend-pill trend-pill-ok">0 错误</span>' : '')
+    + (collecting ? '<span class="trend-pill badge badge-ghost badge-sm">数据收集中 ' + esc(n + '/' + cap) + '</span>' : '')
+    + (errZero ? '<span class="trend-pill trend-pill-ok badge badge-success badge-sm">0 错误</span>' : '')
     + '</span>'
     + '</div>'
-    + '<p class="trend-sub">' + esc(range) + '</p>'
+    + '<p class="trend-sub text-xs text-base-content/60">' + esc(range) + '</p>'
     + '</div>';
 }
 
 function trendStatHtml(label, value, unit, dotClass) {
-  return '<span class="trend-stat">'
-    + (dotClass ? '<span class="trend-dot ' + dotClass + '" aria-hidden="true"></span>' : '')
-    + '<span class="trend-stat-label">' + esc(label) + '</span>'
-    + '<b class="trend-stat-value">' + esc(value) + '</b>'
-    + '<span class="trend-stat-unit">' + esc(unit) + '</span>'
+  return '<span class="trend-stat flex items-baseline gap-1.5">'
+    + (dotClass ? '<span class="trend-dot inline-block h-2.5 w-2.5 shrink-0 rounded-full ' + dotClass + '" aria-hidden="true"></span>' : '')
+    + '<span class="trend-stat-label text-xs text-base-content/60">' + esc(label) + '</span>'
+    + '<b class="trend-stat-value text-lg font-semibold tabular-nums">' + esc(value) + '</b>'
+    + '<span class="trend-stat-unit text-xs text-base-content/60">' + esc(unit) + '</span>'
     + '</span>';
 }
 
@@ -903,10 +903,10 @@ function trendSummaryHtml(samples) {
   const e = last ? trendInt(trendNum(last.e)) : '—';
   const m = last ? trendUsdText(trendNum(last.m)) : '—';
   const errZero = list.length >= 2 && isAllZero(list.map((s) => trendNum(s?.e)));
-  return '<div class="trend-summary">'
-    + trendStatHtml('请求数', r, '次', 'trend-dot-request')
-    + trendStatHtml('错误数', e, '次', errZero ? 'trend-dot-error is-zero' : 'trend-dot-error')
-    + trendStatHtml('最新样本', m, 'USD', 'trend-dot-balance')
+  return '<div class="trend-summary mt-3 flex flex-wrap gap-4 border-t border-base-300 pt-3">'
+    + trendStatHtml('请求数', r, '次', 'trend-dot-request bg-[var(--chart-series-request)]')
+    + trendStatHtml('错误数', e, '次', (errZero ? 'trend-dot-error is-zero opacity-40' : 'trend-dot-error') + ' bg-[var(--chart-series-error)]')
+    + trendStatHtml('最新样本', m, 'USD', 'trend-dot-balance bg-[var(--chart-series-balance)]')
     + '</div>';
 }
 
@@ -940,11 +940,11 @@ function renderTrend(data) {
   // 样本 < 2：不建图容器、也不为一张空图去拉库，只给中性「数据不足」态（绝不画假线）
   const insufficient = samples.length < 2;
   const plot = insufficient
-    ? '<div class="trend-empty" role="img" aria-label="' + esc(ariaLabel) + '">数据不足，等待更多样本</div>'
-    : '<div class="trend-chart" role="img" aria-label="' + esc(ariaLabel) + '"></div>';
+    ? '<div class="trend-empty flex h-64 items-center justify-center text-base-content/50" role="img" aria-label="' + esc(ariaLabel) + '">数据不足，等待更多样本</div>'
+    : '<div class="trend-chart h-64 w-full" role="img" aria-label="' + esc(ariaLabel) + '"></div>';
   host.innerHTML = trendHeadHtml(samples, capacity, range)
     + plot
-    + '<p class="trend-fallback" hidden>图表库加载失败，已改用文本摘要。</p>'
+    + '<p class="trend-fallback text-sm text-warning" hidden>图表库加载失败，已改用文本摘要。</p>'
     + trendSummaryHtml(samples);
 
   if (insufficient) return;

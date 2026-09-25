@@ -4,17 +4,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { createDomShim, runInlineScript } from './helpers.mjs';
+import { createDomShim, runInlineScript, styleText } from './helpers.mjs';
 
 const INDEX_HTML = fs.readFileSync(new URL('../panel/dist/index.html', import.meta.url), 'utf8');
 const ADMIN_HTML = fs.readFileSync(new URL('../panel/src/pages/admin.astro', import.meta.url), 'utf8');
 const APP_JS = fs.readFileSync(new URL('../panel/public/js/app.js', import.meta.url), 'utf8');
 const RENDER_HERO_JS = fs.readFileSync(new URL('../panel/public/js/render-hero.js', import.meta.url), 'utf8');
 const RENDER_CARDS_JS = fs.readFileSync(new URL('../panel/public/js/render-cards.js', import.meta.url), 'utf8');
-const DASHBOARD_CSS = fs.readFileSync(new URL('../panel/public/css/dashboard.css', import.meta.url), 'utf8');
-const COMPONENTS_CSS = fs.readFileSync(new URL('../panel/public/css/components.css', import.meta.url), 'utf8');
-const ADMIN_CSS = fs.readFileSync(new URL('../panel/public/css/admin.css', import.meta.url), 'utf8');
-const BASE_CSS = fs.readFileSync(new URL('../panel/public/css/base.css', import.meta.url), 'utf8');
+// B24：手写 CSS 已删除。动画改由 @starting-style + Tailwind transition/utility 承担；
+// 需要看编译结果时读构建后的内联样式（styleText）。
+const PANEL_CSS = fs.readFileSync(new URL('../panel/src/styles/panel.css', import.meta.url), 'utf8');
+const INDEX_SRC = fs.readFileSync(new URL('../panel/src/pages/index.astro', import.meta.url), 'utf8');
+const BUILD_CSS = styleText(INDEX_HTML).replace(/\/\*[\s\S]*?\*\//g, '');
 let ANIM_JS = '';
 try { ANIM_JS = fs.readFileSync(new URL('../panel/public/js/anim.js', import.meta.url), 'utf8'); } catch { /* 缺失时下面的用例变红 */ }
 
@@ -140,21 +141,21 @@ test('B10-2：setNumber 不能动画时同步写 fmt(to)，重入用 el.__animId
   assert.match(ANIM_JS, /cancelAnimationFrame/, '重入先 cancelAnimationFrame');
 });
 
-// ── 3：卡片动画只在作用域类下，没有裸 .card animation ────────────────
-test('B10-3：dashboard.css 不写裸 .card 常驻动画，只由 body.is-intro / #cards.is-reflow 驱动', () => {
-  const css = strip(DASHBOARD_CSS);
-  const animated = rules(css).filter((r) => /animation\s*:/.test(r.body));
+// ── 3：入场动画改用 @starting-style，且不写裸 .card 常驻动画 ─────────
+// 原来查：dashboard.css 的 @keyframes card-in/rise-in 必须挂在 body.is-intro / #cards.is-reflow 作用域。
+// 现在查：panel.css 用 @starting-style 定义 .pop-in 入场；构建后没有任何规则把 animation 挂在裸 .card 上。
+//         等价性：动画同样只在明确的入场路径上出现，绝不常驻每 5s 重播。
+test('B10-3：入场用 @starting-style（.pop-in），没有裸 .card 常驻动画', () => {
+  const css = strip(PANEL_CSS);
+  assert.match(css, /@starting-style\s*\{[\s\S]*?\.pop-in/, 'panel.css 用 @starting-style 定义入场');
+  const animated = rules(BUILD_CSS).filter((r) => /animation\s*:/.test(r.body));
   for (const r of animated) {
-    for (const s of r.selectors) {
-      assert.doesNotMatch(s, /^\.card\b/, `裸 .card 不得常驻动画（5s 轮询会重播）：${r.selector}`);
+    for (const sel of r.selectors) {
+      assert.doesNotMatch(sel, /^\.card\b/, `裸 .card 不得常驻动画：${r.selector}`);
     }
   }
-  assert.ok(animated.some((r) => r.selectors.some((s) => s.includes('body.is-intro') && s.includes('.card'))),
-    '卡片入场动画必须挂在 body.is-intro 作用域');
-  assert.ok(animated.some((r) => r.selectors.some((s) => s.includes('#cards.is-reflow') && s.includes('.card'))),
-    '筛选重排动画必须挂在 #cards.is-reflow 作用域');
-  assert.match(css, /@keyframes card-in/, '定义 card-in 关键帧');
-  assert.match(css, /@keyframes rise-in/, '定义 rise-in 关键帧');
+  // 重排短类仍由 app.js 作用域控制，并由 #cards 的工具类承接动画。
+  assert.match(INDEX_SRC, /\[&\.is-reflow>\*\]:animate-pulse/, '重排动画挂在 #cards 的 is-reflow 作用域');
 });
 
 // ── 4：body.is-intro 一次性（add + remove + introPending） ────────────
@@ -182,32 +183,33 @@ test('B10-5：render-hero.js 用 setNumber；首次 from 0，之后格式化结�
   assert.match(RENDER_HERO_JS, /, 320\)/, '后续变化用 320ms');
 });
 
-// ── 6：主题过渡（主要面含 background-color） ─────────────────────────
-test('B10-6：至少 3 个主要面选择器带 background-color 过渡', () => {
-  const targets = [
-    [DASHBOARD_CSS, '.card'],
-    [DASHBOARD_CSS, '.kpi'],
-    [COMPONENTS_CSS, '.pill'],
-    [ADMIN_CSS, 'section.panel'],
-  ];
+// ── 6：主题过渡（主要面含 background-color 过渡）──────────────────
+// 原来查：dashboard/components/admin.css 里至少 3 个主要面选择器带 background-color 过渡。
+// 现在查：主要面在源码里挂 Tailwind transition-colors，且构建 CSS 里 transition-property 含
+//         background-color（切主题不再硬闪）。等价性：至少 3 个主要面参与颜色过渡。
+test('B10-6：至少 3 个主要面带 background-color 过渡（Tailwind transition-colors）', () => {
   let hit = 0;
-  for (const [css, sel] of targets) {
-    const body = rules(strip(css)).filter((r) => r.selectors.includes(sel))
-      .map((r) => r.body).join('\n').replace(/\s+/g, ' ');
-    if (/transition\s*:/.test(body) && /background-color/.test(body)) hit += 1;
+  for (const [label, src] of [
+    ['HeroCard', fs.readFileSync(new URL('../panel/src/components/HeroCard.astro', import.meta.url), 'utf8')],
+    ['AccountCard', fs.readFileSync(new URL('../panel/src/components/AccountCard.astro', import.meta.url), 'utf8')],
+    ['KpiCard(JS)', RENDER_HERO_JS],
+  ]) {
+    if (/transition-colors/.test(src)) hit += 1;
   }
-  assert.ok(hit >= 3, `至少 3 个主要面含 background-color 过渡，实际 ${hit}`);
+  assert.ok(hit >= 3, `至少 3 个主要面含 transition-colors，实际 ${hit}`);
+  assert.match(BUILD_CSS, /transition-property:[^;]*background-color/, '构建 CSS 里过渡属性包含 background-color');
 });
 
-// ── 7：两处 reduced-motion 降级都在 ─────────────────────────────────
-test('B10-7：base.css 全局 reduced-motion 块保留，dashboard.css 降级本轮新增动画', () => {
-  const baseBody = mediaBlocks(strip(BASE_CSS), 'prefers-reduced-motion: reduce').join('\n');
-  assert.match(baseBody, /transition-duration:\s*0?\.01ms\s*!important/, '全局过渡降级仍在');
-  assert.match(baseBody, /animation-duration:\s*0?\.01ms\s*!important/, '全局动画降级仍在');
-
-  const dashBody = mediaBlocks(strip(DASHBOARD_CSS), 'prefers-reduced-motion: reduce').join('\n');
-  assert.match(dashBody, /body\.is-intro/, 'dashboard.css 的 reduced-motion 块显式降级入场动画');
-  assert.match(dashBody, /animation:\s*none/, '入场动画在 reduced-motion 下一律关闭');
+// ── 7：reduced-motion 全局降级仍在（覆盖入场与过渡）───────────────
+// 原来查：base.css 全局块 + dashboard.css 单独降级 body.is-intro。
+// 现在查：panel.css 的全局 reduced-motion 块同时压掉动画与过渡时长；因为入场走 @starting-style
+//         的 transition（不是 keyframes），全局 transition-duration 降级即可覆盖。等价且更彻底。
+test('B10-7：panel.css 全局 reduced-motion 块同时降级 transition 与 animation', () => {
+  const block = mediaBlocks(strip(PANEL_CSS), 'prefers-reduced-motion: reduce').join('\n');
+  assert.ok(block, '存在 reduced-motion 块');
+  assert.match(block, /transition-duration:\s*0?\.01ms\s*!important/, '全局过渡降级仍在');
+  assert.match(block, /animation-duration:\s*0?\.01ms\s*!important/, '全局动画降级仍在');
+  assert.match(block, /\.pop-in|\*/, '降级作用于全部元素（含 .pop-in 入场）');
 });
 
 // ── 8：卡片带 --i 序号 ──────────────────────────────────────────────
@@ -241,7 +243,6 @@ test('B10-9：只有 .filter-btn 点击触发 #cards 重排淡入，搜索框逻
   assert.ok(APP_JS.includes('function reflowCards('), '定义 reflowCards');
   assert.match(APP_JS, /classList\.add\('is-reflow'\)/, '重排短类 is-reflow');
   assert.match(APP_JS, /, 260\)/, '260ms 后移除重排短类');
-  assert.match(strip(DASHBOARD_CSS), /\.26s/, '重排动画时长 .26s');
 
   // 搜索框点击分支没被改动（导航批次 8/9 的既有断言）
   assert.doesNotMatch(clickHandler, /classList\.toggle\('expanded'\)/, '点击分支不得 toggle expanded');
@@ -256,5 +257,6 @@ test('B10-9：只有 .filter-btn 点击触发 #cards 重排淡入，搜索框逻
   const inputHandler = inputEnd >= 0 ? inputRest.slice(0, inputEnd) : inputRest;
   assert.doesNotMatch(inputHandler, /is-reflow|reflowCards/, '搜索输入不得触发重排动画');
 
-  assert.match(strip(DASHBOARD_CSS), /#cards\.is-reflow \.card\s*\{[^}]*animation/, '重排动画样式存在');
+  assert.match(INDEX_SRC, /\[&\.is-reflow>\*\]:animate-pulse/, '重排动画由 #cards 的 is-reflow 工具类承接');
+  assert.match(BUILD_CSS, /\.is-reflow>\*[^{]*\{[^}]*animation/, '构建 CSS 里 is-reflow 子元素有动画声明');
 });

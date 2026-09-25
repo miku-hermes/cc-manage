@@ -56,13 +56,13 @@ test('B23-1：7 个可复用组件都存在于 panel/src/components/', () => {
 // ── 2：结构去重（每条结构只在一个源码文件里出现）────────────────────
 test('B23-2：关键结构标记在源码里只出现一次（结构唯一化）', () => {
   const markers = {
-    'KPI 卡结构 class="kpi-head"': ['class="kpi-head"', /^panel\/src\/components\/KpiCard\.astro$/],
+    'KPI 卡结构 class="kpi-head': ['class="kpi-head', /^panel\/src\/components\/KpiCard\.astro$/],
     'KPI 模板钩子 data-f="kpi-value"': ['data-f="kpi-value"', /^panel\/src\/components\/KpiCard\.astro$/],
-    '账号卡结构 class="card-head"': ['class="card-head"', /^panel\/src\/components\/AccountCard\.astro$/],
+    '账号卡结构 class="card-head': ['class="card-head', /^panel\/src\/components\/AccountCard\.astro$/],
     '账号卡模板钩子 data-f="account-head"': ['data-f="account-head"', /^panel\/src\/components\/AccountCard\.astro$/],
-    '额度条结构 class="credits-bar"': ['class="credits-bar"', /^panel\/src\/components\/CreditsBar\.astro$/],
-    'Hero 结构 class="hero-main"': ['class="hero-main"', /^panel\/src\/components\/HeroCard\.astro$/],
-    '头部结构 class="brand-name"': ['class="brand-name"', /^panel\/src\/components\/SiteHeader\.astro$/],
+    '额度条结构 class="credits-bar': ['class="credits-bar', /^panel\/src\/components\/CreditsBar\.astro$/],
+    'Hero 结构 class="hero-main': ['class="hero-main', /^panel\/src\/components\/HeroCard\.astro$/],
+    '头部结构 class="brand-name': ['class="brand-name', /^panel\/src\/components\/SiteHeader\.astro$/],
     '空态卡结构 class="card empty"': ['class="card empty"', /^panel\/public\/js\/utils\.js$/],
   };
   for (const [label, [marker, expected]] of Object.entries(markers)) {
@@ -76,8 +76,8 @@ test('B23-2：关键结构标记在源码里只出现一次（结构唯一化）
 test('B23-2b：变异验证口径 —— 同样的标记一旦在 JS 里再出现，计数就变 2', () => {
   // 这不是「实现细节」：filesContaining 就是上面那条断言用的同一个计数器。
   // 这里模拟「在 JS 里重新插入一段手拼的 KPI HTML」，确认计数器会抓到它。
-  const handBuilt = '<div class="kpi"><div class="kpi-head"></div></div>';
-  const hits = filesContaining('class="kpi-head"', [['panel/public/js/mutated.js', handBuilt]]);
+  const handBuilt = '<div class="kpi"><div class="kpi-head stat"></div></div>';
+  const hits = filesContaining('class="kpi-head', [['panel/public/js/mutated.js', handBuilt]]);
   assert.equal(hits.length, 2, '手拼 KPI HTML 会让 kpi-head 出现在第 2 个文件 → B23-2 变红');
 });
 

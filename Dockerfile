@@ -31,7 +31,7 @@ LABEL org.opencontainers.image.revision="${REVISION}"
 COPY package.json gateway.mjs ./
 COPY src/ ./src/
 # B22：面板不再从仓库 COPY 源码 —— 由 panel-build 产出的静态文件落到 /app/public，
-# 服务的 URL（/、/admin、/css/、/js/、/vendor/）与迁移前逐字一致。
+# 服务的 URL（/、/admin、/css/、/js/、/vendor/、/assets/）与迁移前逐字一致。
 # `COPY --from` 默认 root 属主，靠下面的 `chown -R node:node /app` 修正（顺序不能反）。
 COPY --from=panel-build /panel/dist/ ./public/
 RUN mkdir -p /app/data && chown -R node:node /app

@@ -94,31 +94,6 @@ function tickFreshness() {
     }
   }
 }
-// ── 樱花花瓣：约束在视口内，容器 overflow:hidden，尺寸小、透明度低 ──
-function petals() {
-  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-  const host = $('petals');
-  const tints = ['var(--accent)', '#f7b6c9', 'var(--accent-hover)'];
-  const count = 10;
-  for (let i = 0; i < count; i++) {
-    const p = document.createElement('span');
-    const size = 4 + Math.random() * 3;                       // 4–7px
-    // 约束花瓣在 [0, 100vw] 内：留出 ±5vw 飘移余量，永不贴边被裁
-    const lane = ((i + 0.5) / count) * 100;
-    const jitter = (Math.random() - 0.5) * (50 / count);
-    const left = Math.min(92, Math.max(8, lane + jitter));
-    p.className = 'petal';
-    p.style.left = left + '%';
-    p.style.width = size.toFixed(1) + 'px';
-    p.style.height = size.toFixed(1) + 'px';
-    p.style.background = tints[i % tints.length];
-    p.style.opacity = (0.15 + Math.random() * 0.1).toFixed(2);  // 0.15–0.25
-    p.style.animationDuration = (14 + Math.random() * 10).toFixed(1) + 's';
-    p.style.animationDelay = (-Math.random() * 24).toFixed(1) + 's';
-    host.appendChild(p);
-  }
-}
-
 // ── 首屏入场（批次 10）：只由一次性的 body.is-intro 驱动 ──────────────
 // 5s 轮询会整块重建 #cards，若把 animation 写在常驻 .card 上就会每 5 秒重播；
 // 这里首次成功渲染后加类、约 1150ms 后移除，之后的轮询重建不再匹配任何动画选择器。
@@ -171,7 +146,6 @@ function boot() {
   const savedTheme = storedTheme();
   if (savedTheme) document.documentElement.setAttribute('data-theme', savedTheme);
   watchSystemTheme();                        // 未手动选择时跟随系统主题变化
-  petals();
   tick();
   setInterval(tick, 1000);
 

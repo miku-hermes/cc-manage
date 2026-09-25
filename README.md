@@ -28,7 +28,7 @@ src/quota.mjs               Command Code 额度查询
 src/scheduler.mjs           账号选择：打分 + 粘性 + 冷却 + 自动暂停/恢复
 src/proxy.mjs               反代转发（流式透传 + 背压 + 失败换号重试）
 src/log.mjs                 日志 + 脱敏
-panel/                      Astro 面板工程（源码：src/pages/*.astro + public/css|js；构建产物：dist/ → 运行镜像的 public/）
+panel/                      Astro 面板工程（源码：src/pages/*.astro + public/js；构建产物：dist/ → 运行镜像的 public/）
 panel/src/pages/index.astro 公开只读额度面板（构建为 public/index.html）
 panel/src/pages/admin.astro 后台：登录/初始化 + CC key / 客户端 key / 管理员管理（构建为 public/admin.html）
 panel/public/vendor/echarts.min.js 前端绘图库 ECharts 6.1.0（全量构建，Apache-2.0；懒加载，署名见 panel/public/vendor/README.md）
@@ -59,10 +59,11 @@ npm start                                            # 监听 127.0.0.1:3051
 
 ### 静态资源缓存与前端库升级
 
-面板的 `panel/public/css`、`panel/public/js`（构建后服务在 `/css`、`/js`）沿用 `cache-control: no-cache`（改动即时生效）；`panel/public/vendor/` 下的
-第三方库（文件名内嵌版本号）发 `public, max-age=31536000, immutable` 长缓存，避免 1.07MB 的 ECharts
-每次都被重下。**升级库时必须改文件名或加版本参数**（如同名覆盖，老客户端会一直吃旧缓存），
-详见 `panel/public/vendor/README.md`。
+面板的 `panel/public/js`（构建后服务在 `/js`）沿用 `cache-control: no-cache`（改动即时生效）；Astro/Vite
+构建产物 `panel/dist/assets/*.css`（文件名带内容哈希，服务在 `/assets`）与 `panel/public/vendor/`
+下的第三方库（文件名内嵌版本号）都发 `public, max-age=31536000, immutable` 长缓存 —— 产物名随内容变化，
+升级即换名，不会吃到旧缓存。**手动升级 vendor 库时必须改文件名或加版本参数**，详见
+`panel/public/vendor/README.md`。（`/css` 前缀是 B22 之前的遗留入口，当前无产物引用，路由保留未删。）
 
 ### Docker 部署（一键起网关 + 协议内核）
 

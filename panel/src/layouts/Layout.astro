@@ -1,0 +1,41 @@
+---
+/* B24：三个页面共用的文档骨架。
+   - 样式入口只有一个：styles/panel.css（Tailwind v4 + daisyUI 5），由 Astro 内联进页面。
+   - 预绘制主题脚本在首次绘制前套用 data-theme，避免浅色→深色闪一下。
+   - color-scheme 分派留在内联 <style> 里（原生控件配色），用 set:html 原样输出。 */
+import '../styles/panel.css';
+
+const { title, description } = Astro.props;
+const schemeStyle = `<style>
+  :root { color-scheme: light dark; }
+  :root[data-theme="light"] { color-scheme: light; }
+  :root[data-theme="dark"] { color-scheme: dark; }
+</style>`;
+// 图标为 Lucide activity 的路径数据（非手绘），作为内联 favicon。
+const FAVICON = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%234b57c9' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2'/%3E%3C/svg%3E";
+---
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>{title}</title>
+<link rel="icon" href={FAVICON}>
+<meta name="description" content={description}>
+<Fragment set:html={schemeStyle} />
+<script is:raw>
+try {
+  var t = localStorage.getItem('cc-manage-theme');
+  if (t === 'light' || t === 'dark') {
+    document.documentElement.setAttribute('data-theme', t);
+  } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+    document.documentElement.setAttribute('data-theme', 'dark');
+  }
+} catch (e) { /* 忽略 */ }
+</script>
+</head>
+<body class="min-h-screen bg-base-200 text-base-content antialiased">
+<slot />
+</body>
+</html>

@@ -1,26 +1,36 @@
 ---
-/* Hero 卡：余额是主角（大数字 = 剩余额度），构成明细一行说清口径。
-   本批次（B23）删掉两个冗余元素：
-   - 右上角实时时钟（与脚注「更新于 …」只差 3 秒，保留脚注这一个时间戳）；
-   - 「额度自动刷新」说明仍保留但简化为一句（见 utils.cadenceText）。
-   同时新增到 /trend 的明确入口（替代原来整块趋势图）。 */
+/* Hero：daisyUI card + radial-progress。余额是主角（大数字 = 剩余额度），
+   构成明细一行说清口径；趋势入口是一个极简按钮（不引 ECharts）。 */
 import StatusPill from './StatusPill.astro';
+import { RefreshCw, TrendingUp, ChevronRight } from '@lucide/astro';
 ---
-<section class="hero">
-  <div class="hero-main">
-    <h1 id="greeting" class="greeting">下午好</h1>
-    <div class="hero-balance">
-      <b id="balance">—</b>
-      <span id="bal-label" class="bal-label">剩余额度（USD）</span>
+<section class="hero-card overview card overflow-hidden border border-base-300 bg-base-100 shadow-sm transition-colors">
+  <!-- B24d：类名从 hero 改为 hero-card —— daisyUI 自带 .hero 组件（display:grid;
+       place-items:center），一个纯装饰类名把整张卡的内容挤成居中缩水块，
+       圆环与「网关状态」行因此失去左对齐。 -->
+  <div class="hero-main card-body gap-3">
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <h1 id="greeting" class="greeting text-xl font-semibold">下午好</h1>
+      <div id="date" class="hero-date badge badge-ghost"></div>
     </div>
-    <p id="bal-breakdown" class="hero-breakdown aux-text"></p>
-    <p class="hero-sub">网关状态 <StatusPill variant="health" id="health" /></p>
-    <p class="hero-meta aux-text"><span id="upstream"></span><span id="updated"></span><span id="cadence" class="hero-cadence"></span></p>
-  </div>
-  <div class="hero-aside">
-    <div id="date" class="hero-date"></div>
-    <div class="hero-tokens">累计 token <b id="tokens">0</b></div>
-    <button id="refresh-quota" class="btn refresh-quota" type="button">刷新额度</button>
-    <a class="trend-link" href="/trend" aria-label="查看近 24 小时趋势">查看近 24 小时趋势 →</a>
+    <div class="hero-balance flex flex-wrap items-baseline gap-x-3 gap-y-1">
+      <b id="balance" class="text-4xl font-extrabold tracking-tight tabular-nums">—</b>
+      <span id="bal-label" class="bal-label text-sm text-base-content/70">剩余额度（USD）</span>
+    </div>
+    <div class="hero-usage flex items-center gap-3">
+      <span id="usage-gauge" class="radial-progress text-primary" style="--value:0" role="progressbar" aria-label="本月额度已用 0%">0%</span>
+      <p id="bal-breakdown" class="hero-breakdown aux-text text-sm text-base-content/70"></p>
+    </div>
+    <p class="hero-sub text-sm">网关状态 <StatusPill variant="health" id="health" /></p>
+    <p class="hero-meta aux-text flex flex-wrap gap-x-4 gap-y-1 text-xs text-base-content/60">
+      <span id="upstream"></span><span id="updated"></span><span id="cadence" class="hero-cadence"></span>
+    </p>
+    <div class="hero-aside flex flex-wrap items-center gap-2 border-t border-base-300 pt-3">
+      <span class="hero-tokens text-sm text-base-content/70">累计 token <b id="tokens" class="text-base-content tabular-nums">0</b></span>
+      <button id="refresh-quota" class="btn btn-primary btn-sm gap-1" type="button"><RefreshCw size={15} />刷新额度</button>
+      <a class="trend-link btn btn-ghost btn-sm gap-1" href="/trend" aria-label="查看近 24 小时趋势">
+        <TrendingUp size={15} />近 24 小时趋势<ChevronRight size={14} />
+      </a>
+    </div>
   </div>
 </section>

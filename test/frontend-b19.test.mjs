@@ -9,15 +9,14 @@ import { createDomShim, runInlineScript, sleep, startTestGateway, request } from
 
 const INDEX_HTML = fs.readFileSync(new URL('../panel/dist/index.html', import.meta.url), 'utf8');
 const TREND_HTML = fs.readFileSync(new URL('../panel/dist/trend.html', import.meta.url), 'utf8');
-const ADMIN_HTML = fs.readFileSync(new URL('../panel/src/pages/admin.astro', import.meta.url), 'utf8');
+const ADMIN_HTML = fs.readFileSync(new URL('../panel/dist/admin.html', import.meta.url), 'utf8');
 const APP_JS = fs.readFileSync(new URL('../panel/public/js/app.js', import.meta.url), 'utf8');
 const APP_ADMIN_JS = fs.readFileSync(new URL('../panel/public/js/app-admin.js', import.meta.url), 'utf8');
 const MODAL_JS = fs.readFileSync(new URL('../panel/public/js/modal.js', import.meta.url), 'utf8');
 const RENDER_GATE_JS = fs.readFileSync(new URL('../panel/public/js/render-gate.js', import.meta.url), 'utf8');
 const ADMIN_STATE_JS = fs.readFileSync(new URL('../panel/public/js/admin-state.js', import.meta.url), 'utf8');
-const TOKENS_CSS = fs.readFileSync(new URL('../panel/public/css/tokens.css', import.meta.url), 'utf8');
-const COMPONENTS_CSS = fs.readFileSync(new URL('../panel/public/css/components.css', import.meta.url), 'utf8');
-const DASHBOARD_CSS = fs.readFileSync(new URL('../panel/public/css/dashboard.css', import.meta.url), 'utf8');
+// B24：手写 CSS 已删除，样式源码只剩 panel/src/styles/panel.css。
+const PANEL_CSS = fs.readFileSync(new URL('../panel/src/styles/panel.css', import.meta.url), 'utf8');
 
 const delay = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
 async function waitFor(fn, ms = 1000) {
@@ -325,7 +324,8 @@ test('B19-7：缺 name 的账号标题非空且可识别（前台卡片 + 后台
   const shim = dom(INDEX_HTML, indexFetch());
   const page = await runInlineScript(INDEX_HTML, shim);
   page.render(statusData([account({ keyId: 'dddd1234eeee', name: undefined, lastQuota: null })]));
-  const h2 = /<h2>([^<]*)<\/h2>/.exec(shim.el('cards').innerHTML);
+  // B24：卡片标题是 <h2 class="card-head …">（带类名/属性），选择器放宽为 <h2[^>]*>；行为断言不变。
+  const h2 = /<h2[^>]*>([^<]*)<\/h2>/.exec(shim.el('cards').innerHTML);
   assert.ok(h2 && h2[1].trim(), '卡片标题不得为空');
   assert.match(h2[1], /dddd1234/, '缺 name 时用 keyId 前 8 位识别');
 
@@ -338,7 +338,8 @@ test('B19-7：缺 name 的账号标题非空且可识别（前台卡片 + 后台
     return json({});
   });
   await waitFor(() => admin.shim.el('accounts').innerHTML.includes('dddd1234'));
-  const row = /<div class="cell-name">([^<]*)<\/div>/.exec(admin.shim.el('accounts').innerHTML);
+  // B24：备注名单元格 class 里同时有 Tailwind 工具类（cell-name font-medium），选择器放宽。
+  const row = /<div class="cell-name[^"]*">([^<]*)<\/div>/.exec(admin.shim.el('accounts').innerHTML);
   assert.ok(row && row[1].trim(), '后台表格备注名列不得为空');
   assert.match(row[1], /dddd1234/);
 });
@@ -369,28 +370,33 @@ test('B19-9：删掉的类名 / 令牌不再出现在 CSS 与 HTML/JS 里', () =
   // B22：两页 HTML 的源码在 panel/src/pages（.astro），其余资源在 panel/public。
   const files = [
     '../panel/src/pages/index.astro', '../panel/src/pages/admin.astro',
+    '../panel/src/styles/panel.css',
     'js/utils.js', 'js/anim.js', 'js/api.js', 'js/state.js', 'js/theme.js', 'js/render-hero.js',
     'js/render-cards.js', 'js/render-trend.js', 'js/app.js', 'js/admin-utils.js', 'js/admin-api.js',
     'js/admin-state.js', 'js/login-gate.js', 'js/render-gate.js', 'js/render-users.js',
     'js/render-accounts-table.js', 'js/render-keys-table.js', 'js/logs.js', 'js/modal.js', 'js/app-admin.js',
-    'css/tokens.css', 'css/base.css', 'css/components.css', 'css/dashboard.css', 'css/admin.css',
   ];
   const all = files.map((f) => fs.readFileSync(new URL(
     f.startsWith('../') ? f : '../panel/public/' + f, import.meta.url), 'utf8')).join('\n');
-  for (const needle of ['skeleton', 'skeleton-shimmer', 'card-display', 'test-note.pending', 'lv-info', '--shadow-soft', '--shadow-lift']) {
+  // B24 说明：'skeleton' 从死代码清单移除 —— 它不再是旧实现残留，而是 daisyUI 的加载占位组件
+  // （admin 的 #boot-loading 用了 skeleton）。旧实现残留类名其余各项仍在清单里。
+  for (const needle of ['skeleton-shimmer', 'card-display', 'test-note.pending', 'lv-info', '--shadow-soft', '--shadow-lift']) {
     assert.ok(!all.includes(needle), `确证死代码不得再出现：${needle}`);
   }
-  assert.ok(!/^\.btn\s*\{/m.test(DASHBOARD_CSS), 'dashboard.css 不再重复定义 .btn');
-  assert.ok(!/\.btn:disabled/.test(DASHBOARD_CSS), 'dashboard.css 不再覆盖 .btn:disabled');
+  assert.ok(!/^\.btn\s*\{/m.test(PANEL_CSS), 'panel.css 不再自己定义 .btn（交给 daisyUI）');
+  assert.ok(!/\.btn:disabled/.test(PANEL_CSS), 'panel.css 不再覆盖 .btn:disabled');
   assert.ok(!/\bvw\b/.test(APP_JS), 'app.js 不再声明未使用的局部变量 vw');
   assert.ok(!/tests:\s*\[\]/.test(ADMIN_STATE_JS), 'admin-state.js 不再有 state.tests');
 });
 
 // ── 10：其余小项 ────────────────────────────────────────────────────
-test('B19-10a：--scrim 令牌（浅/深）与 .modal 使用 var(--scrim)', () => {
-  assert.match(TOKENS_CSS, /--scrim:\s*rgba\(23,\s*35,\s*59,\s*\.38\)/, '浅色 scrim');
-  assert.match(TOKENS_CSS, /:root\[data-theme="dark"\][\s\S]*--scrim:\s*rgba\(0,\s*0,\s*0,\s*\.55\)/, '暗色 scrim');
-  assert.match(COMPONENTS_CSS, /\.modal\s*\{[^}]*background:\s*var\(--scrim\)/, '.modal 用 --scrim');
+// 原来查：tokens.css 里 --scrim 浅 rgba(23,35,59,.38) / 深 rgba(0,0,0,.55)，components.css 的 .modal 用 var(--scrim)。
+// 现在查：panel.css 里同一对 --scrim 值，且 daisyUI modal 的 .modal-backdrop 用 var(--scrim)。
+//         等价性：遮罩仍是「浅色半透明蓝黑 / 深色更黑」两套值，仍由同一令牌驱动。
+test('B19-10a：--scrim 令牌（浅/深）与 .modal-backdrop 使用 var(--scrim)', () => {
+  assert.match(PANEL_CSS, /--scrim:\s*rgba\(23,\s*35,\s*59,\s*\.38\)/, '浅色 scrim');
+  assert.match(PANEL_CSS, /:root\[data-theme="dark"\][\s\S]*--scrim:\s*rgba\(0,\s*0,\s*0,\s*\.55\)/, '暗色 scrim');
+  assert.match(PANEL_CSS, /\.modal-backdrop\s*\{[^}]*background:\s*var\(--scrim\)/, '.modal-backdrop 用 --scrim');
 });
 
 test('B19-10b：无手动选择时跟随系统主题变化（matchMedia change）', async () => {

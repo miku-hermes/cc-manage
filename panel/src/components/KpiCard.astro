@@ -1,18 +1,17 @@
 ---
-/* KPI 卡：结构只在这里出现一次。
-   - index.astro 用它在 <template id="tpl-kpi"> 里产出唯一模板；
-   - render-hero.js 克隆模板 + [data-f] 填值，零值卡（hideWhenZero）整张不渲染。
-   三个图标都放在模板里，JS 只切换 hidden —— 不需要任何 HTML 字符串。 */
+/* KPI 卡（daisyUI stat）：结构只在这里出现一次，index.astro 用它产出 <template id="tpl-kpi">。
+   三个 Lucide 图标都放在模板里，JS 只切换 hidden —— 不需要任何 HTML 字符串。 */
+import { Activity, TriangleAlert, Pause } from '@lucide/astro';
 ---
-<div class="kpi">
-  <div class="kpi-head">
-    <span class="kpi-icon" aria-hidden="true">
-      <svg data-f="kpi-icon-total" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-      <svg data-f="kpi-icon-errors" hidden viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
-      <svg data-f="kpi-icon-paused" hidden viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="14" y="4" width="4" height="16" rx="1"/><rect x="6" y="4" width="4" height="16" rx="1"/></svg>
+<div class="kpi stat bg-base-100">
+  <div class="kpi-head stat-title flex items-center gap-1.5">
+    <span class="kpi-icon text-base-content/50" aria-hidden="true">
+      <Activity data-f="kpi-icon-total" size={14} />
+      <TriangleAlert data-f="kpi-icon-errors" size={14} hidden />
+      <Pause data-f="kpi-icon-paused" size={14} hidden />
     </span>
     <span class="kpi-label" data-f="kpi-label"></span>
   </div>
-  <b data-f="kpi-value"></b>
-  <small class="kpi-sub" data-f="kpi-sub"></small>
+  <b class="stat-value text-2xl" data-f="kpi-value"></b>
+  <small class="kpi-sub stat-desc text-base-content/60" data-f="kpi-sub"></small>
 </div>

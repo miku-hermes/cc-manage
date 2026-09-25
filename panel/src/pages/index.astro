@@ -1,66 +1,27 @@
 ---
+import Layout from '../layouts/Layout.astro';
 import SiteHeader from '../components/SiteHeader.astro';
 import HeroCard from '../components/HeroCard.astro';
 import KpiCard from '../components/KpiCard.astro';
 import AccountCard from '../components/AccountCard.astro';
-
-/* 原生控件配色（滚动条 / 表单 / 日期选择器）：基础 + 手动主题分派。
-   B2-13 契约要求这块留在 HTML 内联 <style> 里；用 set:html 原样输出，
-   避免 Astro 把页面级 <style> 作用域化 / 压缩。 */
-const styleTag = `<style>
-  :root { color-scheme: light dark; }
-  :root[data-theme="light"] { color-scheme: light; }
-  :root[data-theme="dark"] { color-scheme: dark; }
-</style>`;
 ---
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light dark">
-<title>cc-manage · 额度面板</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20fill='%23e8668a'%20d='M12%202.6l2.5%206.2%206.2%202.5-6.2%202.5-2.5%206.2-2.5-6.2L3.3%2011.3l6.2-2.5z'/%3E%3C/svg%3E">
-<meta name="description" content="cc-manage 额度面板：Command Code 多账号反代网关的账号额度、可用性与请求 KPI 概览。">
-<Fragment set:html={styleTag} />
-<script is:raw>
-/* 预绘制主题：首次绘制前套用已保存/系统偏好的主题，避免浅色→深色闪一下。
-   只在 localStorage 可用且确有保存值、或系统偏好深色时才写 data-theme；
-   localStorage 抛错时什么也不做，交给 CSS 默认浅色兜底。 */
-try {
-  var t = localStorage.getItem('cc-manage-theme');
-  if (t === 'light' || t === 'dark') {
-    document.documentElement.setAttribute('data-theme', t);
-  } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-    document.documentElement.setAttribute('data-theme', 'dark');
-  }
-} catch (e) { /* 忽略 */ }
-</script>
-<link rel="stylesheet" href="css/tokens.css">
-<link rel="stylesheet" href="css/base.css">
-<link rel="stylesheet" href="css/components.css">
-<link rel="stylesheet" href="css/dashboard.css">
-</head>
-<body>
-<div class="petals" id="petals" aria-hidden="true"></div>
-
+<Layout title="cc-manage · 额度面板" description="cc-manage 额度面板：Command Code 多账号反代网关的账号额度、可用性与请求 KPI 概览。">
 <SiteHeader />
 
-<main>
+<main class="mx-auto flex w-full max-w-6xl flex-col gap-4 px-4 py-4 2xl:max-w-[1600px]">
   <HeroCard />
 
   <!-- KPI 行：唯一模板在这里，render-hero.js 克隆它并按需隐藏零值卡 -->
-  <section class="kpis" id="kpis">
-    <template id="tpl-kpi"><KpiCard /></template>
-  </section>
+  <section id="kpis" class="kpis stats stats-vertical w-full overflow-hidden rounded-box border border-base-300 bg-base-100 shadow-sm lg:stats-horizontal"></section>
 
-  <section class="filters" id="filters" role="group" aria-label="状态筛选"></section>
+  <section id="filters" role="group" aria-label="状态筛选" class="filters join w-full"></section>
 
-  <section class="grid" id="cards"></section>
+  <section id="cards" class="@container accounts grid grid-cols-1 gap-2 2xl:grid-cols-2 [&.is-reflow>*]:animate-pulse"></section>
 </main>
 
-<!-- 账号卡唯一模板：render-cards.js 克隆它并用 [data-f] 填值 -->
+<!-- 账号行 / KPI 卡的唯一模板：render-cards.js、render-hero.js 克隆它们并用 [data-f] 填值 -->
 <template id="tpl-account"><AccountCard /></template>
+<template id="tpl-kpi"><KpiCard /></template>
 
 <script src="js/utils.js" is:raw></script>
 <script src="js/anim.js" is:raw></script>
@@ -71,9 +32,8 @@ try {
 <script src="js/render-cards.js" is:raw></script>
 <script src="js/app.js" is:raw></script>
 <script is:raw>
-/* 引导块：外部脚本已按依赖顺序加载（utils → api → state → render-* → app）。
-   这里保留标签条渐隐状态类的维护（B2-17 契约要求这段留在 HTML 内联脚本里），
-   并把测试 vm 需要的全局暴露出去；启动逻辑在 js/app.js 的 boot()。 */
+/* 引导块：外部脚本按依赖顺序加载（utils → api → state → render-* → app）。
+   syncTagMasks 维护标签条渐隐状态；启动逻辑在 js/app.js 的 boot()。 */
 function syncTagMasks() {
   for (const el of document.querySelectorAll('#cards .tags')) {
     const max = Math.max(0, (el.scrollWidth || 0) - (el.clientWidth || 0));
@@ -82,11 +42,19 @@ function syncTagMasks() {
     el.classList.toggle('at-end', scrollable && (el.scrollLeft || 0) >= max - 1);
   }
 }
+/* 折叠行展开：把原生 <details> 的展开态同步到 aria-expanded（新增交互的可访问性契约）。 */
+document.addEventListener('toggle', (e) => {
+  const t = e.target;
+  if (t && String(t.tagName).toUpperCase() === 'DETAILS' && t.querySelector('summary')) {
+    const open = t.hasAttribute('open');
+    const summary = t.querySelector('summary');
+    summary.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+}, true);
 $('cards').addEventListener('scroll', syncTagMasks, true);
 window.state = state;
 window.renderCards = renderCards;
 window.syncTagMasks = syncTagMasks;
 boot();
 </script>
-</body>
-</html>
+</Layout>

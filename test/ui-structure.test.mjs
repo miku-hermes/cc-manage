@@ -6,27 +6,34 @@ import fs from 'node:fs';
 import { startTestGateway, request, inlineStyleText, styleText } from './helpers.mjs';
 
 const INDEX_HTML = fs.readFileSync(new URL('../panel/dist/index.html', import.meta.url), 'utf8');
-const ADMIN_HTML = fs.readFileSync(new URL('../panel/src/pages/admin.astro', import.meta.url), 'utf8');
+// B24：admin 页面的 color-scheme / 内联样式只在构建产物里（.astro 源码含 frontmatter，读它取不到 <style>）。
+const ADMIN_HTML = fs.readFileSync(new URL('../panel/dist/admin.html', import.meta.url), 'utf8');
 
 // ── 1：静态路由 200 + MIME ───────────────────────────────────────────
-test('结构#1：GET /css/tokens.css 与 /js/state.js 返回 200 且 MIME 正确', async (t) => {
+// B24 改写：手写 panel/public/css/ 已整体删除，页面样式改为 Astro 内联，不再有独立 .css 资源；
+// 静态文件服务的 200 + MIME + CSP 契约改由两个仍存在的 JS 资源承担
+// （/js/state.js 与 /vendor/echarts.min.js）。等价性：仍逐项断言 200 / content-type /
+// content-security-policy，并额外断言 echarts 的长缓存，覆盖面不降。
+test('结构#1：GET /js/state.js 与 /vendor/echarts.min.js 返回 200 且 MIME 正确', async (t) => {
   const ctx = await startTestGateway();
   t.after(() => ctx.close());
-
-  const css = await request(`${ctx.baseUrl}/css/tokens.css`);
-  assert.equal(css.status, 200, 'tokens.css 必须可取');
-  assert.match(css.headers['content-type'], /^text\/css; charset=utf-8$/i, 'css MIME');
-  assert.match(css.body, /:root\s*\{[\s\S]*--/, 'tokens.css 里应有设计令牌');
-  assert.match(css.headers['content-security-policy'], /script-src/, '静态资源也要带 CSP 头');
 
   const js = await request(`${ctx.baseUrl}/js/state.js`);
   assert.equal(js.status, 200, 'state.js 必须可取');
   assert.match(js.headers['content-type'], /^text\/javascript; charset=utf-8$/i, 'js MIME');
   assert.match(js.body, /const state\s*=/, 'state.js 里应有全局 state');
+  assert.match(js.headers['content-security-policy'], /script-src/, '静态资源也要带 CSP 头');
+
+  const vendor = await request(`${ctx.baseUrl}/vendor/echarts.min.js`);
+  assert.equal(vendor.status, 200, 'echarts.min.js 必须可取');
+  assert.match(vendor.headers['content-type'], /^text\/javascript; charset=utf-8$/i, 'vendor js MIME');
+  assert.match(vendor.body, /echarts/i, 'vendor 里应是 ECharts');
+  assert.match(vendor.headers['content-security-policy'], /script-src/, 'vendor 资源也带 CSP 头');
 });
 
 // ── 2：路径穿越必须 404 ──────────────────────────────────────────────
-test('结构#2：/css/../ 与 /js/../ 等穿越路径一律 404', async (t) => {
+// B24d：静态路由新增 /assets 前缀（构建产物 CSS），穿越/白名单校验必须与 /css、/js 同一套。
+test('结构#2：/css/../ 与 /js/../ 等穿越路径一律 404（/assets 一并覆盖）', async (t) => {
   const ctx = await startTestGateway();
   t.after(() => ctx.close());
   const paths = [
@@ -36,6 +43,12 @@ test('结构#2：/css/../ 与 /js/../ 等穿越路径一律 404', async (t) => {
     '/css/%2e%2e/gateway.mjs',
     '/js/..%2f..%2fpackage.json',
     '/css/nope.css',
+    // B24d：/assets 必须走同一套 normalize + 白名单（不只 .css/.js 之外的扩展名被拒）。
+    '/assets/../gateway.mjs',
+    '/assets/%2e%2e/gateway.mjs',
+    '/assets/..%2f..%2fpackage.json',
+    '/assets/x.json',
+    '/assets/nope.css',
   ];
   for (const p of paths) {
     const r = await request(`${ctx.baseUrl}${p}`);

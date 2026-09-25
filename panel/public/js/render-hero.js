@@ -4,12 +4,15 @@ let lastBalance = null;    // 上次余额数值；null = 尚未渲染过。无�
 let lastTokens = null;     // 上次 token 数值；null = 尚未渲染过
 const lastKpiValues = {};  // KPI 数字 id → 上次的值
 
-/** 一个数字格：首次从 0，之后格式化结果变了才动。 */
+/** 一个数字格：首次从 0 滚上来，之后格式化结果变了才用 320ms 滚过去。
+    关键：renderKpis 每轮都从 <template> 克隆**全新**节点，所以每次都必须把值写进
+    当前节点；不能因为「上次的值没变」就跳过（B24 回归：5s 轮询重建后数字变空白）。 */
 function paintKpiNumber(el, key, value) {
   if (!el) return;
   const prev = key in lastKpiValues ? lastKpiValues[key] : null;
   if (prev === null) setNumber(el, 0, value, num, 700);
   else if (num(prev) !== num(value)) setNumber(el, prev, value, num, 320);
+  else el.textContent = num(value);   // 值没变：仍要同步写终值到新节点
   lastKpiValues[key] = value;
 }
 
@@ -17,10 +20,10 @@ function paintKpiNumber(el, key, value) {
 function kpiModifier(opts, value) {
   const v = Number(value);
   if (!Number.isFinite(v)) return '';
-  if (opts.kind === 'danger' && v > 0) return ' is-danger';
-  if (opts.kind === 'warning' && opts.warnWhen && opts.warnWhen(v)) return ' is-warning';
-  if (opts.kind === 'accent' && v > 0) return ' is-accent';
-  if (v === 0) return ' is-muted';
+  if (opts.kind === 'danger' && v > 0) return ' is-danger text-error';
+  if (opts.kind === 'warning' && opts.warnWhen && opts.warnWhen(v)) return ' is-warning text-warning';
+  if (opts.kind === 'accent' && v > 0) return ' is-accent text-primary';
+  if (v === 0) return ' is-muted text-base-content/50';
   return '';
 }
 
@@ -47,7 +50,7 @@ function renderKpis(s, st) {
     const node = tpl.content.firstElementChild.cloneNode(true);
     const value = Number(def.value);
     node.id = 'kpi-box-' + def.key;
-    node.className = 'kpi' + kpiModifier(def, value);
+    node.className = 'kpi stat bg-base-100 transition-colors' + kpiModifier(def, value);
     const icon = field(node, 'kpi-icon-' + def.icon);
     for (const svg of node.querySelectorAll('.kpi-icon svg')) svg.hidden = svg !== icon;
     const label = field(node, 'kpi-label');
@@ -100,7 +103,12 @@ function breakdownText(accounts) {
   if (!t.count) return '尚未获取额度快照';
   // 口径写清：剩余额度是上方的大数字；这一行是「本月已用百分比 + 月度池构成」。
   const used = t.cap > 0 ? '本月已用 ' + pctText(t.percent) : '本月用量待同步';
-  return used + ' · 月度 $' + money(t.monthly) + ' · 购买 $' + money(t.purchased) + ' · 赠送 $' + money(t.free);
+  // 恒为 0 的额度构成不占位（购买 0 / 赠送 0 直接不出现）。
+  const parts = [];
+  if (t.monthly > 0) parts.push('月度 $' + money(t.monthly));
+  if (t.purchased > 0) parts.push('购买 $' + money(t.purchased));
+  if (t.free > 0) parts.push('赠送 $' + money(t.free));
+  return used + (parts.length ? ' · ' + parts.join(' · ') : '');
 }
 
 /* 状态筛选条：全部 / 可用 / 冷却 / 耗尽。
@@ -124,7 +132,8 @@ function renderFilters(accounts) {
     const active = state.viewFilter === key;
     const btn = document.createElement('button');
     btn.setAttribute('type', 'button');
-    btn.className = 'filter-btn' + (active ? ' is-active' : '');
+    // B24d：筛选条是主页面主要导航控件，加大字号 / 字重，active 用主色，别再是几乎看不见的小灰字。
+    btn.className = 'filter-btn btn btn-sm join-item text-sm font-semibold' + (active ? ' btn-active btn-primary is-active' : '');
     btn.setAttribute('data-filter', key);
     btn.setAttribute('aria-pressed', active ? 'true' : 'false');
     btn.textContent = label + ' ' + num(counts[key]);
@@ -161,6 +170,21 @@ function render(d) {
   $('bal-label').textContent = '剩余额度（USD）' + (unsynced ? ' · 含 ' + unsynced + ' 个未同步账号' : '');
   // 余额下方的构成明细（聚合口径见 breakdownText）。
   $('bal-breakdown').textContent = breakdownText(accounts);
+  // daisyUI radial-progress：本月额度已用的单一图形表达（读数仍在 breakdown 文字里）。
+  const totals = creditsTotals(accounts);
+  const gauge = $('usage-gauge');
+  if (gauge) {
+    if (totals.cap > 0 && Number.isFinite(totals.percent)) {
+      const pct = Math.max(0, Math.min(100, Math.round(totals.percent)));
+      gauge.setAttribute('style', '--value:' + pct);
+      gauge.textContent = pct + '%';
+      gauge.setAttribute('aria-label', '本月额度已用 ' + pct + '%');
+    } else {
+      gauge.setAttribute('style', '--value:0');
+      gauge.textContent = '—';
+      gauge.setAttribute('aria-label', '本月额度用量待同步');
+    }
+  }
 
   // KPI 卡：账号口径（账号数/可用/不可用）已合并进 Hero 的「网关状态 可用 N / M」，
   // 这里只保留不重复的指标；零值卡（暂停中）不渲染。结构在 KpiCard.astro。
@@ -187,6 +211,8 @@ function showPrivate() {
   $('upstream').textContent = '';
   $('updated').textContent = '';
   $('cadence').textContent = '';
+  const gauge = $('usage-gauge');
+  if (gauge) { gauge.setAttribute('style', '--value:0'); gauge.textContent = '—'; gauge.setAttribute('aria-label', '本月额度用量待同步'); }
   clearKpis();
   const filters = $('filters');
   if (filters) filters.innerHTML = '';

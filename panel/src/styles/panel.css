@@ -1,0 +1,243 @@
+/* B24 前端完整重构：唯一样式入口。
+   - 组件与配色主力：Tailwind CSS v4（@import）+ daisyUI 5（@plugin），不再有手写组件样式。
+   - 设计令牌：@theme（浅色默认值）+ daisyUI 自定义主题对 light/dark（oklch 调色）。
+   - @layer base 里的自定义属性是**运行时令牌**：data-theme 切换的图表/状态色，以及
+     ECharts 通过 getComputedStyle 读取的 --chart-*。Tailwind 的 @theme 没有「按
+     data-theme 覆盖」的语义，daisyUI 主题块只承载 daisyUI 自己的调色，所以这一小段
+     必须是普通自定义属性 —— 这是全仓仅存的手写 CSS，且只定义变量、不写组件样式。 */
+@import "tailwindcss";
+
+@source "../components";
+@source "../pages";
+@source "../../public/js";
+
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+
+@plugin "daisyui" { themes: false; }
+
+/* ── 品牌色：靛蓝（与旧桃粉无关）──────────────────────────────────── */
+@plugin "daisyui/theme" {
+  name: "light";
+  default: true;
+  prefersdark: false;
+  color-scheme: light;
+  --color-base-100: oklch(100% 0 0);
+  --color-base-200: oklch(97.5% 0.008 258);
+  --color-base-300: oklch(92.5% 0.014 258);
+  --color-base-content: oklch(26% 0.03 262);
+  --color-primary: oklch(51% 0.19 264);
+  --color-primary-content: oklch(98% 0.01 264);
+  --color-secondary: oklch(60% 0.09 222);
+  --color-secondary-content: oklch(98% 0.01 222);
+  --color-accent: oklch(66% 0.12 192);
+  --color-accent-content: oklch(20% 0.03 192);
+  --color-neutral: oklch(34% 0.02 262);
+  --color-neutral-content: oklch(97% 0.006 262);
+  --color-info: oklch(60% 0.14 240);
+  --color-info-content: oklch(98% 0.01 240);
+  --color-success: oklch(54% 0.15 155);
+  --color-success-content: oklch(98% 0.02 155);
+  --color-warning: oklch(70% 0.15 80);
+  --color-warning-content: oklch(25% 0.05 80);
+  --color-error: oklch(51% 0.19 27);
+  --color-error-content: oklch(98% 0.01 27);
+  --radius-selector: 0.5rem;
+  --radius-field: 0.5rem;
+  --radius-box: 0.75rem;
+  --border: 1px;
+  --depth: 1;
+  --noise: 0;
+}
+
+/* ── 深色主题：逐值调过（不是叠 opacity 的浅色版）────────────────── */
+@plugin "daisyui/theme" {
+  name: "dark";
+  default: false;
+  prefersdark: true;
+  color-scheme: dark;
+  --color-base-100: oklch(21.5% 0.017 262);
+  --color-base-200: oklch(25% 0.019 262);
+  --color-base-300: oklch(29% 0.021 262);
+  --color-base-content: oklch(95% 0.012 262);
+  --color-primary: oklch(72% 0.15 264);
+  --color-primary-content: oklch(18% 0.05 264);
+  --color-secondary: oklch(74% 0.08 222);
+  --color-secondary-content: oklch(18% 0.04 222);
+  --color-accent: oklch(78% 0.11 192);
+  --color-accent-content: oklch(18% 0.04 192);
+  --color-neutral: oklch(80% 0.02 262);
+  --color-neutral-content: oklch(20% 0.02 262);
+  --color-info: oklch(76% 0.12 240);
+  --color-info-content: oklch(18% 0.04 240);
+  --color-success: oklch(76% 0.15 155);
+  --color-success-content: oklch(18% 0.04 155);
+  --color-warning: oklch(82% 0.15 80);
+  --color-warning-content: oklch(22% 0.05 80);
+  --color-error: oklch(72% 0.17 27);
+  --color-error-content: oklch(18% 0.05 27);
+  --radius-selector: 0.5rem;
+  --radius-field: 0.5rem;
+  --radius-box: 0.75rem;
+  --border: 1px;
+  --depth: 1;
+  --noise: 0;
+}
+
+/* ── 语义令牌（@theme）：布局 / 字号 / 动效 / 非 daisyUI 色 ───────── */
+@theme {
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", ui-sans-serif, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Cascadia Mono", monospace;
+
+  /* 三套独立配色：品牌（brand）/ 状态（ok·warn·crit）/ 数据序列（series-*）。
+     状态色只表达健康度；数据量只由 series-* 承担。 */
+  --color-brand: oklch(51% 0.19 264);
+  --color-ok: oklch(54% 0.15 155);
+  --color-warn: oklch(70% 0.15 80);
+  --color-crit: oklch(51% 0.19 27);
+  --color-series-1: oklch(58% 0.10 250);
+  --color-series-2: oklch(51% 0.19 27);
+  --color-series-3: oklch(56% 0.11 192);
+
+  --glass-bg: rgba(255, 255, 255, .7);
+  --glass-blur: 16px;
+  --glass-border: rgba(230, 234, 242, .9);
+  --scrim: rgba(23, 35, 59, .38);
+  --dur-150: 150ms;
+  --dur-250: 250ms;
+  --ease-out: cubic-bezier(.22, .61, .36, 1);
+  --elev-1: 0 1px 2px rgba(16, 24, 40, .04), 0 4px 16px rgba(16, 24, 40, .06);
+  --elev-2: 0 2px 4px rgba(16, 24, 40, .05), 0 12px 30px rgba(16, 24, 40, .12);
+}
+
+@layer base {
+  /* 运行时令牌：浅色值。--chart-* 供 render-trend.js 通过 getComputedStyle 读取；
+     --accent/--danger/--text-secondary 是页面语义别名（导出给 JS 与测试口径）。 */
+  :root {
+    --text-secondary: #5c6779;
+    --text-tertiary: #6a7386;
+    --accent: #4b57c9;
+    --danger: #b91c1c;
+    --success: #15803d;
+    --warning: #b45309;
+    --chart-series-request: #5c6779;
+    --chart-series-error: #b91c1c;
+    --chart-series-balance: #0f766e;
+    --chart-grid: #e6eaf2;
+    --chart-grid-h: #e7ecf5;
+    --chart-now: #c2cbdc;
+    --chart-axis: #d8deea;
+    --chart-axis-label: #6a7386;
+    --chart-tooltip-bg: rgba(255, 255, 255, .97);
+    --chart-tooltip-border: #e6eaf2;
+    --chart-tooltip-text: #17233b;
+    --chart-cursor: rgba(92, 103, 121, .75);
+    --scrim: rgba(23, 35, 59, .38);
+  }
+
+  /* 深色运行时令牌：逐值给出，不用 opacity 兑暗。 */
+  :root[data-theme="dark"] {
+    --text-secondary: #a3adc0;
+    --text-tertiary: #8590a5;
+    --accent: #8f9bff;
+    --danger: #f87171;
+    --success: #4ade80;
+    --warning: #fbbf24;
+    --chart-series-request: #6b7688;
+    --chart-series-error: #f87171;
+    --chart-series-balance: #2dd4bf;
+    --chart-grid: #4a5568;
+    --chart-grid-h: #414c5f;
+    --chart-now: #454f63;
+    --chart-axis: #3a4456;
+    --chart-axis-label: #8590a5;
+    --chart-tooltip-bg: rgba(26, 31, 41, .97);
+    --chart-tooltip-border: #3a4456;
+    --chart-tooltip-text: #e8ecf4;
+    --chart-cursor: rgba(163, 173, 192, .75);
+    --scrim: rgba(0, 0, 0, .55);
+  }
+
+  html {
+    font-family: var(--font-sans);
+  }
+
+  /* 可见焦点环：键盘可达必须看得见（不靠 UA 默认的细虚线）。 */
+  :focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* 现代 CSS：/ ↔ /trend 的跨文档视图过渡。 */
+  @view-transition {
+    navigation: auto;
+  }
+
+  /* 现代 CSS：入场用 @starting-style（弹窗 / toast / 卡片明细），而不是 keyframes。 */
+  .pop-in {
+    opacity: 1;
+    translate: 0 0;
+    transition: opacity var(--dur-250) var(--ease-out), translate var(--dur-250) var(--ease-out);
+  }
+  @starting-style {
+    .pop-in {
+      opacity: 0;
+      translate: 0 6px;
+    }
+  }
+
+  /* 列表里存在 crit 行时，总览区自动出现警示描边（:has() 驱动，无需脚本）。 */
+  .overview:has(~ .accounts .is-crit) {
+    outline: 2px solid var(--color-error);
+    outline-offset: 2px;
+  }
+
+  /* daisyUI modal 的遮罩色走 --scrim（浅/深各自取值）。 */
+  .modal-backdrop {
+    background: var(--scrim);
+  }
+}
+
+/* ── Tailwind 自定义 utility：把「语义辅助文字 / 窄屏可滑动提示」交给框架 ──
+   aux-text 是模板里的语义钩子：颜色由运行时令牌 --text-secondary 提供（浅/深各自取值，
+   满足小字 AA 对比度），而不是每个元素各写一遍 text-*。
+   mask-fade-x / mask-fade-x-none / scrollbar-thin-x 同理：状态由 syncTagMasks 维护的
+   .is-scrollable / .at-end 类驱动，具体声明仍由 Tailwind 编译（不再手写 .tags 组件样式）。 */
+@utility aux-text {
+  color: var(--text-secondary);
+}
+
+@utility mask-fade-x {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+}
+
+@utility mask-fade-x-none {
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
+/* 错误/未同步提示统一带警示前缀（⚠），不靠颜色单独表意（阈值自解释）。 */
+@utility cell-error {
+  &::before { content: '⚠ '; }
+}
+
+@utility scrollbar-thin-x {
+  &::-webkit-scrollbar { height: 4px; }
+  &::-webkit-scrollbar-thumb {
+    background: color-mix(in oklab, var(--color-base-content) 25%, transparent);
+    border-radius: 9999px;
+  }
+}
+
+/* ── 动效降级：尊重 prefers-reduced-motion（全局兜底）────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: .01ms !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+}

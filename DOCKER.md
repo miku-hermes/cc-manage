@@ -47,7 +47,7 @@ ENV NODE_ENV=production
 # 只 COPY 运行必需的，禁止 `COPY . .`
 COPY package.json gateway.mjs ./
 COPY src/ ./src/
-# 面板静态产物落到 /app/public，服务 URL（/、/admin、/css/、/js/、/vendor/）不变。
+# 面板静态产物落到 /app/public，服务 URL（/、/admin、/css/、/js/、/vendor/、/assets/）不变。
 COPY --from=panel-build /panel/dist/ ./public/
 RUN mkdir -p /app/data && chown -R node:node /app
 USER node

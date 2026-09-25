@@ -33,16 +33,16 @@ function renderPublicNote() {
   if (!el) return;
   if (state.dashboardPublic) {
     el.textContent = '当前公开面板对外可见（PUBLIC_DASHBOARD=1）：任何访客都能看到账号数量与额度快照。如需隐藏，请设 PUBLIC_DASHBOARD=0 后重启。';
-    el.className = 'banner warn';
+    el.className = 'banner warn alert alert-warning';
   } else {
     el.textContent = '';
-    el.className = 'banner warn hidden';
+    el.className = 'banner warn alert alert-warning hidden';
   }
 }
 async function loadAll() {
   try {
     await loadAccounts();
-    $('autherr').className = 'banner hidden';
+    $('autherr').className = 'banner alert alert-error hidden';
     await Promise.all([loadKeys(), loadUsers(), loadEvents()]);
     clearLoadError();
     return true;

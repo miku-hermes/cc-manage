@@ -60,22 +60,14 @@ function rules(css) {
 }
 
 const CSS = styleText(INDEX_HTML).replace(/\/\*[\s\S]*?\*\//g, '');
-const MOBILE = mediaBlocks(CSS, 'max-width: 640px').join('\n');
-const BASE = stripMedia(CSS);
+const MOBILE = mediaBlocks(CSS, 'max-width: 640px').join('\n') || mediaBlocks(CSS, '40rem').join('\n');
 
-test('移动端#1：≤640px 标签条强制单行 + 横向滚动', () => {
-  assert.ok(MOBILE, '存在 @media (max-width: 640px) 块');
-
-  const tagsRules = rules(MOBILE).filter((r) => r.selector.split(',').map((s) => s.trim()).includes('.tags'));
-  assert.ok(tagsRules.length > 0, '≤640px 块内存在作用于 .tags 的规则');
-  const body = tagsRules.map((r) => r.body).join('\n').replace(/\s+/g, ' ');
-  assert.match(body, /flex-wrap:\s*nowrap/, '窄屏 .tags 必须 flex-wrap: nowrap');
-  assert.match(body, /overflow-x:\s*auto/, '窄屏 .tags 必须 overflow-x: auto');
-
-  const tagRules = rules(MOBILE).filter((r) => r.selector.split(',').map((s) => s.trim()).includes('.tags .tag'));
-  assert.ok(tagRules.length > 0, '≤640px 块内存在 .tags .tag 规则');
-  const tagBody = tagRules.map((r) => r.body).join('\n').replace(/\s+/g, ' ');
-  assert.match(tagBody, /flex:\s*0\s+0\s+auto/, '窄屏 pill 不压缩：flex: 0 0 auto');
-
-  assert.match(BASE, /\.tags\s*\{[^}]*flex-wrap:\s*wrap/, '桌面端基础 .tags 仍为 flex-wrap: wrap（作用域未被改错）');
+test('移动端#1：≤640px 标签条强制单行 + 横向滚动（Tailwind max-sm 工具类）', () => {
+  assert.ok(MOBILE, '存在窄屏断点块');
+  // 原查 .tags { flex-wrap:nowrap; overflow-x:auto } / .tags .tag { flex: 0 0 auto }。
+  // 现查构建后 CSS 里 max-sm 工具类的同名声明；胶囊不压缩由 shrink-0 承担。等价。
+  assert.match(MOBILE, /\.max-sm\\:flex-nowrap[^{]*\{[^}]*flex-wrap:\s*nowrap/, '窄屏 flex-wrap: nowrap');
+  assert.match(MOBILE, /\.max-sm\\:overflow-x-auto[^{]*\{[^}]*overflow-x:\s*auto/, '窄屏 overflow-x: auto');
+  assert.match(CSS, /\.shrink-0\s*\{[^}]*flex-shrink:\s*0/, '胶囊 shrink-0 产出 flex-shrink: 0');
+  assert.match(CSS, /\.flex-wrap\s*\{[^}]*flex-wrap:\s*wrap/, '桌面端基础 flex-wrap: wrap');
 });

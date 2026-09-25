@@ -1,6 +1,10 @@
 const $ = (id) => document.getElementById(id);
 /** 空态卡片外壳：结构只此一处（隐私模式提示 / 无匹配账号 / 账号池为空共用）。 */
-function emptyCard(inner) { return '<div class="card empty">' + inner + '</div>'; }
+function emptyCard(inner) {
+  // 结构与唯一出处保持在这里（b23 契约）：外层 class="card empty" 是钩子，
+  // 视觉由内层 daisyUI/Tailwind 类承担 —— 不引入第二份空态结构。
+  return '<div class="card empty"><div class="card-body text-base-content/60">' + inner + '</div></div>';
+}
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 /** keyId 前 8 位：卡片 / 表格在备注名缺失时的可识别兜底（与后台 admin-utils 同口径）。 */
 function shortId(id) { return String(id ?? '').slice(0, 8); }
@@ -14,7 +18,10 @@ function setHealth(text, opts = {}) {
   const el = $('health');
   if (!el) return;
   if (el.textContent !== text) el.textContent = text;
-  el.className = 'pill ' + (opts.alert ? 'bad' : (opts.tone || ''));
+  // 状态色只表达健康度：bad → badge-error，ok → badge-success，其余中性。
+  const tone = opts.alert ? 'bad' : (opts.tone || '');
+  const badge = tone === 'bad' ? 'badge-error' : tone === 'ok' ? 'badge-success' : 'badge-ghost';
+  el.className = 'pill badge ' + badge + ' ' + tone;
   const role = opts.alert ? 'alert' : 'status';
   const live = opts.alert ? 'assertive' : 'polite';
   if (el.getAttribute('role') !== role) el.setAttribute('role', role);

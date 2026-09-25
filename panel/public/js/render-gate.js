@@ -45,7 +45,7 @@ function showGate(mode, me) {
   $('gate-main').style.display = '';
   $('admin-head').style.display = 'none';
   $('admin-main').style.display = 'none';
-  $('gate-err').className = 'gate-err hidden';
+  $('gate-err').className = 'gate-err alert alert-error hidden text-sm';
   const setup = mode === 'setup';
   $('gate-title').textContent = setup ? '初始化后台' : '登录后台';
   $('gate-sub').innerHTML = setup
@@ -73,16 +73,16 @@ function showAdmin() {
 function gateError(message) {
   const el = $('gate-err');
   el.textContent = message;
-  el.className = 'gate-err';
+  el.className = 'gate-err alert alert-error text-sm';
 }
 function showLoadError(e) {
   const message = (e && e.message) || '未知错误';
   $('load-error-text').textContent = '数据加载失败：' + message + '，可点击「重试」恢复。';
-  $('load-error').className = 'banner load-error';
+  $('load-error').className = 'banner load-error alert alert-error';
 }
 function clearLoadError() {
   $('load-error-text').textContent = '';
-  $('load-error').className = 'banner load-error hidden';
+  $('load-error').className = 'banner load-error alert alert-error hidden';
 }
 // ── 只读模式：把所有写按钮置灰并说明原因 ──────────────────────────────
 function applyWritable(writable, reason) {
@@ -97,5 +97,5 @@ function applyWritable(writable, reason) {
     btn.disabled = locked;
   }
   $('readonly').textContent = locked ? (reason || '凭据以只读方式挂载，无法修改；请改用 config/ 目录挂载') : '';
-  $('readonly').className = locked ? 'banner warn' : 'banner hidden';
+  $('readonly').className = 'readonly text-sm ' + (locked ? 'warn text-warning' : 'hidden');
 }

@@ -749,9 +749,11 @@ export function createDomShim({ html, fetchImpl, localStorageData = {} }) {
   };
 }
 
-// ── 页面资源：B22 后源码在 panel/public/css、panel/public/js ─────────────────
+// ── 页面资源：JS 源码在 panel/public/js；样式分两处 ─────────────────────────
+// B24d 后页面样式是构建产物 panel/dist/assets/*.css（外链、可缓存），JS 仍是 panel/public/js。
 // 测试的「源码数据源」= HTML 内联文本 + 外链文件文本；断言本身一条不动。
 const PUBLIC_DIR = new URL('../panel/public/', import.meta.url);
+const DIST_DIR = new URL('../panel/dist/', import.meta.url);
 
 function attrOf(tag, name) {
   const m = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i').exec(tag);
@@ -767,7 +769,8 @@ export function inlineStyleText(html) {
   return [...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)].map((m) => m[1]).join('\n');
 }
 
-/** <link rel="stylesheet" href="..."> 指向的 panel/public/*.css 文件文本（按文档顺序）。 */
+/** <link rel="stylesheet" href="..."> 指向的独立样式文件文本（按文档顺序）。
+    B24d：Astro 产物在 panel/dist/assets/*.css；同时兼容旧的 panel/public/*.css。 */
 export function linkedStyleText(html) {
   const out = [];
   for (const m of html.matchAll(/<link\b[^>]*>/gi)) {
@@ -775,15 +778,19 @@ export function linkedStyleText(html) {
     if (!/\brel\s*=\s*("stylesheet"|'stylesheet'|stylesheet)/i.test(tag)) continue;
     const href = attrOf(tag, 'href');
     if (!href || isExternal(href)) continue;
-    try { out.push(fs.readFileSync(new URL(href, PUBLIC_DIR), 'utf8')); } catch { /* 缺失文件跳过 */ }
+    const ref = href.replace(/^\/+/, '').split(/[?#]/)[0];
+    let text = null;
+    for (const base of [DIST_DIR, PUBLIC_DIR]) {
+      try { text = fs.readFileSync(new URL(ref, base), 'utf8'); break; } catch { /* 换个目录再试 */ }
+    }
+    if (text != null) out.push(text);
   }
   return out.join('\n');
 }
 
 /**
  * 合并后的页面样式数据源：HTML 内联 <style> + 所有外链样式表。
- * B22 后样式在 panel/public/css/*.css；用它替换旧的「只取内联」实现，
- * 断言的正则/花括号解析完全不变。
+ * B24d 后主样式在 panel/dist/assets/*.css；断言的正则/花括号解析完全不变。
  */
 export function styleText(html) {
   return inlineStyleText(html) + '\n' + linkedStyleText(html);

@@ -3,11 +3,15 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "cc-manage 面板前端（Astro 构建管道）。B22 只搭管道：页面/CSS/JS 逐字搬入，零视觉变化。",
+  "description": "cc-manage 面板前端（Astro 5 + Tailwind v4 + daisyUI 5 + Lucide 图标）。B24：完全重构为组件化前端，样式全部由 Tailwind/daisyUI 承担，ECharts 仅在 /trend 页懒加载。",
   "scripts": {
     "build": "astro build"
   },
   "dependencies": {
-    "astro": "^5.0.0"
+    "@lucide/astro": "^1.48.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "astro": "^5.0.0",
+    "daisyui": "^5.7.46",
+    "tailwindcss": "^4.3.3"
   }
 }

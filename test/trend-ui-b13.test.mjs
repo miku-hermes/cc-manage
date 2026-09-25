@@ -4,12 +4,28 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { styleText } from './helpers.mjs';
 
 const INDEX_HTML = fs.readFileSync(new URL('../panel/dist/index.html', import.meta.url), 'utf8');
 const TREND_HTML = fs.readFileSync(new URL('../panel/dist/trend.html', import.meta.url), 'utf8');
 const APP_JS = fs.readFileSync(new URL('../panel/public/js/app.js', import.meta.url), 'utf8');
 const TREND_JS = fs.readFileSync(new URL('../panel/public/js/render-trend.js', import.meta.url), 'utf8');
-const DASHBOARD_CSS = fs.readFileSync(new URL('../panel/public/css/dashboard.css', import.meta.url), 'utf8');
+// B24：手写 CSS 已删除。趋势区样式改由 render-trend.js 里的 Tailwind 工具类承担；
+// 需要看编译结果时读构建后的内联样式。
+const PANEL_CSS = fs.readFileSync(new URL('../panel/src/styles/panel.css', import.meta.url), 'utf8');
+const BUILD_CSS = styleText(TREND_HTML).replace(/\/\*[\s\S]*?\*\//g, '');
+function utilBlock(cls) {
+  const m = new RegExp('\\.' + cls + '\\s*\\{([^}]*)\\}').exec(BUILD_CSS);
+  return m ? m[1] : '';
+}
+
+/** Tailwind v4：spacing 工具编译成 calc(var(--spacing) * N)；换算成 rem（根 --spacing = .25rem）。 */
+function spacingRem(blockText, prop) {
+  const m = new RegExp(prop + '\\s*:\\s*calc\\(var\\(--spacing\\)\\s*\\*\\s*([\\d.]+)\\)').exec(blockText);
+  assert.ok(m, prop + ' 应产出 calc(var(--spacing) * N)');
+  assert.match(BUILD_CSS, /--spacing:\s*\.25rem/, 'Tailwind 根 --spacing = .25rem');
+  return Number(m[1]) * 0.25;
+}
 
 /** 从 css[start] 处的 '{' 匹配成对花括号，返回块内文本。 */
 function braceBlock(text, start) {
@@ -27,7 +43,7 @@ function braceBlock(text, start) {
 }
 
 // B21：ECharts 版的公共测试工具 —— 纯函数上下文 / DOM 垫片上下文 / option 构造。
-const TOKENS_CSS = fs.readFileSync(new URL('../panel/public/css/tokens.css', import.meta.url), 'utf8');
+const TOKENS_CSS = PANEL_CSS;
 const TEST_THEME = {
   request: 'rgb(1, 2, 3)', error: 'rgb(4, 5, 6)', balance: 'rgb(7, 8, 9)',
   grid: 'rgb(10, 11, 12)', gridH: 'rgb(11, 12, 13)', axis: 'rgb(13, 14, 15)', label: 'rgb(16, 17, 18)',
@@ -65,7 +81,7 @@ function samplesOf(n) {
 
 // ── 13
 test('B13-13（B23 改写）：趋势图独立到 /trend；主面板不再引 render-trend.js', () => {
-  assert.match(TREND_HTML, /<section[^>]*class="trend"[^>]*id="trend"/, '/trend 必须有 #trend 容器');
+  assert.match(TREND_HTML, /<section[^>]*class="trend[^"]*"[^>]*id="trend"/, '/trend 必须有 #trend 容器');
   assert.match(TREND_HTML, /aria-label="近 24 小时趋势"/);
   assert.ok(TREND_HTML.includes('js/render-trend.js'), '/trend 必须引入 js/render-trend.js');
   assert.ok(!INDEX_HTML.includes('js/render-trend.js'), '主面板不得再加载 render-trend.js');
@@ -119,15 +135,18 @@ test('B13-16（B23 改写）：趋势轮询移到 /trend 页；主面板 app.js 
   assert.match(APP_JS, /if\s*\(!document\.hidden\)\s*load\(\);?\s*\}\s*,\s*5000\)/, '既有 5s 轮询保持不变');
 });
 
-// ── 17：CSS 入场 stagger + reduced-motion ────────────────────────────
-test('B13-17：.trend 参与 body.is-intro 入场，并在 reduced-motion 里 animation:none', () => {
-  assert.match(DASHBOARD_CSS, /body\.is-intro \.trend\s*\{[^}]*animation:\s*rise-in/, '.trend 参与入场 stagger');
+// ── 17：入场动效与 reduced-motion（B24 改写：改用 @starting-style）──
+// 原来查：dashboard.css 的 body.is-intro .trend { animation: rise-in }，且 reduced-motion 里列 .trend + animation:none。
+// 现在查：入场统一走 panel.css 的 @starting-style(.pop-in)，reduced-motion 全局压掉动画/过渡时长。
+//         等价性：入场仍是一次性过渡、且尊重 prefers-reduced-motion（覆盖面更广）。
+test('B13-17：入场用 @starting-style，reduced-motion 全局降级', () => {
+  assert.match(PANEL_CSS, /@starting-style\s*\{[\s\S]*?\.pop-in/, '入场用 @starting-style(.pop-in)');
 
-  const at = DASHBOARD_CSS.indexOf('@media (prefers-reduced-motion: reduce)');
+  const at = PANEL_CSS.indexOf('@media (prefers-reduced-motion: reduce)');
   assert.ok(at >= 0, '必须有 reduced-motion 块');
-  const block = braceBlock(DASHBOARD_CSS, at);
-  assert.match(block, /body\.is-intro \.trend/, 'reduced-motion 名单必须含 .trend');
-  assert.match(block, /animation:\s*none/, 'reduced-motion 里必须 animation: none');
+  const block = braceBlock(PANEL_CSS, at);
+  assert.match(block, /transition-duration:\s*0?\.01ms\s*!important/, 'reduced-motion 降级过渡');
+  assert.match(block, /animation-duration:\s*0?\.01ms\s*!important/, 'reduced-motion 降级动画');
 });
 
 /** 取 marker 之后第一个成对 {…} 块的块内文本（.selector / function name 都适用）。 */
@@ -149,9 +168,9 @@ test('B13b-18：样本 < 2 不画任何序列，改中性「数据不足」态 +
   const host = { innerHTML: '' };
   const dom = domContext(host);
   dom.renderTrend({ bucketMs: 5 * 60 * 1000, samples: [{ r: 1, e: 0, m: 1 }] });
-  assert.match(host.innerHTML, /class="trend-empty"[^>]*>数据不足/, '渲染出来也必须明说「数据不足」');
-  assert.ok(!/class="trend-chart"/.test(host.innerHTML), '空态不建图容器（也就不画线）');
-  assert.match(host.innerHTML, /class="trend-summary"/, '文本摘要不退化');
+  assert.match(host.innerHTML, /class="trend-empty[^"]*"[^>]*>数据不足/, '渲染出来也必须明说「数据不足」');
+  assert.ok(!/class="trend-chart/.test(host.innerHTML), '空态不建图容器（也就不画线）');
+  assert.match(host.innerHTML, /class="trend-summary[^"]*"/, '文本摘要不退化');
   assert.match(host.innerHTML, /role="img"/, '空态也要有 role=img 的中性说明');
 });
 // ── 19（B21 改写）：面积填充只在实心分支，且是渐变（空态不填充）──────
@@ -206,9 +225,10 @@ test('B13b-20：线宽分主次（余额 2px / 请求与错误 1px）、请求�
   assert.equal(dense.series[0].sampling, 'lttb', '密集时必须 LTTB 降采样（消梳齿）');
   assert.equal(dense.series[0].data.length, 288, '数据本身不丢（降采样交给渲染层）');
 
-  const h = /height:\s*(\d+)px/.exec(blockAt(DASHBOARD_CSS, '.trend-chart {'));
-  assert.ok(h, '.trend-chart 必须有固定高度');
-  assert.ok(Number(h[1]) >= 200 && Number(h[1]) <= 320, '图高度落在 200~320px，实际 ' + h[1]);
+  // B24：.trend-chart 的固定高度改由 Tailwind h-64（= 16rem = 256px）承担。
+  assert.match(TREND_JS, /trend-chart h-64/, '.trend-chart 用 h-64 固定高度');
+  const hPx = spacingRem(utilBlock('h-64'), 'height') * 16;
+  assert.ok(hPx >= 200 && hPx <= 320, '图高度落在 200~320px，实际 ' + hPx + 'px');
 });
 // ── 21（B21 改写）：三序列合并成一张共享坐标系的大图 ────────────────
 test('B13b-21：合并成一张图 —— 单个图容器 + 标题行 + 文本摘要，旧的 3 列栅格已移除', () => {
@@ -216,16 +236,17 @@ test('B13b-21：合并成一张图 —— 单个图容器 + 标题行 + 文本�
   const dom = domContext(host);
   dom.renderTrend({ bucketMs: 5 * 60 * 1000, samples: samplesOf(5) });
   const html = host.innerHTML;
-  assert.equal((html.match(/class="trend-chart"/g) || []).length, 1, '只有一个图容器（不再三张并排）');
-  assert.equal((html.match(/class="trend-summary"/g) || []).length, 1, '只有一份文本摘要');
-  assert.equal((html.match(/class="trend-stat"/g) || []).length, 3, '摘要覆盖三条序列');
-  const iHead = html.indexOf('class="trend-head-row"');
-  const iChart = html.indexOf('class="trend-chart"');
-  const iSum = html.indexOf('class="trend-summary"');
+  assert.equal((html.match(/class="trend-chart[ "]/g) || []).length, 1, '只有一个图容器（不再三张并排）');
+  assert.equal((html.match(/class="trend-summary[ "]/g) || []).length, 1, '只有一份文本摘要');
+  assert.equal((html.match(/class="trend-stat /g) || []).length, 3, '摘要覆盖三条序列');
+  const iHead = html.indexOf('class="trend-head-row');
+  const iChart = html.indexOf('class="trend-chart');
+  const iSum = html.indexOf('class="trend-summary');
   assert.ok(iHead >= 0 && iChart > iHead && iSum > iChart, 'DOM 顺序：标题行 → 图 → 摘要');
-  assert.match(blockAt(DASHBOARD_CSS, '.trend-chart {'), /width:\s*100%/, '图占满卡片宽度');
-  assert.match(blockAt(DASHBOARD_CSS, '.trend-summary {'), /border-top:/, '摘要有分隔线');
-  assert.ok(!/\.trend-grid\s*[,{]/.test(DASHBOARD_CSS), '旧的「三列并排」栅格样式已移除');
+  assert.match(TREND_JS, /trend-chart h-64 w-full/, '图容器固定高度且占满宽度');
+  assert.ok(Math.abs(spacingRem(utilBlock('h-64'), 'height') - 16) < 1e-9, 'h-64 = 16rem（256px）');
+  assert.match(TREND_JS, /trend-summary [^']*border-t/, '摘要有分隔线');
+  assert.ok(!/trend-grid/.test(TREND_JS), '旧的「三列并排」标记已移除');
 });
 // ── 22（B21 改写）：颜色来自 --chart-* 令牌，错误色与品牌色拉开 ──────
 test('B13b-22：颜色全部取自 --chart-* 语义令牌（JS 不写死 hex），错误色≠品牌色', () => {
@@ -351,15 +372,10 @@ test('B13c-27：请求数用中性次要色令牌（不引品牌），错误数�
 });
 // ── 28（B21 改写）：图区与文本摘要分成两块 ───────────────────────────
 test('B13c-28：图区有固定高度、文本摘要有间距 + 分隔线（两块不糊在一起）', () => {
-  const h = /height:\s*(\d+)px/.exec(blockAt(DASHBOARD_CSS, '.trend-chart {'));
-  assert.ok(h, '.trend-chart 必须有固定高度');
-  assert.ok(Number(h[1]) >= 200 && Number(h[1]) <= 320, '图区高度落在 200~320px，实际 ' + h[1]);
-
-  const sum = blockAt(DASHBOARD_CSS, '.trend-summary {');
-  const mt = /margin-top:\s*(\d+)px/.exec(sum);
-  assert.ok(mt, '摘要与图之间必须有 margin-top');
-  assert.ok(Number(mt[1]) >= 4, '至少隔 4px，实际 ' + mt[1]);
-  assert.match(sum, /border-top:/, '摘要与图之间有分隔线');
+  assert.match(TREND_JS, /trend-chart h-64/, '.trend-chart 必须有固定高度（h-64）');
+  assert.ok(Math.abs(spacingRem(utilBlock('h-64'), 'height') - 16) < 1e-9, 'h-64 = 256px（落在 200~320px）');
+  assert.ok(Math.abs(spacingRem(utilBlock('mt-3'), 'margin-top') - 0.75) < 1e-9, '摘要与图之间必须有 mt-3（12px）');
+  assert.match(TREND_JS, /trend-summary [^']*border-t/, '摘要与图之间有分隔线');
 });
 // ── 29（13c）：标题按样本量分两支（< 12 收集中 / ≥ 12 近 24 小时）──
 test('B13c-29：标题样本 < 12 时说「数据收集中」，≥ 12 才说「近 24 小时」', () => {
@@ -387,19 +403,16 @@ test('B13c-29：标题样本 < 12 时说「数据收集中」，≥ 12 才说「
   });
   vm.runInContext(TREND_JS, ctx, { filename: 'render-trend.js' });
   ctx.renderTrend({ bucketMs: 5 * 60 * 1000, samples: [{ r: 1 }, { r: 2 }] });
-  assert.match(host.innerHTML, /trend-pill">数据收集中 2\/288</, '样本不足时右侧 pill 徽章明说收集中（不再全角括号硬拼）');
+  assert.match(host.innerHTML, /trend-pill[^"]*">数据收集中 2\/288</, '样本不足时右侧 pill 徽章明说收集中（不再全角括号硬拼）');
   assert.ok(!/trend-title">近 24 小时趋势（数据收集中）/.test(host.innerHTML), '可见标题保持干净的「近 24 小时趋势」');
   assert.match(host.innerHTML, /近 24 小时趋势（数据收集中）/, 'aria-label 保留完整标题语义（批次 19 的阈值判定不变）');
 });
 // ── 30（21f）：底部摘要字号 / 对比度提档 + 色点与图例对齐 ──────────────
 test('B13c-30：摘要色点 10px、标签与单位用 --fs-sm + 次要文字色（读起来不再费劲）', () => {
-  const dot = blockAt(DASHBOARD_CSS, '.trend-dot {');
-  assert.match(dot, /width:\s*10px/, '摘要色点 10px（与图例色点一致）');
-  assert.match(dot, /height:\s*10px/, '摘要色点正圆');
-  const label = blockAt(DASHBOARD_CSS, '.trend-stat-label {');
-  assert.match(label, /font-size:\s*var\(--fs-sm\)/, '标签字号提到 --fs-sm');
-  assert.match(label, /color:\s*var\(--text-secondary\)/, '标签用次要文字对比度令牌（不再偏暗）');
-  const unit = blockAt(DASHBOARD_CSS, '.trend-stat-unit {');
-  assert.match(unit, /font-size:\s*var\(--fs-sm\)/, '单位字号提到 --fs-sm');
-  assert.match(unit, /color:\s*var\(--text-secondary\)/, '单位不再弱化到看不清的 tertiary');
+  assert.match(TREND_JS, /trend-dot inline-block h-2\.5 w-2\.5/, '摘要色点 h-2.5 / w-2.5');
+  // Tailwind v4 把 h-2.5/w-2.5 编译成 calc(var(--spacing) * 2.5) = .625rem = 10px（类名里的点被转义）。
+  assert.ok(BUILD_CSS.includes('.h-2\\.5{height:calc(var(--spacing) * 2.5)}'), '色点高 10px');
+  assert.ok(BUILD_CSS.includes('.w-2\\.5{width:calc(var(--spacing) * 2.5)}'), '色点宽 10px（正圆）');
+  assert.match(TREND_JS, /trend-stat-label text-xs text-base-content\/60/, '标签用 text-xs + 次要文字色');
+  assert.match(TREND_JS, /trend-stat-unit text-xs text-base-content\/60/, '单位不弱化到看不清');
 });
