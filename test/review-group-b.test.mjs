@@ -181,8 +181,8 @@ test('视觉#8：卡片状态徽章合并层级，不可用不再是暗灰低对
   const shim = dom(INDEX_HTML);
   const page = await runInlineScript(INDEX_HTML, shim);
   const out = page.card(account({ available: false, exhausted: { kind: 'monthly', label: '月额度已用完', resetAt: 0 } }));
-  // B24：只有一个状态徽章（summary 里的 .status badge badge-error is-bad），不再并排「已启用」次徽章。
-  assert.match(out, /class="status badge badge-error is-bad"/);
+  // B24e：只有一个状态徽章（summary 里的 .acct-status badge badge-error is-bad，类名避开 daisyUI 的 .status 组件），不再并排「已启用」次徽章。
+  assert.match(out, /class="acct-status badge[^"]*badge-error is-bad"/, '状态徽章 = daisyUI 语义色 badge-error + tone 钩子 is-bad');
   assert.doesNotMatch(out, /已启用/, '不再并排两个语义冲突徽章');
   assert.match(styleText(INDEX_HTML), /\.badge-error\{--badge-color:var\(--color-error\)/, '错误态用 AA 语义色，不再是暗灰低对比');
 });

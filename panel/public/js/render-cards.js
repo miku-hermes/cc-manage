@@ -135,32 +135,31 @@ function fillFresh(root, q) {
   el.textContent = f.text;
 }
 
-/** 底部标签条：只放状态徽章没说过的补充信息（暂停/限流/耗尽），不重复「可用」。 */
+/** 底部标签条：只放状态徽章**没说过的**补充信息，绝不重复状态词（同一件事不说两遍）。
+    徽章已经表达「为什么不可用」（月/周额度已用完、余额不足、鉴权失效），
+    这里只补徽章没有的独有信息 —— 耗尽后的「重置时间」；时间未知就不占位。 */
 function fillTags(root, a) {
   const host = field(root, 'tags');
   if (!host) return;
   host.setAttribute('data-key-id', String(a.keyId ?? ''));
   clearChildren(host);
-  const push = (tone, text) => {
+  const push = (cls, text) => {
     const span = document.createElement('span');
-    span.className = 'tag badge badge-sm shrink-0 ' + toneBadge(tone) + ' ' + tone;
+    span.className = 'tag badge badge-sm shrink-0 ' + cls;
     span.textContent = text;
     host.appendChild(span);
   };
-  if (a.paused) push('warn', '暂停至 ' + shortDate(a.pausedUntil));
+  if (a.paused) push('badge-warning warn', '暂停至 ' + shortDate(a.pausedUntil));
   if (a.rateLimited) {
     const left = Number(a.rateLimitedUntil) > Date.now() ? untilText(Number(a.rateLimitedUntil)) : '';
-    push('warn', '限流冷却中' + (left ? ' · 剩 ' + left : ''));
+    push('badge-warning warn', '限流冷却中' + (left ? ' · 剩 ' + left : ''));
   }
-  if (a.authInvalid) push('bad', '鉴权失效');
+  // 时间信息是补充事实，不是第二次状态判定 —— 用中性色，别再加一枚红/橙徽章。
   if (a.exhausted && a.exhausted.label) {
     const exMs = toMs(a.exhausted.resetAt);
-    const reset = Number.isFinite(exMs) && exMs > 0
-      ? ' · ' + shortDate(exMs) + (exMs <= Date.now() ? ' 已重置' : ' 重置')
-      : '';
-    push('bad', a.exhausted.label + reset);
-  } else if (a.creditsExhausted) {
-    push('bad', '余额不足');
+    if (Number.isFinite(exMs) && exMs > 0) {
+      push('badge-ghost', shortDate(exMs) + (exMs <= Date.now() ? ' 已重置' : ' 重置'));
+    }
   }
 }
 
@@ -181,7 +180,7 @@ function fillHead(root, a) {
 function fillStatus(root, st) {
   const status = field(root, 'account-status');
   if (!status) return;
-  status.className = 'status badge ' + toneBadge(st.tone) + ' is-' + st.tone;
+  status.className = 'acct-status badge shrink-0 whitespace-nowrap ' + toneBadge(st.tone) + ' is-' + st.tone;
   const dot = status.querySelector('.dot');
   for (const c of [...status.children]) if (c !== dot) status.removeChild(c);
   status.appendChild(document.createTextNode(st.t));

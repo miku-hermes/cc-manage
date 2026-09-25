@@ -157,9 +157,9 @@ test('B2-4：状态文案 st.t 走 esc()，label 里的 HTML 不落进 innerHTML
   assert.match(out, /&lt;img src=x onerror=alert\(1\)&gt;/, '必须转义成 HTML 实体');
 
   const ok = page.card(account({ available: false, exhausted: { kind: 'monthly', label: '月额度已用完', resetAt: 0 } }));
-  // 批次 4 把 .status 改成带 tone 类的状态胶囊（class="status is-bad"），选择器放宽为前缀匹配；
-  // 语义不变：状态文案仍转义后落在 .status 里、仍带 aria-hidden 的 dot。
-  assert.match(ok, /<span class="status[^"]*"><span class="dot" aria-hidden="true"><\/span>月额度已用完<\/span>/,
+  // 批次 24e：状态胶囊钩子类从 .status 改为 .acct-status（避开 daisyUI 的 .status 组件）；
+  // 语义不变：状态文案仍转义后落在徽章里、仍带 aria-hidden 的 dot。
+  assert.match(ok, /<span class="acct-status[^"]*"><span class="dot" aria-hidden="true"><\/span>月额度已用完<\/span>/,
     '正常 label 渲染结果不变（不回归）');
 });
 

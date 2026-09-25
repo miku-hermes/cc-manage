@@ -1219,8 +1219,8 @@ test('面板：额度用尽的账号必须渲染成「额度已用完 + 重置�
     pausedUntil: null, authInvalid: false, lastError: null, lastQuota: quota(9.9) });
   // B24：不再有独立的「可调度」标签 —— 可调度 = summary 里的绿色状态徽章（is-ok）。选择器变了，
   // 语义不变：健康号一眼看出可用，穷号绝不能被标成可用。
-  assert.match(healthy, /<span class="status badge[^"]*is-ok"/, '健康号状态 = ok（可调度）');
-  assert.doesNotMatch(broke, /class="status badge[^"]*is-ok"/, '穷号不得被标成 ok/可用');
+  assert.match(healthy, /<span class="acct-status badge[^"]*is-ok"/, '健康号状态 = ok（可调度）');
+  assert.doesNotMatch(broke, /class="acct-status badge[^"]*is-ok"/, '穷号不得被标成 ok/可用');
   assert.doesNotMatch(healthy, /余额不足|额度已用完/, '健康账号不该被误标');
 });
 
@@ -1345,7 +1345,7 @@ test('进度条只报百分比（金额收进 title），被证明用完的窗�
     lastQuota: { ...q, remaining: 9.73, monthly: w(0.2, 10, 2) } });
   assert.doesNotMatch(ok, /bar-num/);
   assert.match(ok, /bar-label">本月周期<\/span>[\s\S]{0,240}?<span class="bar-pct[^"]*">2\.0%<\/span>/);
-  assert.match(ok, /<span class="status badge[^"]*is-ok"/, '健康号 = ok（可调度）');
+  assert.match(ok, /<span class="acct-status badge[^"]*is-ok"/, '健康号 = ok（可调度）');
 });
 
 // ── 用不了的钱就是 0（usableRemaining 唯一口径）─────────────────────
@@ -1580,7 +1580,7 @@ test('前台卡片：不再显示最近错误，状态词/标签照旧', async (
     lastQuota: null });
   assert.match(out, /月额度已用完/, '状态词照旧');
   // B24：不再有独立「不可用」标签；不可调度 = 红色状态徽章（is-bad）。语义不变，选择器变了。
-  assert.match(out, /<span class="status badge[^"]*is-bad"/, '状态照旧 = 不可调度（bad）');
+  assert.match(out, /<span class="acct-status badge[^"]*is-bad"/, '状态照旧 = 不可调度（bad）');
   assert.doesNotMatch(out, /最近错误/, '卡片不再渲染最近错误');
   assert.doesNotMatch(out, /class="err"/, '也不应出现 .err 元素');
 });

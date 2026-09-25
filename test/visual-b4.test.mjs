@@ -118,17 +118,17 @@ test('B4-5：名称右侧计划标签渲染 plan.planId 派生的套餐名', asy
 // ── ⑥ 状态胶囊 tone 类名：ok/warn/bad ────────────────────────────────
 test('B4-6：状态胶囊按 accountStatus.tone 输出 is-ok / is-warn / is-bad', async () => {
   const { shim, page } = await boot();
-  // B24：胶囊 = daisyUI badge + 语义色 + 原 tone 钩子（status badge badge-success is-ok …），
+  // B24e：胶囊 = daisyUI badge + 语义色 + 原 tone 钩子（acct-status badge badge-success is-ok …），
   // 选择器放宽为「class 里含 is-*」；文案与 tone 分类断言不变。
   const okOut = page.card(account({ available: true }));
-  assert.match(okOut, /<span class="status badge[^"]*is-ok"><span class="dot" aria-hidden="true"><\/span>可用<\/span>/);
+  assert.match(okOut, /<span class="acct-status badge[^"]*is-ok"><span class="dot" aria-hidden="true"><\/span>可用<\/span>/);
 
   const pausedOut = page.card(account({ available: false, paused: true, pausedUntil: Date.now() + 3600e3 }));
-  assert.match(pausedOut, /class="status badge[^"]*is-warn"/, '冷却中 = 琥珀');
+  assert.match(pausedOut, /class="acct-status badge[^"]*is-warn"/, '冷却中 = 琥珀');
 
   const deadOut = page.card(account({ available: false, exhausted: { kind: 'monthly', label: '月额度已用完', resetAt: 0 } }));
-  assert.match(deadOut, /class="status badge[^"]*is-bad"/, '耗尽 = 红');
-  assert.match(deadOut, /<span class="status badge[^"]*is-bad">[\s\S]*月额度已用完<\/span>/, '胶囊里是 accountStatus 的 t');
+  assert.match(deadOut, /class="acct-status badge[^"]*is-bad"/, '耗尽 = 红');
+  assert.match(deadOut, /<span class="acct-status badge[^"]*is-bad">[\s\S]*月额度已用完<\/span>/, '胶囊里是 accountStatus 的 t');
 });
 
 // ── ⑦ 筛选条计数 + 点击「耗尽」后只剩耗尽账号（document 委托）────────

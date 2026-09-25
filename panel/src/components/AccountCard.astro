@@ -6,9 +6,8 @@ import CreditsBar from './CreditsBar.astro';
 import StatusPill from './StatusPill.astro';
 ---
 <details class="card row-card collapse collapse-arrow border border-base-300 bg-base-100 transition-colors">
-  <!-- B24d：summary 从 flex 改成网格 —— 名称列 minmax(0,max-content) 按内容自适应，
-       多出来的宽度给右侧米数（1fr 右对齐）。旧 flex + min-w-0 会把名字挤到 133px 还截断，
-       而同行右侧空着；网格首列只受内容与可用宽度约束，不再出现「有空余还省略」。 -->
+  <!-- B24e：名称列 minmax(0,max-content) 按内容自适应（宽度 = 名字实际需要，不钉死像素），
+       多出来的宽度全给右侧米数（1fr 右对齐）。名称列够宽时 h2 不裁剪；真不够时才省略。 -->
   <summary class="collapse-title row-summary grid grid-cols-[minmax(0,max-content)_minmax(0,1fr)] items-center gap-x-3 gap-y-1 max-sm:grid-cols-1" aria-expanded="false">
     <span class="row-title flex min-w-0 items-center gap-2">
       <h2 class="card-head truncate text-base font-semibold" data-f="account-head"></h2>

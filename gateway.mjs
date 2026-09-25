@@ -1487,8 +1487,12 @@ export async function startGateway(overrides = {}) {
     // B24d：/assets/ 放 Astro/Vite 构建产物（带内容哈希的 .css/.js）；与 /vendor 同走 serveStatic 的
     //       路径穿越校验 + 扩展名白名单，命中真实文件才发 immutable 长缓存。
     // 注：/css/ 前缀是 B22 之前的遗留入口，当前已无引用；按契约保留，不擅自删除。
-    if (req.method === 'GET' && (url.pathname.startsWith('/css/') || url.pathname.startsWith('/js/')
-      || url.pathname.startsWith('/vendor/') || url.pathname.startsWith('/assets/'))) {
+    // B24e：HEAD 与 GET 走同一分支（HEAD 只看状态码/头部，Node 会自动吞掉响应体）。
+    //   之前只认 GET，`curl -sI /assets/<hash>.css` 会漏到结尾的 API 404（52 字节 JSON），
+    //   与 GET 200 不一致。条件收敛成「GET 或 HEAD」即可，不碰白名单 / 穿越 / 缓存策略。
+    const isStaticAsset = url.pathname.startsWith('/css/') || url.pathname.startsWith('/js/')
+      || url.pathname.startsWith('/vendor/') || url.pathname.startsWith('/assets/');
+    if ((req.method === 'GET' || req.method === 'HEAD') && isStaticAsset) {
       return serveStatic(res, url.pathname);
     }
 
