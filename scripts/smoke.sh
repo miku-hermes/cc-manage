@@ -174,8 +174,34 @@ wait_healthy "$CORE_NAME"
 wait_healthy "$GATEWAY_NAME"
 
 # ── 7：HTTP 断言 ───────────────────────────────────────────────────────
-# curl 失败（连不上 / --max-time 超时）时 %{http_code} 是 000。
-http_code() { curl -sS -o "$WORK/body" -w '%{http_code}' --max-time 20 "$@" || echo 000; }
+# B24f：响应体一律写进**本次检查自己的**文件，不再共用 $WORK/body。
+#
+# 旧写法 http_code 把 body 写进共享的 $WORK/body，于是出现「这一检查刚取到 /js/state.js、
+# 下一检查却去读同一个文件里的首页 HTML」这种自伤 —— 失败与镜像无关，纯属读错文件。
+# 根治办法不是补一行，而是让共享变量不存在：要读谁的 body，就必须自己先 fetch_into 一次。
+http_code() { curl -sS -o "$1" -w '%{http_code}' --max-time 20 "${@:2}" || echo 000; }
+
+# fetch_into <file> <url...>：把响应体写进指定文件并回显 HTTP 状态码（内部调 http_code）。
+fetch_into() { http_code "$1" "${@:2}"; }
+
+# body_info <file>：fail 信息里的「路径 / 字节数 / 开头片段」。
+# 目的：下次再读错文件时，报错里直接能看到「这个文件是 state.js 不是 HTML」，
+# 不会又被误判成「镜像里没有静态资源」。
+body_info() {
+  local file="$1" bytes
+  bytes="$(wc -c < "$file" 2>/dev/null | tr -d '[:space:]' || true)"
+  printf '%s（%s 字节，开头：%s）' "$file" "${bytes:-取不到}" "$(head -c 120 "$file" 2>/dev/null | tr '\n' ' ')"
+}
+
+# assert_html <file> <what>：先确认手里这份文件**看起来是 HTML**，再往下 grep 提取。
+# 读错文件（比如拿到 /js/state.js 的文本）时必须直说「期望 HTML」，而不是含糊地报
+# 「首页没有外链 /assets/*.css」——那会把「脚本读错文件」误导成「镜像缺资源」。
+assert_html() {
+  local file="$1" what="$2"
+  if ! grep -Eq '<!doctype|<html|<link' "$file" 2>/dev/null; then
+    fail "$what：期望 HTML，实际拿到 $(body_info "$file")"
+  fi
+}
 
 assert_json() {
   local file="$1" what="$2"
@@ -183,57 +209,64 @@ assert_json() {
     # 走 stdin 而不是 argv：`node -e` 的 argv 偏移容易写错，而且这里要保证
     # 非 JSON 时是**明确失败**（不是静默通过）。
     if ! node -e 'let s="";process.stdin.on("data",(d)=>{s+=d}).on("end",()=>{try{JSON.parse(s)}catch(e){console.error("不是合法 JSON: "+e.message+" | 原文: "+s.slice(0,200));process.exit(1)}})' < "$file"; then
-      fail "$what 的响应体不是合法 JSON"
+      fail "$what 的响应体不是合法 JSON（$(body_info "$file")）"
     fi
   else
     case "$(head -c 1 "$file")" in
       '{'|'[') : ;;
-      *) fail "$what 的响应体看起来不是 JSON：$(head -c 100 "$file")" ;;
+      *) fail "$what 的响应体看起来不是 JSON（$(body_info "$file")）" ;;
     esac
   fi
 }
 
 echo "==> GET /health（liveness）"
-code="$(http_code "$BASE/health")"
-[ "$code" = "200" ] || fail "/health 期望 200，实际 $code（body: $(head -c 200 "$WORK/body")）"
-assert_json "$WORK/body" "/health"
-grep -q '"ok":true' "$WORK/body" || fail "/health 响应体缺少 ok:true：$(head -c 200 "$WORK/body")"
+code="$(fetch_into "$WORK/health.body" "$BASE/health")"
+[ "$code" = "200" ] || fail "/health 期望 200，实际 $code（body: $(body_info "$WORK/health.body")）"
+assert_json "$WORK/health.body" "/health"
+grep -q '"ok":true' "$WORK/health.body" || fail "/health 响应体缺少 ok:true（$(body_info "$WORK/health.body")）"
 
 echo "==> GET /ready（readiness：真探 core）"
-code="$(http_code "$BASE/ready")"
-[ "$code" = "200" ] || fail "/ready 期望 200（上游可达），实际 $code（body: $(head -c 200 "$WORK/body")）"
-assert_json "$WORK/body" "/ready"
-grep -q '"upstream":"up"' "$WORK/body" || fail "/ready 响应体缺少 upstream:up：$(head -c 200 "$WORK/body")"
+code="$(fetch_into "$WORK/ready.body" "$BASE/ready")"
+[ "$code" = "200" ] || fail "/ready 期望 200（上游可达），实际 $code（body: $(body_info "$WORK/ready.body")）"
+assert_json "$WORK/ready.body" "/ready"
+grep -q '"upstream":"up"' "$WORK/ready.body" || fail "/ready 响应体缺少 upstream:up（$(body_info "$WORK/ready.body")）"
 
 echo "==> GET /（面板骨架）"
-code="$(http_code "$BASE/")"
-[ "$code" = "200" ] || fail "面板 / 期望 200，实际 $code"
+code="$(fetch_into "$WORK/index.body" "$BASE/")"
+[ "$code" = "200" ] || fail "面板 / 期望 200，实际 $code（body: $(body_info "$WORK/index.body")）"
 for marker in 'cc-manage' 'id="health"' '<script src="js/utils.js">'; do
-  grep -q "$marker" "$WORK/body" || fail "面板 HTML 缺少骨架标记：$marker（说明静态资源没进镜像 / CMD 不对）"
+  grep -q "$marker" "$WORK/index.body" || fail "面板 HTML 缺少骨架标记：$marker（说明静态资源没进镜像 / CMD 不对；$(body_info "$WORK/index.body")）"
 done
 
 echo "==> GET /js/state.js 与首页外链 /assets/*.css（静态资源真的在镜像里）"
-code="$(http_code "$BASE/js/state.js")"
-[ "$code" = "200" ] || fail "/js/state.js 期望 200，实际 $code（public/ 没进镜像？）"
-# B24d：样式从内联改成独立可缓存文件；从首页 HTML 里取 /assets/*.css 并确认能取到。
-css_path="$(grep -o '/assets/[^"]*\.css' "$WORK/body" | head -n 1)"
-[ -n "$css_path" ] || fail "首页没有外链 /assets/*.css（面板未构建或样式仍被内联）"
-code="$(http_code "$BASE$css_path")"
-[ "$code" = "200" ] || fail "$css_path 期望 200，实际 $code（独立 CSS 没进镜像？）"
+code="$(fetch_into "$WORK/state.body" "$BASE/js/state.js")"
+[ "$code" = "200" ] || fail "/js/state.js 期望 200，实际 $code（public/ 没进镜像？body: $(body_info "$WORK/state.body")）"
+# B24d：样式从内联改成独立可缓存文件；CSS 路径从**真正的首页 HTML** 里取。
+# B24f：这里**再取一次** $BASE/ 写进本检查自己的文件（$WORK/home-css.body），
+# 而不是复用上一个检查的 $WORK/index.body —— 复用跨检查的 body 正是本批要根除的 bug。
+code="$(fetch_into "$WORK/home-css.body" "$BASE/")"
+[ "$code" = "200" ] || fail "面板 / 期望 200，实际 $code（body: $(body_info "$WORK/home-css.body")）"
+assert_html "$WORK/home-css.body" "首页 HTML（用于提取 /assets/*.css）"
+# 末尾 `|| true`：grep 无匹配 + set -o pipefail 会让整个命令替换以非 0 结束，
+# 在 set -e 下会**静默退出**（连下面那句 fail 都跑不到）。这里要的是走到明确的 fail。
+css_path="$(grep -o '/assets/[^"]*\.css' "$WORK/home-css.body" | head -n 1 || true)"
+[ -n "$css_path" ] || fail "首页没有外链 /assets/*.css（面板未构建或样式仍被内联；$(body_info "$WORK/home-css.body")）"
+code="$(fetch_into "$WORK/css.body" "$BASE$css_path")"
+[ "$code" = "200" ] || fail "$css_path 期望 200，实际 $code（独立 CSS 没进镜像？body: $(body_info "$WORK/css.body")）"
 
 echo "==> POST /v1/chat/completions（mock CC → 真内核 → 网关）"
-code="$(http_code -X POST "$BASE/v1/chat/completions" \
+code="$(fetch_into "$WORK/v1.body" -X POST "$BASE/v1/chat/completions" \
   -H "authorization: Bearer ${LOCAL_KEY}" -H 'content-type: application/json' \
   -d '{"model":"mock-model","stream":false,"messages":[{"role":"user","content":"hi"}]}')"
 case "$code" in
   200|400|401|429|502) : ;;
-  000) fail "/v1 请求超时/连不上（挂死），不是结构化错误" ;;
-  5*) fail "/v1 返回崩溃型 5xx（$code）：$(head -c 300 "$WORK/body")" ;;
-  *) fail "/v1 返回意料之外的状态码 $code：$(head -c 300 "$WORK/body")" ;;
+  000) fail "/v1 请求超时/连不上（挂死），不是结构化错误（$(body_info "$WORK/v1.body")）" ;;
+  5*) fail "/v1 返回崩溃型 5xx（$code）：$(body_info "$WORK/v1.body")" ;;
+  *) fail "/v1 返回意料之外的状态码 $code：$(body_info "$WORK/v1.body")" ;;
 esac
-assert_json "$WORK/body" "/v1"
+assert_json "$WORK/v1.body" "/v1"
 if [ "$code" = "200" ]; then
-  grep -q '"choices"' "$WORK/body" || fail "/v1 回 200 但响应体不像一次补全：$(head -c 300 "$WORK/body")"
+  grep -q '"choices"' "$WORK/v1.body" || fail "/v1 回 200 但响应体不像一次补全：$(body_info "$WORK/v1.body")"
   echo "    /v1 200，响应体形状正常（choices 存在）"
 else
   echo "    /v1 返回结构化错误 $code（可接受：不算崩溃、不算挂死）"
