@@ -75,12 +75,22 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-健康检查：
+健康检查（liveness / readiness 是两个不同的东西，别混用）：
 
 ```bash
 docker compose ps                          # 期望 core / gateway 两行都是 healthy
-curl -s 127.0.0.1:3051/health              # {"ok":true,"accounts":N,"available":M}
+curl -s 127.0.0.1:3051/health              # {"ok":true,"accounts":N,"available":M}   ← liveness
+curl -s 127.0.0.1:3051/ready               # {"ok":true,"upstream":"up",...}          ← readiness
 ```
+
+- **`/health`（liveness）**：只说明「网关进程活着」。它**不探上游**，所以 core 崩溃 / OOM /
+  断网时它照样 200。适合给「进程还在吗」这类存活告警用，**不适合**当「服务可用」的判据。
+- **`/ready`（readiness）**：会真探一次 core（`UPSTREAM_PROXY_URL` 的 `/health`，2s 硬超时，
+  结果缓存 1s 以免被高频轮询打爆 core）。core 可达 → `200 {"ok":true,"upstream":"up"}`；
+  不可达 / 超时 → `503 {"ok":false,"upstream":"down"}`。
+  **监控告警、反代摘流、以及「服务能不能用」的判断都看它。**
+  compose 里两个容器的 healthcheck 分工：gateway 探 `/ready`（它是唯一知道 core 死活的角色），
+  core 探自己的 `/health`（内核没有下游依赖，本仓库不改 vendor）。
 
 调用示例（key 用 `keys.json` 里那把）：
 
@@ -255,7 +265,8 @@ docker compose up -d --force-recreate gateway   # 恢复默认
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/health` | `{ ok, accounts, available }`，无需 key |
+| GET | `/health` | liveness：`{ ok, accounts, available }`，无需 key；**不探上游** |
+| GET | `/ready` | readiness：探上游 core，可达 200 `{ ok, upstream:"up", … }`，不可达 503 `{ ok:false, upstream:"down" }` |
 | GET | `/api/status` | 账号池全量状态 + 请求统计（默认公开只读） |
 | GET | `/api/accounts` | 只读账号列表（无 key 明文） |
 | POST | `/api/accounts/refresh` | 立刻刷新所有账号额度并返回新快照（匿名调用 5s 节流） |
@@ -339,9 +350,16 @@ node mocks/mock-cc-upstream.mjs &        # 假上游，默认 3099
 # 用一份指向 mock 的配置起网关
 node -e "import('./gateway.mjs').then(m=>m.startGateway({configPath:'config.local.json'}))" &
 curl 127.0.0.1:3051/health
+curl 127.0.0.1:3051/ready
 ```
 
 `config.local.json` 只需把 `upstreamProxyUrl` / `ccApiBase` 指向 `http://127.0.0.1:3099`。
+
+容器级冒烟（真起容器，验证 CMD/EXPOSE/HEALTHCHECK/面板骨架与一次真实 /v1 往返）：
+
+```bash
+bash scripts/smoke.sh                     # 需要本机有 docker；CI 的 smoke job 就是跑它
+```
 
 ## 坑
 

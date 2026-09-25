@@ -140,25 +140,34 @@ export async function startTestGateway({
   try {
     writeAccountFiles(dir, { accounts: defaultAccounts, keys: defaultKeys });
     upstream = await launchUpstream({ plans, behavior });
-    port = await pickPort();
 
-    gw = await launchGateway({
-      rootDir: dir,
-      noTimers,
-      noInitialRefresh: true,
-      now,
-      env: { ...process.env, CC_ACCOUNTS: '', ASSET_NO: '1' },
-      config: {
-        gatewayPort: port,
-        gatewayHost: '127.0.0.1',
-        upstreamProxyUrl: upstream.url,
-        ccApiBase: upstream.url,
-        quotaTimeoutMs: 5000,
-        allowPassthrough: false,
-        logLevel: 'silent',
-        ...config,
-      },
-    });
+    // B18：端口竞争的重试必须落在**真正 bind 的那一步** —— 也就是下面 launchGateway →
+    // gateway.mjs 的 server.listen。allocPort() 只是 listen(0) 探一下空闲端口再关掉，
+    // 它和后面那次真正的 listen 之间存在空窗：并行跑的另一个测试文件、或上一次没退干净
+    // 的进程都可能在这段空窗里把端口抢走，于是 EADDRINUSE 落在 launchGateway 上而**不是**
+    // allocPort 上（把重试包在 allocPort 里等于没保护）。所以「取端口 + 起网关」整体交给
+    // retryOnPortConflict：只有 EADDRINUSE 才换端口重试，最多 3 次。
+    gw = await retryOnPortConflict(async () => {
+      const picked = await pickPort();
+      port = picked;
+      return launchGateway({
+        rootDir: dir,
+        noTimers,
+        noInitialRefresh: true,
+        now,
+        env: { ...process.env, CC_ACCOUNTS: '', ASSET_NO: '1' },
+        config: {
+          gatewayPort: picked,
+          gatewayHost: '127.0.0.1',
+          upstreamProxyUrl: upstream.url,
+          ccApiBase: upstream.url,
+          quotaTimeoutMs: 5000,
+          allowPassthrough: false,
+          logLevel: 'silent',
+          ...config,
+        },
+      });
+    }, 3);
   } catch (e) {
     // 起网关失败也要把 mock server / 临时目录收掉（rootDir 是调用方给的就不能删）。
     await cleanupTestResources({ gateway: gw, upstream, dir, keepDir: !!rootDir });

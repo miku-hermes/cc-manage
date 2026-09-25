@@ -11,8 +11,73 @@ const BEHAVIOR_KEYS = new Set([
   'failNext5xx', 'quotaError', 'delayMs', 'rateLimitError', 'quotaErrorKeys', 'quotaErrorBody',
   'notFound404', 'authErrorStatus', 'authErrorBody', 'alphaDelayMs', 'abortAfterChunks',
   'delayBeforeBodyMs', 'bodyBytesSeen', 'immediate5xx', 'chunkDelayMs', 'firstDataAt',
-  'usageBody', 'sseChunks',
+  'usageBody', 'sseChunks', 'generateNdjson',
 ]);
+
+// ── SPEC §4 标为「必须」的上游契约（真实 CC 上游 + Cloudflare 会拦）──────
+//   1. 必须显式带 User-Agent，且不能是会被 CF 拦的默认库 UA（python-urllib / node / undici / go-http-client）；
+//   2. 路径必须落在文档化的前缀上（/alpha/* 额度与推理、/v1/* 转发）；
+//   3. 鉴权头必须是 `authorization: Bearer user_...`（或等价的 x-api-key）。
+// 历史教训：UA_EXPECTED 原先只出现在一句 console.log 里、从不读 req.headers —— 于是
+// 「网关漏带 UA」这类问题在 mock 上永远是假绿（同类边界见 test/proxy-403-not-auth.test.mjs 顶部的批注）。
+// 现在违约就返回**明确的结构化契约错误**（type=mock_contract_error + 稳定 code），绝不静默通过。
+const UA_BLOCKED = [
+  /^python-urllib\//i,   // SPEC 点名的被拦 UA
+  /^node$/i,              // Node http 默认 UA
+  /^undici$/i,            // Node fetch 默认 UA
+  /^go-http-client\//i,  // Go 默认 UA（同样没有浏览器签名）
+];
+const UA_SHAPE = /^[\x20-\x7e]{1,200}$/;   // 显式带且是可打印 ASCII（拒绝空值/控制字符）
+// SPEC §4 实测「不带 UA 会被 Cloudflare 拦 403/1010」的是这些额度/推理接口：UA 强制。
+const ALPHA_MANDATORY_UA = /^\/alpha\/(whoami|billing\/credits|billing\/subscriptions|usage\/summary|generate)(\?|$)/;
+// 真内核（vendor/commandcode-proxy）用 fetch 上报的遥测端点。**发现**：它在这两个 POST 上
+// 只设了 Content-Type / Authorization / x-command-code-version，**没设 User-Agent**，
+// 于是走 undici 的默认 UA（node）。SPEC 要求显式带 UA，但 vendor 是上游镜像、本仓库不改，
+// 所以这里只校验路径与鉴权头形态、不把 UA 当违约（这两个端点不是我们的调用链）。
+const ALPHA_TELEMETRY = /^\/alpha\/(fingerprint\/record|lifecycle-events)(\?|$)/;
+const V1_ENDPOINT = /^\/v1\/(chat\/completions|messages|responses|models)(\?|$)/;
+
+/**
+ * 校验一次请求是否符合 SPEC 的上游契约。
+ * @returns {null | {code: string, message: string}} null = 通过；否则是契约错误（code 稳定，便于断言）。
+ */
+export function checkCcContract(req) {
+  const url = String(req.url ?? '');
+  const isAlpha = url.startsWith('/alpha/');
+  const isV1 = url.startsWith('/v1/');
+  if (!isAlpha && !isV1) return null;   // 其它路径本就按 404 处理，不算契约违约
+
+  // UA 契约是 SPEC §4 针对 **CC 上游**定的（Cloudflare 会拦）。
+  // mock 的 /v1/* 扮演的是 vendor 内核：网关→内核这一段不经过 Cloudflare，Node fetch
+  // （探针）/ undici 这类默认 UA 在这里是合法的，故不校验。
+  // /alpha/* 里只对上面 ALPHA_MANDATORY_UA 那些额度/推理接口强制（见常量处的说明）。
+  if (isAlpha && ALPHA_MANDATORY_UA.test(url)) {
+    const ua = req.headers['user-agent'];
+    if (ua === undefined || String(ua).trim() === '') {
+      return { code: 'UA_MISSING', message: '缺少 User-Agent（SPEC §4：必须显式带；实测不带会被 Cloudflare 拦成 403 Error 1010）' };
+    }
+    if (!UA_SHAPE.test(String(ua)) || UA_BLOCKED.some((re) => re.test(String(ua)))) {
+      return { code: 'UA_BLOCKED', message: `User-Agent 形态不合法（会被 Cloudflare 拦）：${JSON.stringify(String(ua))}` };
+    }
+  }
+
+  if (isAlpha && !ALPHA_MANDATORY_UA.test(url) && !ALPHA_TELEMETRY.test(url)) {
+    return { code: 'PATH_UNKNOWN', message: `未文档化的 CC 接口路径：${url.split('?')[0]}（必须落在 /alpha/ 下的已知端点上）` };
+  }
+  if (isV1 && !V1_ENDPOINT.test(url)) {
+    return { code: 'PATH_UNKNOWN', message: `未文档化的转发路径：${url.split('?')[0]}` };
+  }
+
+  const auth = String(req.headers.authorization ?? '');
+  const xKey = String(req.headers['x-api-key'] ?? '');
+  if (!/^Bearer\s+user_[\w-]+$/.test(auth) && !/^user_[\w-]+$/.test(xKey)) {
+    return {
+      code: 'AUTH_SHAPE',
+      message: `鉴权头形态不符合契约（需要 authorization: Bearer user_... 或 x-api-key: user_...），实际：${JSON.stringify(auth || xKey)}`,
+    };
+  }
+  return null;
+}
 
 /** 校验 behavior patch 里没有未知开关；有则抛错（绝不静默忽略）。 */
 export function assertBehaviorKeys(patch) {
@@ -38,6 +103,17 @@ const SSE_CHUNKS = [
   { id: 'chatcmpl-mock', object: 'chat.completion.chunk', choices: [{ index: 0, delta: { content: '你好' } }] },
   { id: 'chatcmpl-mock', object: 'chat.completion.chunk', choices: [{ index: 0, delta: { content: '，世界' } }] },
   { id: 'chatcmpl-mock', object: 'chat.completion.chunk', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { total_tokens: 12 } },
+];
+
+// /alpha/generate 的默认 NDJSON 事件流（形状照 vendor/commandcode-proxy/test/helpers.mjs）：
+// 必须有 finish 事件且 outputTokens > 0，否则真内核会按「上游没走完」回 429/502。
+const GENERATE_NDJSON = [
+  { type: 'text-start' },
+  { type: 'text-delta', text: '你好' },
+  { type: 'text-delta', text: '，世界' },
+  { type: 'text-end' },
+  { type: 'finish-step', finishReason: 'stop', usage: { inputTokens: 9, outputTokens: 3 } },
+  { type: 'finish', finishReason: 'stop', totalUsage: { inputTokens: 9, outputTokens: 3, cachedInputTokens: 0 } },
 ];
 
 function sendJSON(res, status, obj) {
@@ -92,6 +168,24 @@ export async function startMockUpstream(opts = {}) {
   };
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // 契约违约记录（测试断言用；403 之外还要能看到「收到过什么」）
+  const contractErrors = [];
+  // 真内核上报的遥测（见 ALPHA_TELEMETRY 处说明）
+  const telemetry = [];
+  /** 校验契约；违约就记一笔并回结构化 403，返回 true 表示请求已被拒。 */
+  function enforceContract(req, res) {
+    const violation = checkCcContract(req);
+    if (!violation) return false;
+    contractErrors.push({ ...violation, method: req.method, url: req.url, headers: req.headers });
+    sendJSON(res, 403, {
+      error: {
+        message: `mock 契约违约：${violation.message}`,
+        type: 'mock_contract_error',
+        code: violation.code,
+      },
+    });
+    return true;
+  }
 
   const server = http.createServer((req, res) => {
     const chunks = [];
@@ -106,6 +200,7 @@ export async function startMockUpstream(opts = {}) {
       if (behavior.firstDataAt === null) behavior.firstDataAt = Date.now();
       // 不往 bodyBytesSeen 里塞：这里根本没收 body，塞 0 会与「上游实收字节」的语义混淆
       seen.push({ method: req.method, url: req.url, headers: req.headers, body: '' });
+      if (enforceContract(req, res)) return undefined;
       return sendJSON(res, 503, { error: { message: 'mock upstream busy' } });
     }
     req.on('data', (c) => {
@@ -118,6 +213,9 @@ export async function startMockUpstream(opts = {}) {
     req.on('end', async () => {
       const bodyText = Buffer.concat(chunks).toString('utf8');
       seen.push({ method: req.method, url: req.url, headers: req.headers, body: bodyText });
+
+      // SPEC 的「必须」契约先校验：违约绝不静默通过（历史上这里从不看 UA，是假绿的源头）
+      if (enforceContract(req, res)) return;
 
       if (behavior.delayMs) await sleep(behavior.delayMs);
 
@@ -134,6 +232,22 @@ export async function startMockUpstream(opts = {}) {
         if (plan.authInvalid) return sendJSON(res, 401, { error: { message: 'key revoked' } });
 
         const path = req.url.split('?')[0];
+        // 真内核的遥测上报（fingerprint / lifecycle）：真 CC 会收，这里也给 200，
+        // 否则内核每次启动都会在日志里刷 "Lifecycle event failed { status: 403 }" 的噪音。
+        if (path === '/alpha/fingerprint/record' || path === '/alpha/lifecycle-events') {
+          telemetry.push({ path, body: bodyText, headers: req.headers });
+          return sendJSON(res, 200, { ok: true });
+        }
+        // 真实内核的推理入口：CC 回的是一行一个 JSON 事件（NDJSON），
+        // vendor/commandcode-proxy 按行解析成 text-delta / finish 等事件再翻译。
+        if (path === '/alpha/generate') {
+          const lines = Array.isArray(behavior.generateNdjson) ? behavior.generateNdjson : GENERATE_NDJSON;
+          res.writeHead(200, { 'content-type': 'application/x-ndjson', 'cache-control': 'no-cache' });
+          for (const line of lines) {
+            res.write(`${typeof line === 'string' ? line : JSON.stringify(line)}\n`);
+          }
+          return res.end();
+        }
         if (path === '/alpha/whoami') {
           return sendJSON(res, 200, {
             org: { login: plan.name ?? 'mock-org', id: `org-${key.slice(5, 10)}` },
@@ -261,7 +375,7 @@ export async function startMockUpstream(opts = {}) {
     });
   });
 
-  await new Promise((resolve) => server.listen(opts.port ?? 0, '127.0.0.1', resolve));
+  await new Promise((resolve) => server.listen(opts.port ?? 0, opts.host ?? '127.0.0.1', resolve));
   const port = server.address().port;
 
   return {
@@ -280,6 +394,9 @@ export async function startMockUpstream(opts = {}) {
     requestsTo(predicate) {
       return seen.filter(predicate);
     },
+    contractErrors,   // 契约违约记录（{code, message, method, url, headers}）
+    telemetry,        // 真内核的遥测上报（/alpha/fingerprint/record、/alpha/lifecycle-events）
+    checkContract: (req) => checkCcContract(req),
     async close() {
       try { server.closeAllConnections?.(); } catch {}
       await new Promise((r) => server.close(r));
@@ -291,8 +408,12 @@ export async function startMockUpstream(opts = {}) {
 const isMain = process.argv[1] && process.argv[1].endsWith('mock-cc-upstream.mjs');
 if (isMain) {
   const port = Number(process.env.MOCK_PORT ?? 3099);
-  const mock = await startMockUpstream({ port });
-  console.log(`[mock-cc-upstream] 假 CC 上游已监听 http://127.0.0.1:${port}`);
-  console.log(`[mock-cc-upstream] 额度接口 /alpha/*，转发接口 /v1/*，UA 期望 ${UA_EXPECTED}`);
+  // 默认只绑回环（手工联调用）；容器里当上游时必须绑 0.0.0.0，
+  // 否则同网容器（core）连不上（scripts/smoke.sh 就是这么用的）。
+  const host = process.env.MOCK_HOST ?? '127.0.0.1';
+  const mock = await startMockUpstream({ port, host });
+  console.log(`[mock-cc-upstream] 假 CC 上游已监听 http://${host}:${port}`);
+  console.log(`[mock-cc-upstream] 额度接口 /alpha/*（含 /alpha/generate NDJSON），转发接口 /v1/*`);
+  console.log(`[mock-cc-upstream] 强制契约：UA 必须显式且非默认库 UA（期望形态 ${UA_EXPECTED}）、路径前缀、鉴权头 Bearer user_...`);
   console.log(`[mock-cc-upstream] 演示账号: ${[...Object.keys(DEFAULT_PLANS)].join(', ')}`);
 }

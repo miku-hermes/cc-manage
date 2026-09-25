@@ -1,5 +1,6 @@
 // cc-manage 入口：HTTP 服务 + 路由（多账号反代 + 额度面板 API）
 import http from 'node:http';
+import https from 'node:https';
 import fs from 'node:fs';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
@@ -1319,6 +1320,65 @@ export async function startGateway(overrides = {}) {
     throw new HttpError(404, '未知的后台接口');
   }
 
+  // ── 上游就绪探测（readiness）：给 /ready 用 ──────────────────────────
+  // /health 是 liveness（进程活着就 200），/ready 是 readiness（上游 core 可达、能真转发 /v1）。
+  // 两者必须分开：core 崩溃 / OOM / 断网后网关进程照样活着（/health 依旧 200），
+  // 但所有 /v1 都会失败 —— 只探 /health 的探活于是永远绿灯，Docker 不会重启、
+  // 反代也不会摘流，症状就是「面板健康、全部请求失败」。
+  const upstreamBase = new URL(config.upstreamProxyUrl);
+  // 探测超时 2s：core 与网关在同一条 compose 网络（或同机 loopback）上，正常是毫秒级返回。
+  // 2s 足够覆盖 GC / 负载抖动，又**小于** compose healthcheck 的 timeout(5s)，
+  // 保证探针自己永远不会成为 healthcheck 超时的原因。这是硬上界：到点 destroy → 按不可达处理。
+  const readyProbeTimeoutMs = Number(config.readyProbeTimeoutMs) > 0 ? Number(config.readyProbeTimeoutMs) : 2000;
+  // 结果缓存 1s：healthcheck 本身 30s 一次，但 /ready 还会被外部监控 / 编排器高频拉取，
+  // 而且探测失败时探活会重试 —— 没有缓存时一个 100ms 轮询的监控就能给 core 打出一堆无用连接。
+  // 1s 既能把同秒内的并发与密集轮询折叠成一次探测（并发请求共用同一个 in-flight promise），
+  // 又足够短：core 刚挂或刚恢复，最多 1s 后下一次探测就反映真实状态（远小于任何探活周期）。
+  const READY_CACHE_MS = 1000;
+  let readyCache = { at: 0, up: null };
+  let readyInflight = null;
+
+  /**
+   * 探一次上游 core：任何 <500 的 HTTP 应答都算「可达」——core 的 /health 回 200 OK；
+   * 上游换成别的实现时 404 也说明它在应答。5xx / 连接失败 / 超时一律算「不可达」。
+   */
+  function probeUpstreamOnce() {
+    return new Promise((resolve) => {
+      let settled = false;
+      const done = (up) => { if (!settled) { settled = true; resolve(up); } };
+      const client = upstreamBase.protocol === 'https:' ? https : http;
+      let req;
+      try {
+        req = client.request(new URL('/health', upstreamBase), {
+          method: 'GET',
+          headers: { accept: '*/*', 'user-agent': 'cc-manage-readiness' },
+        }, (res) => {
+          res.resume();   // 丢掉响应体，但必须读干净才能等到 end
+          res.on('end', () => done((res.statusCode ?? 0) < 500));
+          res.on('error', () => done(false));
+        });
+      } catch (e) {
+        log.warn?.(`就绪探测发不出请求（${upstreamBase.origin}）：${e.message}`);
+        return done(false);
+      }
+      // 挂住不答的上游（accept 了连接但不回响应）必须被这个硬超时收掉
+      req.setTimeout(readyProbeTimeoutMs, () => req.destroy(new Error('ready probe timeout')));
+      req.on('error', () => done(false));
+      req.end();
+    });
+  }
+
+  /** 带 in-flight 合并 + 1s 结果缓存的就绪探测（并发的 /ready 只会打 core 一次）。 */
+  async function upstreamReady() {
+    if (readyCache.up !== null && Date.now() - readyCache.at < READY_CACHE_MS) return readyCache.up;
+    if (!readyInflight) {
+      readyInflight = probeUpstreamOnce()
+        .then((up) => { readyCache = { at: Date.now(), up }; readyInflight = null; return up; })
+        .catch(() => { readyInflight = null; return false; });
+    }
+    return readyInflight;
+  }
+
   // ── 主 HTTP 服务 ───────────────────────────────────────
   /**
    * 安全解析请求 URL。
@@ -1405,9 +1465,23 @@ export async function startGateway(overrides = {}) {
       return serveStatic(res, url.pathname);
     }
 
-    // 健康检查（无需 key）
+    // liveness（无需 key）：只说明「网关进程活着」。
+    // 语义与响应体**刻意保持不变**（既有部署脚本与契约依赖它）——它不代表能干活，
+    // 只看这个会漏掉「core 挂了、进程还活着」这类故障。要看能不能干活请用 /ready。
     if (req.method === 'GET' && url.pathname === '/health') {
       return sendJSON(res, 200, { ok: true, accounts: accounts.length, available: scheduler.availableCount() });
+    }
+
+    // readiness（无需 key）：真探一次上游 core。可达 → 200；不可达/超时 → 503。
+    // compose 的 healthcheck 探的就是这里，所以「绿灯」等于「core 可达、/v1 能跑」。
+    if (req.method === 'GET' && url.pathname === '/ready') {
+      const up = await upstreamReady();
+      return sendJSON(res, up ? 200 : 503, {
+        ok: up,
+        upstream: up ? 'up' : 'down',
+        accounts: accounts.length,
+        available: scheduler.availableCount(),
+      });
     }
 
     if (isProxyRoute) {

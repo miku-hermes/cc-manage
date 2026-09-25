@@ -35,12 +35,16 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    # B18：core 的探活仍是它自己的 /health —— vendor 内核（vendor/commandcode-proxy）
+    # 只实现了 /health 与 /，没有 /ready（vendor 是上游镜像、本仓库不改）。
+    # core 没有下游依赖，它的 readiness 就等于「内核在应答」；真正的「core 可达」由
+    # gateway 侧的 /ready 负责（见下面 gateway 的 healthcheck）。
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3050/health"]
       interval: 30s
       timeout: 3s
-      retries: 3
-      start_period: 10s
+      retries: 5
+      start_period: 15s
 
   gateway:
     build: .
@@ -85,12 +89,17 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    # B18：探 /ready（readiness）而不是 /health（liveness）。
+    # /health 只说明进程活着 —— core 崩溃/OOM/断网后它照样 200，探活于是形同虚设。
+    # /ready 会真探一次 core：不可达就 503 → 容器被标 unhealthy（面板/监控/反代都能据此摘流）。
+    # start_period 30s 给足首刷额度 + 建立上游连接的时间，避免启动瞬间抖动误判；
+    # timeout 5s > 网关内部 2s 探测硬上界，保证超时只可能来自网关自身而不是探针。
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3051/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3051/ready"]
       interval: 30s
-      timeout: 3s
-      retries: 3
-      start_period: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
 volumes:
   cc-manage-data:

@@ -8,15 +8,22 @@ on:
     branches: [master, main]
   workflow_dispatch:
 
+# B18-6：同一 workflow + ref 上同时只保留最新一次运行（PR 连推时立刻取消旧 run，省跑量）。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   REGISTRY: ghcr.io
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # B18-6：actions 一律按 commit SHA 固定（tag 可被移动 = 供应链风险），注释里保留版本号。
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22'
       - name: Lint
@@ -31,12 +38,24 @@ jobs:
       - name: Run vendor core tests
         run: npm --prefix vendor/commandcode-proxy test
 
+      # B18-5：shell 语法检查。run-from-ghcr.sh 的「等待就绪」失败路径以前从没被执行过，
+      # 语法错误只有在真跑时才暴露；这里至少保证两把脚本能通过解析。
+      - name: Shell syntax check
+        run: bash -n scripts/run-from-ghcr.sh scripts/smoke.sh
+
   build:
     needs: test
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
       packages: write
+    # B18-6：推 latest 的构建按 ref 串行（cancel-in-progress: false = 排队而不是取消）。
+    # 同一 ref 上两次构建并行时，先开始的慢构建可能后推完，把 latest 指回旧提交；
+    # 串行之后 latest 永远由最后一次构建写。
+    concurrency:
+      group: docker-publish-build-${{ github.ref }}
+      cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix:
@@ -48,7 +67,7 @@ jobs:
             context: ./vendor/commandcode-proxy
             dockerfile: ./vendor/commandcode-proxy/Dockerfile
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Prepare image name
         id: meta
@@ -56,18 +75,18 @@ jobs:
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           echo "image=${REGISTRY}/${OWNER}/cc-manage-${{ matrix.image }}" >> "$GITHUB_OUTPUT"
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - id: docker_meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ${{ steps.meta.outputs.image }}
           tags: |
@@ -86,7 +105,7 @@ jobs:
           echo "image=node:22-alpine@${DIGEST}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
@@ -98,3 +117,20 @@ jobs:
           labels: ${{ steps.docker_meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  # B18-2：build 只 build 不 run —— CMD / EXPOSE / HEALTHCHECK / entrypoint / 运行时缺文件
+  # 全都没有自动化验证（唯一相关的 test/deploy.test.mjs 是纯文本正则）。这个 job 真构建镜像、
+  # 真起容器、等容器自己的 healthcheck 变 healthy，再跑 /health、/ready、面板骨架与一次
+  # /v1 往返；不 push，所以 PR 上也能跑。
+  smoke:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Validate compose config (base + override)
+        run: docker compose -f docker-compose.yml -f docker-compose.override.yml config -q
+
+      - name: Container smoke (build + run + HTTP assertions)
+        run: bash scripts/smoke.sh

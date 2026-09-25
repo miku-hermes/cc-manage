@@ -3,10 +3,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
+
+// B18：线上形态由 docker-compose.override.yml 决定（GHCR 镜像 / 1panel-network 别名 /
+// external network）。只读 base 文件等于对真实拓扑零覆盖，所以 override 也读进来。
+const OVERRIDE = read('docker-compose.override.yml');
 
 const dockerignore = read('.dockerignore').split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
 const gitignore = read('.gitignore').split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
@@ -29,6 +34,31 @@ function serviceBlock(text, name) {
   const m = src.match(new RegExp(`^  ${name}:\\n([\\s\\S]*?)(?=^  \\S|^\\S)`, 'm'));
   assert.ok(m, `compose 里找不到 service ${name}`);
   return m[1];
+}
+
+/** 取某个 service 的 healthcheck 子块（healthcheck 通常是 service 的最后一个 key，所以按
+ *  缩进收子键，而不是靠「下一个同级 key」定界）。 */
+function healthcheckBlock(text, name) {
+  const m = serviceBlock(text, name).match(/^ {4}healthcheck:\n((?: {6}\S.*\n?)*)/m);
+  assert.ok(m, `${name} 必须有 healthcheck`);
+  return m[1];
+}
+
+/**
+ * base + override 合并后的有效配置（`docker compose config --format json`）。
+ * 本机没有 docker / 不允许 spawn 时返回 null，由调用方显式 skip ——
+ * CI（ubuntu-latest 自带 docker compose）一定会跑到。
+ */
+function mergedComposeConfig() {
+  try {
+    const out = execFileSync('docker', [
+      'compose', '-f', 'docker-compose.yml', '-f', 'docker-compose.override.yml',
+      'config', '--format', 'json',
+    ], { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    return JSON.parse(out);
+  } catch {
+    return null;
+  }
 }
 
 // ── F22：.dockerignore 必须覆盖所有真实凭据 ──────────────────────────
@@ -188,4 +218,95 @@ test('L5：两个 Dockerfile 都支持注入 BASE_IMAGE digest 并打 revision �
   assert.match(ci, /imagetools inspect node:22-alpine/, 'CI 里解析基础镜像 digest（不凭空写死 sha256）');
   assert.match(ci, /BASE_IMAGE=\$\{\{\s*steps\.base\.outputs\.image\s*\}\}/, 'CI 要把解析出的 digest 传给构建');
   assert.match(ci, /REVISION=\$\{\{\s*github\.sha\s*\}\}/, 'CI 要把 revision 传给构建');
+});
+
+// ── B18-1：liveness / readiness 分工（gateway 探 /ready，core 探内核自己的 /health）──
+test('B18-1：gateway 的 healthcheck 指向 /ready（readiness），不是 /health', () => {
+  const hc = healthcheckBlock(read('docker-compose.yml'), 'gateway');
+  assert.match(hc, /127\.0\.0\.1:3051\/ready/, 'gateway 必须探 /ready —— 只探 /health 时 core 挂了容器仍报 healthy');
+  assert.doesNotMatch(hc, /3051\/health/, '不能再用 liveness 端点当探活判据');
+
+  const num = (key) => Number((hc.match(new RegExp(`^\\s+${key}:\\s*(\\d+)s?\\s*$`, 'm')) ?? [])[1]);
+  assert.ok(num('start_period') >= 30, `start_period 要给足（避免启动瞬间抖动误判），实际 ${num('start_period')}s`);
+  assert.ok(num('retries') >= 3, `retries 要给足，实际 ${num('retries')}`);
+  // 探针自身的硬超时是 2s（gateway.mjs），healthcheck 的 timeout 必须比它大，
+  // 否则所有失败都会表现为「healthcheck 超时」，看不出是网关还是上游的问题。
+  assert.ok(num('timeout') > 2, `healthcheck timeout 必须大于网关内部 2s 探测上界，实际 ${num('timeout')}s`);
+  const gatewaySrc = read('gateway.mjs');
+  assert.match(gatewaySrc, /readyProbeTimeoutMs[\s\S]{0,120}2000/, '探测超时上界必须是 2s（写死可见）');
+});
+
+test('B18-1：core 的 healthcheck 探的是 vendor 内核真实存在的 /health', () => {
+  const hc = healthcheckBlock(read('docker-compose.yml'), 'core');
+  assert.match(hc, /127\.0\.0\.1:3050\/health/);
+  // vendor 内核（上游镜像，本仓库不改）只实现 /health 与 /：给它写 /ready 会让 core 永远
+  // unhealthy → gateway（depends_on service_healthy）永远起不来。这里把「只能探 /health」
+  // 这条事实钉在 vendor 路由上，避免以后有人照着 gateway 抄一行 /ready 过去。
+  const vendor = read('vendor/commandcode-proxy/proxy.mjs');
+  assert.match(vendor, /url\.pathname === '\/health'/, 'vendor 内核必须有 /health 路由');
+  assert.doesNotMatch(vendor, /'\/ready'/, 'vendor 内核没有 /ready —— core 的探活不能指向它');
+});
+
+// ── B18-4：override 决定真实生产拓扑，断言必须覆盖它 ────────────────────
+test('B18-4：override 里两个服务都是 GHCR 镜像，gateway 带 1panel-network 别名', () => {
+  const core = serviceBlock(OVERRIDE, 'core');
+  const gateway = serviceBlock(OVERRIDE, 'gateway');
+  assert.match(core, /^\s+image:\s*ghcr\.io\/\S+\/cc-manage-core:\S+$/m, 'core 必须用 GHCR 镜像');
+  assert.match(gateway, /^\s+image:\s*ghcr\.io\/\S+\/cc-manage-gateway:\S+$/m, 'gateway 必须用 GHCR 镜像');
+  assert.match(gateway, /^\s+1panel-network:\s*$/m, 'gateway 必须挂 1panel-network（openresty 反代入口）');
+  assert.match(gateway, /aliases:\s*\n\s*-\s*cc-manage-gateway\s*$/m, '别名必须是 cc-manage-gateway');
+  const net = uncommented(OVERRIDE).match(/^networks:\n([\s\S]*)$/m);
+  assert.ok(net, 'override 必须有顶层 networks');
+  assert.match(net[1], /^  1panel-network:\n(?:    .*\n)*?    external: true\s*$/m, '1panel-network 必须是 external');
+});
+
+test('B18-4：base 的回环端口 / depends_on / restart / mem_limit（结构断言）', () => {
+  const compose = read('docker-compose.yml');
+  const core = serviceBlock(compose, 'core');
+  const gateway = serviceBlock(compose, 'gateway');
+
+  assert.match(core, /^\s+restart:\s*unless-stopped\s*$/m, 'core 必须 restart: unless-stopped');
+  assert.match(gateway, /^\s+restart:\s*unless-stopped\s*$/m, 'gateway 必须 restart: unless-stopped');
+
+  assert.match(gateway, /^\s+depends_on:\n\s+core:\n\s+condition:\s*service_healthy\s*$/m,
+    'gateway 必须等 core 健康（depends_on: service_healthy）');
+
+  // core 的内存上限（vendor 内核按 20MB body × 8 in-flight 估算）
+  const coreMem = core.match(/^\s+mem_limit:\s*(\d+)([mMgG])\s*$/m);
+  assert.ok(coreMem, 'core 必须有 mem_limit');
+  assert.equal(Number(coreMem[1]) * (/g/i.test(coreMem[2]) ? 1024 ** 3 : 1024 ** 2), 512 * 1024 * 1024);
+
+  // 端口只能绑宿主回环，且只有一条映射 —— 任何 0.0.0.0 / 裸 3051:3051 都是对外暴露
+  const ports = gateway.match(/^\s+ports:\n((?:\s+-\s+.*\n)+)/m);
+  assert.ok(ports, 'gateway 必须有 ports 段');
+  assert.match(ports[1], /127\.0\.0\.1:\$\{GATEWAY_BIND_PORT:-3051\}:3051/, '必须绑 127.0.0.1:<port>:3051');
+  assert.doesNotMatch(ports[1], /0\.0\.0\.0/, '绝不能绑 0.0.0.0');
+  assert.equal((ports[1].match(/^\s+-\s/gm) ?? []).length, 1, '只允许一条端口映射（多一条就可能对外）');
+});
+
+test('B18-4：base+override 合并后的有效配置（docker compose config）', (t) => {
+  const cfg = mergedComposeConfig();
+  if (!cfg) return t.skip('本机没有可用的 docker compose（CI 的 smoke job 一定会跑到这条）');
+  const { core, gateway } = cfg.services;
+
+  assert.equal(gateway.restart, 'unless-stopped');
+  assert.equal(core.restart, 'unless-stopped');
+  assert.equal(gateway.depends_on.core.condition, 'service_healthy');
+  assert.equal(core.mem_limit, String(512 * 1024 * 1024), 'core 的 mem_limit 必须原样活到合并结果里');
+
+  assert.ok(gateway.healthcheck, 'gateway 的 healthcheck 不能被 override 弄丢');
+  assert.ok(gateway.healthcheck.test.join(' ').includes('3051/ready'), '合并后 gateway 必须仍探 /ready');
+  assert.ok(core.healthcheck.test.join(' ').includes('3050/health'));
+
+  assert.equal(gateway.ports.length, 1, '只允许一条端口映射');
+  assert.equal(gateway.ports[0].host_ip, '127.0.0.1', '端口只能绑宿主回环');
+  assert.equal(Number(gateway.ports[0].target), 3051);
+  assert.equal(gateway.ports[0].mode, 'ingress');
+
+  assert.match(gateway.image, /cc-manage-gateway:latest$/, 'override 的 GHCR 镜像必须活到合并结果里');
+  assert.match(core.image, /cc-manage-core:latest$/);
+  assert.deepEqual(gateway.networks['1panel-network'].aliases, ['cc-manage-gateway'],
+    'gateway 必须带着 cc-manage-gateway 别名挂进 1panel-network');
+  assert.equal(cfg.networks['1panel-network'].external, true);
+  assert.equal(cfg.networks['core-net'].internal, true, 'core-net 必须仍是 internal');
 });

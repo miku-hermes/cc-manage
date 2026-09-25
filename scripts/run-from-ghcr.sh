@@ -45,6 +45,10 @@ fill_core_run_args() {
     -d --name cc-manage-core --restart unless-stopped
     --network "$NET"
     --memory 512m
+    # B18：脚本这条路径原先完全没有 healthcheck（compose 有，这里没有），
+    # 于是 docker inspect 永远看不到内核状态。core 探内核自己的 /health（vendor 只有这个路由）。
+    --health-cmd "wget -q --spider http://127.0.0.1:3050/health || exit 1"
+    --health-interval 30s --health-timeout 3s --health-start-period 15s --health-retries 5
     -e PORT=3050 -e HOST=0.0.0.0
     -e CC_MAX_BODY_MB="${CC_MAX_BODY_MB:-20}"
     -e CC_MAX_INFLIGHT="${CC_MAX_INFLIGHT:-8}"
@@ -63,6 +67,10 @@ fill_gateway_run_args() {
     --network "$NET"
     --memory 384m
     -p "127.0.0.1:${GATEWAY_PORT}:3051"
+    # B18：探 /ready（readiness）而不是 /health（liveness）—— 后者在 core 挂掉时照样 200。
+    # timeout 5s > 网关内部 2s 探测上界，保证超时只可能来自网关自身。
+    --health-cmd "wget -q --spider http://127.0.0.1:3051/ready || exit 1"
+    --health-interval 30s --health-timeout 5s --health-start-period 30s --health-retries 5
     -e GATEWAY_HOST=0.0.0.0 -e GATEWAY_PORT=3051
     -e UPSTREAM_PROXY_URL=http://cc-manage-core:3050
     -e CC_API_BASE="${CC_API_BASE:-https://api.commandcode.ai}"
@@ -122,11 +130,34 @@ docker rm -f cc-manage-gateway >/dev/null 2>&1 || true
 fill_gateway_run_args
 docker run "${GATEWAY_RUN_ARGS[@]}" >/dev/null
 
-echo "==> 等待就绪"
+# 就绪检查：等 /ready 而不是 /health。
+#   /health 只说明网关进程活着；core 没起来时它照样 200 —— 原先的循环超时后没有失败分支，
+#   最后一条命令是 echo，于是「服务根本没起来」也会以 0 退出（set -euo pipefail 救不了）。
+#   现在超时就是失败：打出容器 health 与两边日志（各 50 行）后 exit 1。
+echo "==> 等待就绪（探 /ready）"
+ready=0
 for _ in $(seq 1 20); do
-  if curl -fsS "http://127.0.0.1:${GATEWAY_PORT}/health" >/dev/null 2>&1; then break; fi
+  if curl -fsS "http://127.0.0.1:${GATEWAY_PORT}/ready" >/dev/null 2>&1; then ready=1; break; fi
   sleep 1
 done
 
-curl -sS "http://127.0.0.1:${GATEWAY_PORT}/health"; echo
+# docker inspect 的 Health 状态（启动失败时先看它，一眼看出是哪个容器没健康）
+health_of() {
+  docker inspect --format '{{.Name}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}(无 healthcheck){{end}}' "$@" 2>/dev/null || true
+}
+
+if [ "$ready" != "1" ]; then
+  echo "错误：${GATEWAY_PORT} 上 20s 内没等到 /ready=200（core 或网关没起来）" >&2
+  echo "--- docker inspect health ---" >&2
+  health_of cc-manage-gateway cc-manage-core >&2
+  echo "--- docker logs --tail 50 cc-manage-gateway ---" >&2
+  docker logs --tail 50 cc-manage-gateway >&2 2>&1 || true
+  echo "--- docker logs --tail 50 cc-manage-core ---" >&2
+  docker logs --tail 50 cc-manage-core >&2 2>&1 || true
+  exit 1
+fi
+
+echo "==> 容器健康状态"
+health_of cc-manage-gateway cc-manage-core
+curl -sS "http://127.0.0.1:${GATEWAY_PORT}/ready"; echo
 echo "面板: http://127.0.0.1:${GATEWAY_PORT}/  （PROTECT_ADMIN_API=1 时需在页面填入 keys.json 里的 key）"

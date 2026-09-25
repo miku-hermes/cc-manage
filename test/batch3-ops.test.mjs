@@ -5,12 +5,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
+  allocPort,
   cleanupTestResources,
   makeTmpDir,
+  request,
   retryOnPortConflict,
   startTestGateway,
 } from './helpers.mjs';
@@ -112,19 +115,60 @@ echo "still-running"`;
   fs.rmSync(base, { recursive: true, force: true });
 });
 
-// ── L2：allocPort 竞态重试 ────────────────────────────────────────────
-test('L2：retryOnPortConflict 对 EADDRINUSE 重试，第 3 次成功', async () => {
-  let calls = 0;
-  const port = await retryOnPortConflict(async () => {
-    calls += 1;
-    if (calls < 3) { const e = new Error('address in use'); e.code = 'EADDRINUSE'; throw e; }
-    return 41234;
-  }, 3);
-  assert.equal(port, 41234);
-  assert.equal(calls, 3, '必须真的重试到成功为止');
+// ── L2：端口竞争重试必须重试在「真正 bind 的那一步」─────────────────────
+// B18：原来是拿**人工构造的假 Error**去测 retryOnPortConflict，于是读数上「已有保护」，
+// 实际保护的却是 allocPort 的 listen(0) —— 真正会 EADDRINUSE 的是 startTestGateway 里
+// 网关那次 server.listen，全仓在 gateway.mjs 里根本找不到重试点。现在两条用例都用
+// **真实占住端口**制造真 EADDRINUSE，断言 startTestGateway 真的换端口重试。
+test('L2：真实 bind 冲突（EADDRINUSE）时 startTestGateway 换端口重试并成功起来', async () => {
+  // 真占住一个端口：先真的 listen（不是造假 Error），再让 startTestGateway 第一次拿到它。
+  const squatter = net.createServer();
+  await new Promise((r) => squatter.listen(0, '127.0.0.1', r));
+  const busyPort = squatter.address().port;
+  const sparePort = await allocPort();     // 第 2 次尝试真的空闲端口
+  const picked = [];
+  let ctx;
+  try {
+    ctx = await startTestGateway({
+      deps: {
+        allocPort: async () => {
+          const p = picked.length === 0 ? busyPort : sparePort;
+          picked.push(p);
+          return p;
+        },
+      },
+    });
+  } finally {
+    await new Promise((r) => squatter.close(r));
+  }
+  try {
+    assert.deepEqual(picked, [busyPort, sparePort], '第一次撞上被占端口后必须换端口重试');
+    assert.equal(ctx.port, sparePort, '最终必须落在第二次分配的空闲端口上');
+    const health = await request(`${ctx.baseUrl}/health`);
+    assert.equal(health.status, 200, '重试后网关必须真的在监听（而不是假装成功）');
+  } finally {
+    await ctx.close();
+  }
 });
 
-test('L2：retryOnPortConflict 不重试其它错误，且重试用尽后抛最后一个错误', async () => {
+test('L2：端口一直被占 → 换端口重试 3 次后如实抛 EADDRINUSE（不静默成功）', async () => {
+  const squatter = net.createServer();
+  await new Promise((r) => squatter.listen(0, '127.0.0.1', r));
+  const busyPort = squatter.address().port;
+  let calls = 0;
+  try {
+    await assert.rejects(startTestGateway({
+      deps: { allocPort: async () => { calls += 1; return busyPort; } },
+    }), (e) => e?.code === 'EADDRINUSE', '必须把真实的 EADDRINUSE 抛出来，绝不吞掉当成启动成功');
+  } finally {
+    await new Promise((r) => squatter.close(r));
+  }
+  assert.equal(calls, 3, '重试上限必须是 3 次（每次都真的重新 bind）');
+});
+
+test('L2：非端口冲突的错误不重试（错误分类，与端口竞争无关）', async () => {
+  // 真实 EPERM/EACCES 需要 root 或特权端口，测试里造不出来，这里只断言**分类**行为：
+  // 非 EADDRINUSE 不该浪费重试。
   let calls = 0;
   await assert.rejects(retryOnPortConflict(async () => {
     calls += 1;
