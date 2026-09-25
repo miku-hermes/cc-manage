@@ -146,13 +146,12 @@ function trendRangeText(samples, data) {
   const bucketMs = trendNum(data?.bucketMs) || 5 * 60 * 1000;
   const perMin = Math.max(1, Math.round(bucketMs / 60000));
   const n = Array.isArray(samples) ? samples.length : 0;
-  const capacity = trendCapacity(data); // 24 小时窗口能装多少样本（5 分钟 → 288）
   if (n < 2) {
-    // 数据不足：明说收集中，并给出「已攒 n / 满窗 capacity」的比例，别让人误以为是全量累计
-    return '数据收集中 · ' + n + '/' + capacity + ' 个样本（每 ' + perMin + ' 分钟一个）';
+    // 数据不足：样本数已由标题旁的「数据收集中 n/capacity」徽章表达，这里只说明节拍。
+    return '数据收集中 · 每 ' + perMin + ' 分钟一个点';
   }
-  // 样本够画线：明确写出这段曲线只覆盖最近这么长的时间窗（与上方累计值区分开）
-  return '覆盖最近 ' + spanText(((n - 1) * bucketMs) / 60000) + ' · 共 ' + n + ' 个样本（每 ' + perMin + ' 分钟一个）';
+  // 样本够画线：只写明覆盖的时间窗（样本数在徽章里，不再说第二遍）。
+  return '覆盖最近 ' + spanText(((n - 1) * bucketMs) / 60000) + '（每 ' + perMin + ' 分钟一个点）';
 }
 
 /**

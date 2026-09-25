@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { createDomShim, runInlineScript, styleText } from './helpers.mjs';
 
-const INDEX_HTML = fs.readFileSync(new URL('../panel/src/pages/index.astro', import.meta.url), 'utf8');
+const INDEX_HTML = fs.readFileSync(new URL('../panel/dist/index.html', import.meta.url), 'utf8');
 const ADMIN_HTML = fs.readFileSync(new URL('../panel/src/pages/admin.astro', import.meta.url), 'utf8');
 const delay = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -117,12 +117,12 @@ test('回归#16：前台 load() 用 generation 丢弃慢旧响应', async () => 
   const second = page.load();
   await delay(0);
   assert.equal(pending.length, 2, '第二次 load 应独立发起请求');
-  pending[1]({ ok: true, status: 200, json: async () => ({ now: 2, summary: { accounts: 99, available: 1, paused: 0, concurrency: 0 }, stats: { total: 0, errors: 0, totalTokens: 0 }, accounts: [] }) });
+  pending[1]({ ok: true, status: 200, json: async () => ({ now: 2, summary: { accounts: 99, available: 1, paused: 0, concurrency: 0 }, stats: { total: 99, errors: 0, clientErrors: 0, totalTokens: 0 }, accounts: [] }) });
   await second;
-  assert.equal(shim.el('kpi-accounts').textContent, '99');
-  pending[0]({ ok: true, status: 200, json: async () => ({ now: 1, summary: { accounts: 11, available: 1, paused: 0, concurrency: 0 }, stats: { total: 0, errors: 0, totalTokens: 0 }, accounts: [] }) });
+  assert.equal(shim.el('kpi-total').textContent, '99');
+  pending[0]({ ok: true, status: 200, json: async () => ({ now: 1, summary: { accounts: 11, available: 1, paused: 0, concurrency: 0 }, stats: { total: 11, errors: 0, clientErrors: 0, totalTokens: 0 }, accounts: [] }) });
   await delay(0);
-  assert.equal(shim.el('kpi-accounts').textContent, '99', '过期的旧响应必须直接丢弃');
+  assert.equal(shim.el('kpi-total').textContent, '99', '过期的旧响应必须直接丢弃');
 });
 
 // ── UI 5：危险/警示/中性操作按钮语义统一 ──
@@ -159,7 +159,10 @@ test('视觉#6：最近错误/查询失败用 cell-error 琥珀红色强调并�
 test('视觉#7：0% 进度条保留完整 6px 空轨道，填充条与轨道同粗', async () => {
   const shim = dom(INDEX_HTML);
   const page = await runInlineScript(INDEX_HTML, shim);
-  const empty = page.bar('5 小时窗口', { used: 0, cap: 3, percent: 0, usedRatio: 0, resetAt: 0 }, { spent: false });
+  // B23：进度条从账号卡模板克隆；用一张 5h 0% 的卡取 .bar 轨道。
+  const empty = page.card(account({
+    lastQuota: quota(9.9, { fiveHour: { used: 0, cap: 3, percent: 0, usedRatio: 0, resetAt: 0 } }),
+  }));
   assert.match(empty, /class="bar s-ok is-empty"><i style="width:0%"><\/i>/);
   assert.match(styleText(INDEX_HTML), /\.bar \{\s*height: 6px; min-height: 6px;/);
   assert.match(styleText(INDEX_HTML), /\.bar\.is-empty \{ height: 6px; min-height: 6px; \}/);

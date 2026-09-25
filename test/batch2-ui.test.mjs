@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { createDomShim, runInlineScript, styleText } from './helpers.mjs';
 
-const INDEX_HTML = fs.readFileSync(new URL('../panel/src/pages/index.astro', import.meta.url), 'utf8');
+const INDEX_HTML = fs.readFileSync(new URL('../panel/dist/index.html', import.meta.url), 'utf8');
 const ADMIN_HTML = fs.readFileSync(new URL('../panel/src/pages/admin.astro', import.meta.url), 'utf8');
 const delay = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -319,8 +319,8 @@ test('B2-13：两页都有按 data-theme 分派的 color-scheme', () => {
   }
 });
 
-// ── 14（前端）：新增「不可用」KPI ─────────────────────────────────
-test('B2-14：前台「不可用」KPI 显示 summary.unavailable', async () => {
+// ── 14（前端，B23 改写）：账号口径合并到 Hero，KPI 不再重复列账号卡 ──
+test('B2-14：账号口径只在 Hero（可用 N / M），KPI 侧不再有账号卡', async () => {
   const shim = dom(INDEX_HTML);
   const page = await runInlineScript(INDEX_HTML, shim);
   page.render({
@@ -329,8 +329,10 @@ test('B2-14：前台「不可用」KPI 显示 summary.unavailable', async () => 
     stats: { total: 0, errors: 0, clientErrors: 0, totalTokens: 0 },
     accounts: [account(), account({ keyId: 'aaaa1111' }), account({ keyId: 'bbbb2222' })],
   });
-  assert.equal(shim.el('kpi-unavailable').textContent, '1');
-  assert.match(INDEX_HTML, /id="kpi-box-unavailable"/);
+  assert.equal(shim.el('health').textContent, '可用 2 / 3', '「可用 3/4」是唯一账号口径表达');
+  for (const id of ['kpi-box-accounts', 'kpi-box-available', 'kpi-box-unavailable']) {
+    assert.equal(shim.el(id), null, `${id} 必须删除（与 Hero 重复的派生卡）`);
+  }
 });
 
 // ── 15：弹窗可访问性 ──────────────────────────────────────────────
@@ -354,14 +356,17 @@ test('B2-15：Esc 关闭弹窗并把焦点还给触发元素；主区有隐藏 h
 test('B2-16：.bar-group 带 aria-label（同 title 文案）', async () => {
   const shim = dom(INDEX_HTML);
   const page = await runInlineScript(INDEX_HTML, shim);
-  const out = page.bar('本周窗口', { used: 1, cap: 2, percent: 50, resetAt: 0 }, {});
+  // B23：进度条不再由 JS 拼字符串，改从账号卡模板克隆 → 用卡片序列化结果取 bar-group。
+  const out = page.card(account({
+    lastQuota: quota(9.9, { weekly: { used: 1, cap: 2, percent: 50, resetAt: 0 } }),
+  }));
   // 断言改成「属性顺序无关、逐属性核对同一个起始标签」：HTML 属性顺序没有语义，
   // 旧正则把 class→title→aria-label→> 的书写顺序钉死，任何在中间插入属性的合法改动
   // （如本批次为让 aria-label 真正进无障碍树而补的 role="group"）都会被误判为失败 ——
   // 那是测试在断言实现细节而非行为。新写法不依赖顺序，且仍要求 class / title /
   // aria-label / role 四项同时落在同一个 .bar-group 标签内，因此是更强而非更弱的断言。
-  const groups = out.match(/<div class="bar-group"[^>]*>/g) || [];
-  assert.equal(groups.length, 1, '恰好一个 .bar-group 起始标签');
+  const groups = (out.match(/<div class="bar-group"[^>]*>/g) || []).filter((g) => g.includes('本周窗口'));
+  assert.equal(groups.length, 1, '恰好一个「本周窗口」.bar-group 起始标签');
   const tag = groups[0];
   assert.match(tag, /class="bar-group"/, '保留 bar-group 类');
   assert.match(tag, /title="本周窗口：已用 1\.00 \/ 2\.00"/, '金额进 title（鼠标悬停可见）');
@@ -389,7 +394,9 @@ test('B2-18：前台「上游错误数」只显示 stats.errors（客户端 4xx 
     accounts: [account()],
   });
   assert.equal(shim.el('kpi-errors').textContent, '1');
-  assert.match(INDEX_HTML, /上游错误数/);
+  // 标签文案在 render-hero.js 的 KPI 定义里（结构在 KpiCard.astro）。
+  const heroJs = fs.readFileSync(new URL('../panel/public/js/render-hero.js', import.meta.url), 'utf8');
+  assert.match(heroJs, /label: '上游错误数'/);
 });
 
 // ── 19：隐私模式下搜索不覆盖登录提示 ─────────────────────────────

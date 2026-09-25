@@ -298,6 +298,21 @@ export function createDomShim({ html, fetchImpl, localStorageData = {} }) {
   ]);
   let documentRef = null;
 
+  // 序列化用的转义：outerHTML 需要把 textContent 里的用户数据还原成实体。
+  const ESC_TEXT = { '&': '&amp;', '<': '&lt;', '>': '&gt;' };
+  const ESC_ATTR = { '&': '&amp;', '"': '&quot;', '<': '&lt;', '>': '&gt;' };
+  const escText = (s) => String(s).replace(/[&<>]/g, (c) => ESC_TEXT[c]);
+  const escAttr = (s) => String(s).replace(/[&"<>]/g, (c) => ESC_ATTR[c]);
+
+  /** 克隆任意节点：文本节点没有 cloneNode，这里按文本拷贝。 */
+  function cloneAny(node) {
+    if (node && node.nodeType === 3) {
+      const data = node.textContent;
+      return { nodeType: 3, nodeName: '#text', data, nodeValue: data, textContent: data, parent: null, children: [] };
+    }
+    return node.cloneNode(true);
+  }
+
   function makeEl(tag = '') {
     const classes = new Set();
     const attrs = new Map();
@@ -404,7 +419,49 @@ export function createDomShim({ html, fetchImpl, localStorageData = {} }) {
       get childNodes() { return this.children; },
       get firstChild() { return this.children[0] ?? null; },
       get firstElementChild() { return this.children.find((c) => c.nodeType === 1) ?? null; },
+      cloneNode(deep = false) {
+        const copy = makeEl(this.tagName);
+        if (this.id) copy.id = this.id;
+        for (const c of classes) copy.classList.add(c);
+        for (const [k, v] of attrs) copy.setAttribute(k, v);
+        for (const k of Object.keys(this.style || {})) copy.style[k] = this.style[k];
+        copy.hidden = this.hidden;
+        copy.value = this.value;
+        copy.disabled = this.disabled;
+        copy.checked = this.checked;
+        copy.selected = this.selected;
+        if (textOverride !== null) copy.textContent = textOverride;
+        else if (ownText) copy._appendText(ownText);
+        if (deep) for (const c of this.children) copy.appendChild(cloneAny(c));
+        return copy;
+      },
+      remove() { if (this.parent) this.parent.removeChild(this); },
+      _serialize() {
+        let out = '<' + this.tagName;
+        if (this.id) out += ' id="' + escAttr(this.id) + '"';
+        if (classes.size) out += ' class="' + escAttr([...classes].join(' ')) + '"';
+        const styleKeys = Object.keys(this.style || {});
+        const attrStyle = attrs.get('style');
+        if (styleKeys.length) out += ' style="' + escAttr(styleKeys.map((k) => k + ':' + this.style[k]).join(';')) + '"';
+        else if (attrStyle !== undefined) out += ' style="' + escAttr(attrStyle) + '"';
+        for (const [k, v] of attrs) {
+          if (k === 'id' || k === 'class' || k === 'style' || k === 'data-f') continue;
+          out += ' ' + k + '="' + escAttr(v) + '"';
+        }
+        out += '>' + escText(textOverride !== null ? textOverride : ownText);
+        for (const c of this.children) {
+          out += c.nodeType === 3 ? escText(c.textContent) : (c._serialize ? c._serialize() : '');
+        }
+        out += '</' + this.tagName + '>';
+        return out;
+      },
     };
+    Object.defineProperty(el, 'outerHTML', { get: () => el._serialize(), enumerable: true, configurable: true });
+    // <template> 的 content 在真实 DOM 里是 DocumentFragment；垫片里直接复用模板自身
+    // （firstElementChild / querySelector / cloneNode 都能用），够模板克隆路径使用。
+    if (String(tag).toLowerCase() === 'template') {
+      Object.defineProperty(el, 'content', { get: () => el, enumerable: true, configurable: true });
+    }
 
     Object.defineProperty(el, 'className', {
       get: () => [...classes].join(' '),
@@ -462,6 +519,8 @@ export function createDomShim({ html, fetchImpl, localStorageData = {} }) {
       // 只遍历元素节点：文本节点（nodeType 3）等不能进选择器匹配。
       if (n.nodeType !== 1) continue;
       fn(n);
+      // <template> 的内容不参与文档树查询（真实 DOM 语义），克隆时走 content。
+      if (n.tagName === 'template') continue;
       walk(n.children, fn);
     }
   }

@@ -12,7 +12,7 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const exists = (rel) => fs.existsSync(path.join(ROOT, rel));
 
 const PKG = JSON.parse(read('package.json'));
-const INDEX_HTML = read('panel/src/pages/index.astro');
+const INDEX_HTML = read('panel/dist/index.html');
 const WORKFLOW = read('.github/workflows/docker-publish.yml');
 const LINT_JS = read('scripts/lint.mjs');
 

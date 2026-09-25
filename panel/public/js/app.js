@@ -69,9 +69,11 @@ document.addEventListener('focusout', (e) => {
 function greetingOf(h) { return h < 5 ? '凌晨好' : h < 12 ? '早上好' : h < 18 ? '下午好' : '晚上好'; }
 function tick() {
   const now = new Date();
-  $('clock').textContent = now.toLocaleTimeString('zh-CN', { hour12: false });
-  $('date').textContent = now.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' });
-  $('greeting').textContent = greetingOf(now.getHours());
+  // B23：主页面只保留「更新于 …」一个时间戳（脚注），右上角实时时钟已删除。
+  const date = $('date');
+  if (date) date.textContent = now.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' });
+  const greeting = $('greeting');
+  if (greeting) greeting.textContent = greetingOf(now.getHours());
   tickFreshness();
 }
 
@@ -176,8 +178,5 @@ function boot() {
   load();
   setInterval(() => { if (!document.hidden) load(); }, 5000);
 
-  // 历史趋势：首屏拉一次 + 每 60s 刷新（与 5s 轮询同样的 hidden 守卫）。
-  // 独立于主面板：loadTrend 内部失败静默降级，不影响 /api/status 的渲染。
-  loadTrend();
-  setInterval(() => { if (!document.hidden) loadTrend(); }, 60000);
+  // B23：趋势图已独立到 /trend 页，主面板不再加载 render-trend.js，也不再有趋势轮询。
 }

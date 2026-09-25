@@ -5,47 +5,68 @@ let lastTokens = null;     // 上次 token 数值；null = 尚未渲染过
 const lastKpiValues = {};  // KPI 数字 id → 上次的值
 
 /** 一个数字格：首次从 0，之后格式化结果变了才动。 */
-function paintKpiNumber(id, value) {
-  const el = $(id);
+function paintKpiNumber(el, key, value) {
   if (!el) return;
-  const prev = id in lastKpiValues ? lastKpiValues[id] : null;
+  const prev = key in lastKpiValues ? lastKpiValues[key] : null;
   if (prev === null) setNumber(el, 0, value, num, 700);
   else if (num(prev) !== num(value)) setNumber(el, prev, value, num, 320);
-  lastKpiValues[id] = value;
+  lastKpiValues[key] = value;
 }
 
-/* KPI 语义色：错误>0 红、可用<总数 黄、0 值弱化 */
-function paintKpi(boxId, numId, value, opts) {
-  const box = $(boxId);
-  const b = $(numId);
+/* KPI 语义色：错误>0 红、可用<总数 黄、0 值弱化。 */
+function kpiModifier(opts, value) {
   const v = Number(value);
-  const known = Number.isFinite(v);
-  box.className = 'kpi';
-  if (known) {
-    if (opts.kind === 'danger' && v > 0) box.classList.add('is-danger');
-    else if (opts.kind === 'warning' && opts.warnWhen && opts.warnWhen(v)) box.classList.add('is-warning');
-    else if (opts.kind === 'accent' && v > 0) box.classList.add('is-accent');
-    else if (v === 0) box.classList.add('is-muted');
-  }
-  if (known) {
-    paintKpiNumber(numId, v);
-  } else {
-    b.textContent = '—';   // 不可用值：同步写终值，格式与原来一致
-    lastKpiValues[numId] = null;
-  }
+  if (!Number.isFinite(v)) return '';
+  if (opts.kind === 'danger' && v > 0) return ' is-danger';
+  if (opts.kind === 'warning' && opts.warnWhen && opts.warnWhen(v)) return ' is-warning';
+  if (opts.kind === 'accent' && v > 0) return ' is-accent';
+  if (v === 0) return ' is-muted';
+  return '';
 }
 
-/** KPI 卡下方那行 12px 说明小字（真实数据，不塞假值）。 */
-function setKpiSub(id, text) {
-  const el = $(id);
-  if (el) el.textContent = text;
+/* KPI 定义：结构在 KpiCard.astro（唯一模板）；这里只有「显示哪些 / 填什么值」。
+   零值卡（hideWhenZero）整张不渲染 —— 例如「暂停中 0」不再占一个槽位。
+   token 不再出现在「总请求」副文案里（与 Hero 右上角累计 token 重复）。 */
+function kpiDefs(s, st) {
+  const defs = [
+    { key: 'total', label: '总请求', icon: 'total', kind: 'accent', value: st.total, sub: '' },
+    { key: 'errors', label: '上游错误数', icon: 'errors', kind: 'danger', value: st.errors, sub: '客户端错误 ' + num(st.clientErrors) },
+    { key: 'paused', label: '暂停中', icon: 'paused', kind: '', value: s.paused, sub: '含冷却', hideWhenZero: true },
+  ];
+  return defs.filter((d) => !(d.hideWhenZero && !(Number(d.value) > 0)));
 }
 
-/** summary.enabled 缺失时兜底数「未显式停用」的账号，避免显示成 0。 */
-function enabledCount(s, accounts) {
-  const v = Number(s.enabled);
-  if (Number.isFinite(v)) return v;
-  return accounts.filter((a) => a.enabled !== false).length;
+/** 用 <template id="tpl-kpi"> 克隆出可见的 KPI 卡（结构零拼接、数据零 innerHTML）。 */
+function renderKpis(s, st) {
+  const host = $('kpis');
+  if (!host) return;
+  const tpl = $('tpl-kpi');
+  clearChildren(host);
+  if (!tpl || !tpl.content || !tpl.content.firstElementChild) return;
+  for (const def of kpiDefs(s, st)) {
+    const node = tpl.content.firstElementChild.cloneNode(true);
+    const value = Number(def.value);
+    node.id = 'kpi-box-' + def.key;
+    node.className = 'kpi' + kpiModifier(def, value);
+    const icon = field(node, 'kpi-icon-' + def.icon);
+    for (const svg of node.querySelectorAll('.kpi-icon svg')) svg.hidden = svg !== icon;
+    const label = field(node, 'kpi-label');
+    if (label) label.textContent = def.label;
+    const b = field(node, 'kpi-value');
+    if (b) {
+      b.id = 'kpi-' + def.key;
+      if (Number.isFinite(value)) paintKpiNumber(b, 'kpi-' + def.key, value);
+      else b.textContent = '—';
+    }
+    const sub = field(node, 'kpi-sub');
+    if (sub) {
+      if (def.sub) { sub.id = 'kpi-sub-' + def.key; sub.textContent = def.sub; }
+      else sub.remove();
+    }
+    host.appendChild(node);
+  }
+  // 内部钩子不留在产出 DOM 里（与账号卡一致）。
+  for (const el of host.querySelectorAll('[data-f]')) el.removeAttribute('data-f');
 }
 
 /** 额度构成聚合：只统计「有 lastQuota 快照」的账号（无快照不参与求和）。 */
@@ -77,8 +98,9 @@ function creditsTotals(accounts) {
 function breakdownText(accounts) {
   const t = creditsTotals(accounts);
   if (!t.count) return '尚未获取额度快照';
-  const base = '月度 $' + money(t.monthly) + ' · 购买 $' + money(t.purchased) + ' · 赠送 $' + money(t.free);
-  return base + ' · ' + (t.cap > 0 ? '本月已用 ' + pctText(t.percent) : '本月用量待同步');
+  // 口径写清：剩余额度是上方的大数字；这一行是「本月已用百分比 + 月度池构成」。
+  const used = t.cap > 0 ? '本月已用 ' + pctText(t.percent) : '本月用量待同步';
+  return used + ' · 月度 $' + money(t.monthly) + ' · 购买 $' + money(t.purchased) + ' · 赠送 $' + money(t.free);
 }
 
 /* 状态筛选条：全部 / 可用 / 冷却 / 耗尽。
@@ -97,12 +119,17 @@ function renderFilters(accounts) {
   const host = $('filters');
   if (!host) return;
   const counts = filterCounts(accounts);
-  host.innerHTML = VIEW_FILTERS.map(([key, label]) => {
+  clearChildren(host);
+  for (const [key, label] of VIEW_FILTERS) {
     const active = state.viewFilter === key;
-    return '<button type="button" class="filter-btn' + (active ? ' is-active' : '') + '"'
-      + ' data-filter="' + key + '" aria-pressed="' + (active ? 'true' : 'false') + '">'
-      + label + ' ' + num(counts[key]) + '</button>';
-  }).join('');
+    const btn = document.createElement('button');
+    btn.setAttribute('type', 'button');
+    btn.className = 'filter-btn' + (active ? ' is-active' : '');
+    btn.setAttribute('data-filter', key);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    btn.textContent = label + ' ' + num(counts[key]);
+    host.appendChild(btn);
+  }
 }
 
 function render(d) {
@@ -135,37 +162,17 @@ function render(d) {
   // 余额下方的构成明细（聚合口径见 breakdownText）。
   $('bal-breakdown').textContent = breakdownText(accounts);
 
-  paintKpi('kpi-box-accounts', 'kpi-accounts', s.accounts, {});
-  paintKpi('kpi-box-available', 'kpi-available', s.available, { kind: 'warning', warnWhen: (v) => Number(s.accounts) > v });
-  paintKpi('kpi-box-paused', 'kpi-paused', s.paused, {});
-  // 不可用 = accounts - available：暂停/冷却只是部分口径，这个数才补齐「账号 3 / 可用 2」的缺口。
-  const unavailable = Number.isFinite(Number(s.unavailable)) ? s.unavailable : Number(s.accounts) - Number(s.available);
-  paintKpi('kpi-box-unavailable', 'kpi-unavailable', unavailable, {});
-  paintKpi('kpi-box-total', 'kpi-total', st.total, {});
-  paintKpi('kpi-box-errors', 'kpi-errors', st.errors, { kind: 'danger' });
-
-  setKpiSub('kpi-sub-accounts', '启用 ' + num(enabledCount(s, accounts)));
-  setKpiSub('kpi-sub-available', '不可用 ' + num(unavailable));
-  setKpiSub('kpi-sub-paused', '含冷却');
-  setKpiSub('kpi-sub-unavailable', '暂停+耗尽');
-  setKpiSub('kpi-sub-total', 'token ' + num(st.totalTokens));
-  setKpiSub('kpi-sub-errors', '客户端错误 ' + num(st.clientErrors));
+  // KPI 卡：账号口径（账号数/可用/不可用）已合并进 Hero 的「网关状态 可用 N / M」，
+  // 这里只保留不重复的指标；零值卡（暂停中）不渲染。结构在 KpiCard.astro。
+  renderKpis(s, st);
 
   renderFilters(accounts);
   renderCards();
   if (typeof playIntro === 'function') playIntro();   // 首屏入场 stagger：只跑一次（introPending 守卫）
 }
 function clearKpis() {
-  for (const id of ['kpi-accounts', 'kpi-available', 'kpi-paused', 'kpi-unavailable', 'kpi-total', 'kpi-errors']) {
-    $(id).textContent = '—';
-  }
-  for (const id of ['kpi-box-accounts', 'kpi-box-available', 'kpi-box-paused', 'kpi-box-unavailable', 'kpi-box-total', 'kpi-box-errors']) {
-    $(id).className = 'kpi';
-  }
-  for (const id of ['kpi-sub-accounts', 'kpi-sub-available', 'kpi-sub-paused', 'kpi-sub-unavailable', 'kpi-sub-total', 'kpi-sub-errors']) {
-    const el = $(id);
-    if (el) el.textContent = '';
-  }
+  const host = $('kpis');
+  if (host) clearChildren(host);
   for (const id of Object.keys(lastKpiValues)) lastKpiValues[id] = null;
 }
 function showPrivate() {
@@ -183,6 +190,6 @@ function showPrivate() {
   clearKpis();
   const filters = $('filters');
   if (filters) filters.innerHTML = '';
-  $('cards').innerHTML = '<div class="card empty">当前实例已开启隐私模式（<span class="mono">PUBLIC_DASHBOARD=0</span>）：'
-    + '请先<a href="/admin">登录后台</a>再查看面板数据。</div>';
+  $('cards').innerHTML = emptyCard('当前实例已开启隐私模式（<span class="mono">PUBLIC_DASHBOARD=0</span>）：'
+    + '请先<a href="/admin">登录后台</a>再查看面板数据。');
 }

@@ -1,0 +1,41 @@
+---
+/* 账号卡片：结构只在这里出现一次（index.astro 用它在 <template id="tpl-account"> 里产出唯一模板）。
+   所有可变文本都由 render-cards.js 用 textContent / createTextNode 填；不存在手拼 HTML 字符串。
+   没有数据的区块（额度条 / 用量行 / 新鲜度行 / 计划标签）由 JS 直接 remove，不留空壳。 */
+import CreditsBar from './CreditsBar.astro';
+import StatusPill from './StatusPill.astro';
+---
+<article class="card">
+  <div class="card-head">
+    <h2 data-f="account-head"></h2>
+    <StatusPill />
+  </div>
+  <div class="card-body">
+    <div class="credits-block" data-f="credits-block">
+      <div class="credits-title">额度构成</div>
+      <CreditsBar />
+      <div class="card-credits aux-text" data-f="credits-legend"></div>
+    </div>
+    <div class="card-money"><b data-f="usable-balance"></b><small>剩余额度</small></div>
+    <div class="bars">
+      <div class="bar-group" data-f="bar-5h">
+        <div class="bar-head"><span class="bar-label">5 小时窗口</span><span class="bar-pct" data-f="bar-5h-pct"></span></div>
+        <div class="bar" data-f="bar-5h-track"><i data-f="bar-5h-fill"></i></div>
+        <div class="bar-reset" data-f="bar-5h-reset"></div>
+      </div>
+      <div class="bar-group" data-f="bar-week">
+        <div class="bar-head"><span class="bar-label">本周窗口</span><span class="bar-pct" data-f="bar-week-pct"></span></div>
+        <div class="bar" data-f="bar-week-track"><i data-f="bar-week-fill"></i></div>
+        <div class="bar-reset" data-f="bar-week-reset"></div>
+      </div>
+      <div class="bar-group" data-f="bar-month">
+        <div class="bar-head"><span class="bar-label">本月周期</span><span class="bar-pct" data-f="bar-month-pct"></span></div>
+        <div class="bar" data-f="bar-month-track"><i data-f="bar-month-fill"></i></div>
+        <div class="bar-reset" data-f="bar-month-reset"></div>
+      </div>
+    </div>
+    <div class="card-usage aux-text" data-f="card-usage"></div>
+    <div class="card-fresh aux-text" data-f="card-fresh"></div>
+  </div>
+  <div class="tags" data-f="tags"></div>
+</article>

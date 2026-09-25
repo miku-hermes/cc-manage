@@ -5,7 +5,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 
-const INDEX_HTML = fs.readFileSync(new URL('../panel/src/pages/index.astro', import.meta.url), 'utf8');
+const INDEX_HTML = fs.readFileSync(new URL('../panel/dist/index.html', import.meta.url), 'utf8');
+const TREND_HTML = fs.readFileSync(new URL('../panel/dist/trend.html', import.meta.url), 'utf8');
 const APP_JS = fs.readFileSync(new URL('../panel/public/js/app.js', import.meta.url), 'utf8');
 const TREND_JS = fs.readFileSync(new URL('../panel/public/js/render-trend.js', import.meta.url), 'utf8');
 const DASHBOARD_CSS = fs.readFileSync(new URL('../panel/public/css/dashboard.css', import.meta.url), 'utf8');
@@ -63,17 +64,12 @@ function samplesOf(n) {
 }
 
 // ── 13
-test('B13-13：index.html 有 #trend 容器，且 js/render-trend.js 在 js/app.js 之前引入', () => {
-  assert.match(INDEX_HTML, /<section[^>]*class="trend"[^>]*id="trend"/, '必须有 #trend 容器');
-  assert.match(INDEX_HTML, /aria-label="近 24 小时趋势"/);
-  const iTrend = INDEX_HTML.indexOf('js/render-trend.js');
-  const iApp = INDEX_HTML.indexOf('js/app.js');
-  assert.ok(iTrend > 0, '必须引入 js/render-trend.js');
-  assert.ok(iApp > 0, '必须引入 js/app.js');
-  assert.ok(iTrend < iApp, 'render-trend.js 必须在 app.js 之前加载');
-  // 容器位于 .kpis 之后、.filters 之前
-  assert.ok(INDEX_HTML.indexOf('class="kpis"') < INDEX_HTML.indexOf('id="trend"'));
-  assert.ok(INDEX_HTML.indexOf('id="trend"') < INDEX_HTML.indexOf('id="filters"'));
+test('B13-13（B23 改写）：趋势图独立到 /trend；主面板不再引 render-trend.js', () => {
+  assert.match(TREND_HTML, /<section[^>]*class="trend"[^>]*id="trend"/, '/trend 必须有 #trend 容器');
+  assert.match(TREND_HTML, /aria-label="近 24 小时趋势"/);
+  assert.ok(TREND_HTML.includes('js/render-trend.js'), '/trend 必须引入 js/render-trend.js');
+  assert.ok(!INDEX_HTML.includes('js/render-trend.js'), '主面板不得再加载 render-trend.js');
+  assert.ok(!INDEX_HTML.includes('id="trend"'), '主面板不再有整块趋势图容器（只有入口链接）');
 });
 
 // ── 14（B21 改写）：懒加载 vendored ECharts + 不引外部库 ─────────────
@@ -115,11 +111,11 @@ test('B13-15：空数组 / 单点 / 非有限数三条边界都有显式保护�
   assert.deepEqual(nonfinite.series[0].data.map((pt) => pt[1]), [0, 0], '请求数非有限数 → 0');
 });
 // ── 16：app.js 首次调用 + 60s 轮询 + hidden 守卫 ─────────────────────
-test('B13-16：app.js 有 loadTrend 首次调用与 60s 轮询，且轮询带 document.hidden 守卫', () => {
-  assert.match(APP_JS, /loadTrend\(\)/, 'boot() 必须首次调用 loadTrend()');
-  assert.match(APP_JS, /if\s*\(!document\.hidden\)\s*loadTrend\(\)/, '轮询必须带 document.hidden 守卫');
-  assert.match(APP_JS, /setInterval\([\s\S]*?loadTrend\(\)[\s\S]*?,\s*60000\)/, '趋势轮询间隔应为 60000ms');
-  // 既有 5s 轮询语义不得被动掉
+test('B13-16（B23 改写）：趋势轮询移到 /trend 页；主面板 app.js 只管 5s 账号轮询', () => {
+  assert.match(TREND_HTML, /loadTrend\(\)/, '/trend 引导块必须首次调用 loadTrend()');
+  assert.match(TREND_HTML, /if\s*\(!document\.hidden\)\s*loadTrend\(\)/, '趋势轮询必须带 document.hidden 守卫');
+  assert.match(TREND_HTML, /setInterval\([\s\S]*?loadTrend\(\)[\s\S]*?,\s*60000\)/, '趋势轮询间隔应为 60000ms');
+  assert.ok(!APP_JS.includes('loadTrend'), '主面板 app.js 不再引 loadTrend（render-trend.js 未加载）');
   assert.match(APP_JS, /if\s*\(!document\.hidden\)\s*load\(\);?\s*\}\s*,\s*5000\)/, '既有 5s 轮询保持不变');
 });
 
@@ -263,8 +259,9 @@ test('B13b-23：表头文案在样本 < 2 / ≥ 2 两种情况下不同，且写
   assert.match(fn, /if\s*\(n\s*<\s*2\)/, '必须有 n < 2 分支');
   assert.match(fn, /数据收集中/, '数据不足 → 明说收集中');
   assert.match(fn, /覆盖最近/, '样本够 → 明说覆盖的窗口');
-  assert.match(fn, /个样本/, '两种情况都要给出样本数');
-  assert.match(fn, /capacity/, '给出「已攒 n / 满窗 capacity」比例');
+  // B23：样本数只说一遍（在标题旁的徽章里），副标题不再重复「共 n 个样本」。
+  assert.doesNotMatch(fn, /个样本/, '副标题不得再说样本数（徽章已给出）');
+  assert.doesNotMatch(fn, /trendCapacity\s*\(/, '副标题不再计算 / 渲染 n/capacity');
 
   const context = vm.createContext({ Number, Math, Array, JSON, Object, String, Boolean, isNaN, RegExp });
   vm.runInContext(TREND_JS, context, { filename: 'render-trend.js' });
@@ -273,8 +270,10 @@ test('B13b-23：表头文案在样本 < 2 / ≥ 2 两种情况下不同，且写
   const few = trendRangeText([{ r: 1 }], { bucketMs: 5 * 60 * 1000 });
   const many = trendRangeText([{ r: 1 }, { r: 2 }, { r: 3 }], { bucketMs: 5 * 60 * 1000 });
   assert.notEqual(few, many, '两种样本量必须给出不同文案');
-  assert.match(few, /1\/288 个样本/, '单样本 → 1/288 个样本');
-  assert.match(many, /覆盖最近 10 分钟 · 共 3 个样本/, '三样本 → 覆盖最近 10 分钟 / 共 3 个样本');
+  assert.match(few, /数据收集中/, '单样本 → 收集中');
+  assert.doesNotMatch(few, /1\/288/, '单样本不再重复 n/capacity');
+  assert.match(many, /覆盖最近 10 分钟/, '三样本 → 覆盖最近 10 分钟');
+  assert.doesNotMatch(many, /3 个样本/, '三样本不再重复样本数');
 });
 
 // ── 24（B21 改写）：y 轴零基准 + 双轴分工 ────────────────────────────

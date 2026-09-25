@@ -1,0 +1,12 @@
+---
+/* 状态胶囊。两种形态：
+   - variant="health"：Hero 的网关状态（role=status / aria-live=polite，可被 setHealth 改写为 alert）。
+   - variant="status"（默认）：账号卡右上角状态胶囊，结构里只留 aria-hidden 的色点，
+     文案由 render-cards.js 用 createTextNode 追加（保持「点 + 文本」的既有结构）。 */
+const { variant = 'status', id = '', text = '加载中…' } = Astro.props;
+---
+{variant === 'health' ? (
+  <span id={id} class="pill" role="status" aria-live="polite">{text}</span>
+) : (
+  <span class="status" data-f="account-status"><span class="dot" aria-hidden="true"></span></span>
+)}

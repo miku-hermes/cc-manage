@@ -1,0 +1,10 @@
+---
+/* 额度构成分段条：三段横向拼接，段宽 = 该段金额 / 三段之和。
+   role="img" + aria-label：金额是「图形信息」，必须有无障碍名字（同 title）。
+   宽度 / 名字都由 render-cards.js 填值（数据是运行时的）。 */
+---
+<div class="credits-bar" role="img" data-f="credits-bar">
+  <i class="seg-month" data-f="seg-month"></i>
+  <i class="seg-buy" data-f="seg-buy"></i>
+  <i class="seg-gift" data-f="seg-gift"></i>
+</div>

@@ -1466,6 +1466,15 @@ export async function startGateway(overrides = {}) {
       return res.end(html);
     }
 
+    // 趋势页（B23）：静态 HTML；数据走公开的 /api/history，产物缺失时复用同一套 503 提示。
+    if (req.method === 'GET' && (url.pathname === '/trend' || url.pathname === '/trend/')) {
+      const html = readTrend();
+      if (html === null) return sendPanelMissing(res);
+      res.setHeader('cache-control', 'no-store');
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'x-content-type-options': 'nosniff' });
+      return res.end(html);
+    }
+
     // 图标：两页 HTML 已用内联 data-URI <link rel="icon">，这里再兜底 /favicon.ico，
     // 避免浏览器在 <link> 未被识别时直接请求该路径而吃一个 404。
     if (req.method === 'GET' && url.pathname === '/favicon.ico') {
@@ -1660,6 +1669,10 @@ export async function startGateway(overrides = {}) {
 
   function readAdmin() {
     return readPanelFile('admin.html');
+  }
+
+  function readTrend() {
+    return readPanelFile('trend.html');
   }
 
   // 面板未构建时的 503 页面：给人看的、能照着做的一句话（含确切命令）。

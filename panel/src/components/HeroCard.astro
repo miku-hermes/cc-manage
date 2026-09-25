@@ -1,0 +1,26 @@
+---
+/* Hero 卡：余额是主角（大数字 = 剩余额度），构成明细一行说清口径。
+   本批次（B23）删掉两个冗余元素：
+   - 右上角实时时钟（与脚注「更新于 …」只差 3 秒，保留脚注这一个时间戳）；
+   - 「额度自动刷新」说明仍保留但简化为一句（见 utils.cadenceText）。
+   同时新增到 /trend 的明确入口（替代原来整块趋势图）。 */
+import StatusPill from './StatusPill.astro';
+---
+<section class="hero">
+  <div class="hero-main">
+    <h1 id="greeting" class="greeting">下午好</h1>
+    <div class="hero-balance">
+      <b id="balance">—</b>
+      <span id="bal-label" class="bal-label">剩余额度（USD）</span>
+    </div>
+    <p id="bal-breakdown" class="hero-breakdown aux-text"></p>
+    <p class="hero-sub">网关状态 <StatusPill variant="health" id="health" /></p>
+    <p class="hero-meta aux-text"><span id="upstream"></span><span id="updated"></span><span id="cadence" class="hero-cadence"></span></p>
+  </div>
+  <div class="hero-aside">
+    <div id="date" class="hero-date"></div>
+    <div class="hero-tokens">累计 token <b id="tokens">0</b></div>
+    <button id="refresh-quota" class="btn refresh-quota" type="button">刷新额度</button>
+    <a class="trend-link" href="/trend" aria-label="查看近 24 小时趋势">查看近 24 小时趋势 →</a>
+  </div>
+</section>

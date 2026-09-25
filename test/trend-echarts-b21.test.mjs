@@ -10,7 +10,8 @@ import vm from 'node:vm';
 import crypto from 'node:crypto';
 import { startTestGateway, request } from './helpers.mjs';
 
-const INDEX_HTML = fs.readFileSync(new URL('../panel/src/pages/index.astro', import.meta.url), 'utf8');
+const INDEX_HTML = fs.readFileSync(new URL('../panel/dist/index.html', import.meta.url), 'utf8');
+const TREND_HTML = fs.readFileSync(new URL('../panel/dist/trend.html', import.meta.url), 'utf8');
 const TREND_JS = fs.readFileSync(new URL('../panel/public/js/render-trend.js', import.meta.url), 'utf8');
 const TOKENS_CSS = fs.readFileSync(new URL('../panel/public/css/tokens.css', import.meta.url), 'utf8');
 const VENDOR_README = fs.readFileSync(new URL('../panel/public/vendor/README.md', import.meta.url), 'utf8');
@@ -423,7 +424,9 @@ test('B21-11：没有 ECharts 时 mountTrendChart 安全返回 false（不抛、
 test('B21-12：index.html 没有 vendor 静态 script；ECharts 不进 package.json', () => {
   assert.ok(!/<script[^>]*src="[^"]*vendor\//.test(INDEX_HTML), 'index.html 不得静态引 vendor 库');
   assert.ok(!/<script[^>]*src="[^"]*echarts/.test(INDEX_HTML));
-  assert.ok(!('#trend' in {}) && INDEX_HTML.includes('id="trend"'), '趋势容器仍在 index.html');
+  assert.ok(!INDEX_HTML.includes('id="trend"'), '主面板不再有趋势容器（只有入口链接）');
+  assert.ok(TREND_HTML.includes('id="trend"'), '趋势容器在 /trend 页');
+  assert.ok(!/<script[^>]*src="[^"]*vendor\//.test(TREND_HTML), '趋势页也不静态引 vendor（懒加载）');
   assert.ok(!('dependencies' in PKG) && !('devDependencies' in PKG), 'ECharts 不放进 package.json');
   assert.match(TREND_JS, /TREND_ECHARTS_SRC\s*=\s*'vendor\/echarts\.min\.js\?v='\s*\+\s*TREND_ECHARTS_BUILD/, '懒加载路径写死在 render-trend.js 且带内容版本串');
 });

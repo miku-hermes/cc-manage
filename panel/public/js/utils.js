@@ -1,4 +1,6 @@
 const $ = (id) => document.getElementById(id);
+/** 空态卡片外壳：结构只此一处（隐私模式提示 / 无匹配账号 / 账号池为空共用）。 */
+function emptyCard(inner) { return '<div class="card empty">' + inner + '</div>'; }
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 /** keyId 前 8 位：卡片 / 表格在备注名缺失时的可识别兜底（与后台 admin-utils 同口径）。 */
 function shortId(id) { return String(id ?? '').slice(0, 8); }
@@ -145,9 +147,8 @@ function cadenceText(p) {
   const idleTxt = idle > 0 ? fmtEvery(idle) : '';
   const activeTxt = active > 0 ? fmtEvery(active) : '';
   if (!idleTxt && !activeTxt) return '';
-  if (activeTxt && idleTxt && activeTxt !== idleTxt) {
-    return '额度自动刷新：有请求时每 ' + activeTxt + '、空闲时每 ' + idleTxt;
-  }
+  // B23：与「刷新额度」按钮不矛盾 —— 只说一句「每 X」（有请求时的活跃间隔优先），
+  // 不再同时列空闲间隔造成「手动刷新 vs 自动刷新」两种口径打架。
   return '额度自动刷新：每 ' + (activeTxt || idleTxt);
 }
 

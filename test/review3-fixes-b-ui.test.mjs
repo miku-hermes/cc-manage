@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { createDomShim, runInlineScript, styleText } from './helpers.mjs';
 
-const INDEX_HTML = fs.readFileSync(new URL('../panel/src/pages/index.astro', import.meta.url), 'utf8');
+const INDEX_HTML = fs.readFileSync(new URL('../panel/dist/index.html', import.meta.url), 'utf8');
 const ADMIN_HTML = fs.readFileSync(new URL('../panel/src/pages/admin.astro', import.meta.url), 'utf8');
 const delay = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -166,13 +166,14 @@ test('B2-5：快照过旧提示按实际阈值算出分钟数，不再写死 10 
   const page = await runInlineScript(INDEX_HTML, shim);
   const stale = Date.now() - 30 * 60 * 1000;
 
+  // B23：新鲜度行不再是独立函数，从账号卡模板克隆后取 .card-fresh。
   page.setStaleFrom({ quotaPoll: { idleIntervalMs: 600000 } });   // → 20 分钟
-  const a20 = page.freshHTML(stale);
+  const a20 = page.card(account({ lastQuota: quota(9.9, { fetchedAt: stale }) }));
   assert.match(a20, /title="额度快照已超过 20 分钟未更新"/, '阈值 20 分钟 → 文案 20 分钟');
   assert.doesNotMatch(a20, /10 分钟/, '不得再出现写死的 10 分钟');
 
   page.setStaleFrom({ quotaPoll: { idleIntervalMs: 300000 } });   // → 10 分钟
-  const a10 = page.freshHTML(stale);
+  const a10 = page.card(account({ lastQuota: quota(9.9, { fetchedAt: stale }) }));
   assert.match(a10, /title="额度快照已超过 10 分钟未更新"/, '改配置后文案随之为 10 分钟，证明是算出来的');
 
   assert.doesNotMatch(INDEX_HTML, /已超过 10 分钟未更新/, '静态源码里不得再有写死的 10 分钟文案');

@@ -51,6 +51,15 @@ body::before {
 
 .refresh-quota { margin-top: 10px; }
 
+/* B23：主面板到 /trend 的入口（替代原来的整块趋势图） */
+.trend-link { margin-top: 6px; font-size: var(--fs-xs); color: var(--accent-ink); text-decoration: none; }
+.trend-link:hover { text-decoration: underline; }
+
+/* B23：/trend 页返回主面板的链接 */
+.trend-back { margin: 0; font-size: var(--fs-sm); }
+.trend-back a { color: var(--text-secondary); text-decoration: none; }
+.trend-back a:hover { color: var(--accent-ink); }
+
 /* ── 主区域（所有块左边缘对齐同一条竖线）────────────────── */
 main {
   position: relative; z-index: 1;
@@ -114,15 +123,6 @@ main {
   display: flex; flex-direction: column; align-items: flex-end; gap: 4px; text-align: right;
   min-width: 0;
 }
-
-.hero-clock {
-  font-size: var(--fs-md); font-weight: 600; line-height: var(--lh-heading);
-  color: var(--text-secondary); font-variant-numeric: tabular-nums;
-  font-family: var(--font-mono);
-  display: inline-flex; align-items: center; gap: 6px;
-}
-
-.hero-clock svg { width: 16px; height: 16px; flex: none; opacity: .8; }
 
 .hero-date { color: var(--text-secondary); font-size: var(--fs-xs); }
 

@@ -175,8 +175,9 @@ test('F13：CSP 允许内联脚本 —— 面板真跑一遍内联脚本并渲�
   await runInline(html, shim);
   await sleep(120);
 
-  assert.match(shim.el('health').textContent, /可用 2 \/ 2/, '面板必须真的取到数并渲染 KPI');
-  assert.equal(shim.el('kpi-accounts').textContent, '2');
+  assert.match(shim.el('health').textContent, /可用 2 \/ 2/, '面板必须真的取到数并渲染账号口径（Hero）');
+  assert.ok(shim.el('kpi-total'), '总请求 KPI 必须由模板渲染出来');
+  assert.ok(String(shim.el('kpi-total').textContent).length > 0, 'KPI 数字非空');
   assert.ok(shim.el('cards').innerHTML.includes('账号A'), '账号卡片必须渲染出来');
   assert.ok(shim.el('cards').innerHTML.includes('5 小时窗口'), '进度条骨架必须渲染出来');
 

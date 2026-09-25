@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createDomShim, runInlineScript } from './helpers.mjs';
 
-const INDEX_HTML = fs.readFileSync(new URL('../panel/src/pages/index.astro', import.meta.url), 'utf8');
+const INDEX_HTML = fs.readFileSync(new URL('../panel/dist/index.html', import.meta.url), 'utf8');
 
 function dom(html, fetchImpl) {
   return createDomShim({ html, fetchImpl: fetchImpl ?? (async () => ({ ok: true, status: 200, json: async () => ({}) })) });
@@ -58,8 +58,8 @@ test('B4-1：Hero 构成明细对两账号的月度/购买/赠送分别求和（
   const b = account({ keyId: 'bbbb2222', lastQuota: quota({ credits: { monthlyCredits: 3, purchasedCredits: 2, freeCredits: 1.5 } }) });
   page.render(status([a, b]));
   assert.equal(shim.el('bal-breakdown').textContent,
-    '月度 $5.00 · 购买 $3.00 · 赠送 $2.00 · 本月已用 0.0%',
-    '2+3 / 1+2 / 0.5+1.5 三项求和，金额带 $ 前缀');
+    '本月已用 0.0% · 月度 $5.00 · 购买 $3.00 · 赠送 $2.00',
+    '已用率在前（口径写清），2+3 / 1+2 / 0.5+1.5 三项求和');
 });
 
 // ── ② Y% 是 Σused/Σcap 的加权值，不是各账号百分比的简单平均 ──────────
@@ -197,19 +197,28 @@ test('B4-9：所有账号都没有 cap 时明细行给兜底文案，不出现 N
   assert.doesNotMatch(text, /NaN|undefined|%/, '不得出现 NaN / 伪百分比');
 });
 
-// ── 附加：KPI sub 小字全部来自真实数据 ──────────────────────────────
-test('B4-10：KPI 卡 sub 小字填充真实 summary/stats 字段', async () => {
+// ── 附加：KPI 卡由模板克隆，零值卡不出现（B23 减法）──────────────────
+test('B4-10：KPI 卡按模板渲染；账号口径只在 Hero；零值卡不占槽位', async () => {
   const { shim, page } = await boot();
   page.render(status([account()], {
     summary: { accounts: 5, enabled: 4, available: 3, unavailable: 2, paused: 1, concurrency: 0 },
     stats: { total: 20, errors: 1, clientErrors: 7, totalTokens: 1234 },
   }));
-  assert.equal(shim.el('kpi-sub-accounts').textContent, '启用 4');
-  assert.equal(shim.el('kpi-sub-available').textContent, '不可用 2');
-  assert.equal(shim.el('kpi-sub-paused').textContent, '含冷却');
-  assert.equal(shim.el('kpi-sub-unavailable').textContent, '暂停+耗尽');
-  assert.equal(shim.el('kpi-sub-total').textContent, 'token 1,234');
+  // 账号口径（账号数 / 可用 / 不可用）统一在 Hero 的「网关状态 可用 3 / 5」
+  assert.equal(shim.el('health').textContent, '可用 3 / 5');
+  assert.ok(!shim.el('kpi-accounts') && !shim.el('kpi-available') && !shim.el('kpi-unavailable'),
+    'KPI 侧不再重复列账号口径的四张卡');
+  assert.equal(shim.el('kpi-total').textContent, '20');
   assert.equal(shim.el('kpi-sub-errors').textContent, '客户端错误 7');
+  assert.equal(shim.el('kpi-sub-paused').textContent, '含冷却');
+  assert.ok(!shim.el('kpi-sub-total'), '总请求卡不再有 token 副文案（与 Hero 累计 token 重复）');
+  assert.equal(shim.el('tokens').textContent, '1,234');
+
+  page.render(status([account()], {
+    summary: { accounts: 5, enabled: 4, available: 3, unavailable: 2, paused: 0, concurrency: 0 },
+    stats: { total: 5, errors: 0, clientErrors: 0, totalTokens: 10 },
+  }));
+  assert.equal(shim.el('kpi-paused'), null, '暂停中 0 → 该卡不出现（而不是显示 0）');
 });
 
 // ── 附加：隐私红线 —— 卡片不渲染 keyId / keyPrefix，keyId 只在 data-key-id ──
@@ -223,46 +232,38 @@ test('B4-11：前台卡片不渲染 keyId/keyPrefix 文本（keyId 仅存于 dat
   assert.ok(shim.el('filters'), '#filters 容器存在于 HTML');
 });
 
-// ── 批次 5：KPI 卡结构重排（标签在上 → 大数字 → sub）+ 语义图标 ──────
+// ── 批次 5（B23 改写）：KPI 卡结构唯一化 + 语义图标 ──────────────────
 const DASHBOARD_CSS = fs.readFileSync(new URL('../panel/public/css/dashboard.css', import.meta.url), 'utf8');
+const KPI_COMPONENT = fs.readFileSync(new URL('../panel/src/components/KpiCard.astro', import.meta.url), 'utf8');
 
-/** 取 6 张卡各自的 HTML 块：`<div class="kpi" id="kpi-box-…">` → 下一张卡 / </section>。 */
-function kpiBlocks() {
-  const re = /<div class="kpi" id="kpi-box-([a-z]+)">([\s\S]*?)(?=\n    <div class="kpi"|\n  <\/section>)/g;
-  return [...INDEX_HTML.matchAll(re)].map((m) => ({ key: m[1], html: m[2] }));
+/** 取模板里 KpiCard 的 HTML 块（结构唯一来源）。 */
+function kpiTemplateHtml() {
+  const m = /<template id="tpl-kpi">([\s\S]*?)<\/template>/.exec(INDEX_HTML);
+  assert.ok(m, 'index 里必须有 <template id="tpl-kpi">');
+  return m[1];
 }
 
-test('B5-1：6 张 KPI 卡均为 kpi-head(图标+标签) → 大数字 → sub 的竖排结构，且无 kpi-body', () => {
-  const blocks = kpiBlocks();
-  assert.equal(blocks.length, 6, '6 张 kpi-box-* 卡都要匹配到');
-  assert.deepEqual(blocks.map((b) => b.key),
-    ['accounts', 'available', 'paused', 'unavailable', 'total', 'errors'], '卡序不变');
-  const headRe = /^<div class="kpi-head">\s*<span class="kpi-icon" aria-hidden="true"><svg [^>]*>[\s\S]*?<\/svg><\/span>\s*<span class="kpi-label">[^<]+<\/span>\s*<\/div>/;
-  for (const { key, html } of blocks) {
-    // 去掉 errors 卡里的口径注释，避免注释插在 head 与 b 之间干扰顺序断言
-    const body = html.replace(/<!--[\s\S]*?-->/g, '').trim();
-    assert.match(body, headRe, `${key}: 顶行必须是 .kpi-head 包住 .kpi-icon + .kpi-label`);
-    assert.doesNotMatch(body, /kpi-body/, `${key}: 旧 .kpi-body 包裹层必须删除`);
-    const order = [...body.matchAll(/kpi-head|(<b id="kpi-[a-z]+">)|(class="kpi-sub")/g)].map((m) => m[0]);
-    assert.deepEqual(order, ['kpi-head', `<b id="kpi-${key}">`, 'class="kpi-sub"'], `${key}: 顺序 head→b→sub`);
-  }
+test('B5-1：KPI 结构只存在一处：kpi-head(图标+标签) → 大数字 → sub，且无 kpi-body', () => {
+  const html = kpiTemplateHtml();
+  assert.doesNotMatch(html, /kpi-body/, '旧 .kpi-body 包裹层必须删除');
+  const order = [...html.matchAll(/kpi-head|(<b data-f="kpi-value">)|(class="kpi-sub")/g)].map((m) => m[0]);
+  assert.deepEqual(order, ['kpi-head', '<b data-f="kpi-value">', 'class="kpi-sub"'], '顺序 head→b→sub');
+  assert.match(KPI_COMPONENT, /<div class="kpi-head">/);
+  assert.equal((KPI_COMPONENT.match(/class="kpi-head"/g) || []).length, 1, 'KpiCard.astro 里 kpi-head 只出现一次');
 });
 
-test('B5-2：总请求卡换成 activity 脉搏线图标', () => {
-  const total = kpiBlocks().find((b) => b.key === 'total');
-  assert.match(total.html, /M22 12h-4l-3 9L9 3l-3 9H2/, '总请求 = 脉搏线（请求流量）');
-  assert.doesNotMatch(total.html, /M8 6h13/, '旧 list 三横线图标必须换掉');
+test('B5-2：总请求卡用 activity 脉搏线图标', () => {
+  assert.match(KPI_COMPONENT, /data-f="kpi-icon-total"[\s\S]*?M22 12h-4l-3 9L9 3l-3 9H2/, '总请求 = 脉搏线');
+  assert.doesNotMatch(KPI_COMPONENT, /M8 6h13/, '旧 list 三横线图标必须换掉');
 });
 
-test('B5-3：上游错误卡换成 triangle-alert 三角感叹图标', () => {
-  const errors = kpiBlocks().find((b) => b.key === 'errors');
-  assert.match(errors.html, /M10\.29 3\.86/, '上游错误 = 三角感叹（告警）');
+test('B5-3：上游错误卡用 triangle-alert 三角感叹图标', () => {
+  assert.match(KPI_COMPONENT, /data-f="kpi-icon-errors"[\s\S]*?M10\.29 3\.86/, '上游错误 = 三角感叹');
 });
 
-test('B5-4：可用卡换成 signal 信号条图标', () => {
-  const available = kpiBlocks().find((b) => b.key === 'available');
-  assert.match(available.html, /M9 18v-6/, '可用 = 升序信号条（在线/可用）');
-  assert.doesNotMatch(available.html, /M8\.2 12\.4l2\.6 2\.6 5-5\.6/, '旧 circle-check 对勾必须换掉');
+test('B5-4：暂停中卡用 pause 双竖条图标', () => {
+  assert.match(KPI_COMPONENT, /data-f="kpi-icon-paused"[\s\S]*?<rect x="14" y="4"/, '暂停中 = 双竖条');
+  assert.doesNotMatch(KPI_COMPONENT, /M8\.2 12\.4l2\.6 2\.6 5-5\.6/, '旧 circle-check 对勾必须换掉');
 });
 
 test('B5-5：dashboard.css 的 .kpi 为竖排 flex，且 .kpi-head 横向并排规则存在', () => {

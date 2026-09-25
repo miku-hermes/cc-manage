@@ -7,7 +7,8 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { createDomShim, runInlineScript, sleep, startTestGateway, request } from './helpers.mjs';
 
-const INDEX_HTML = fs.readFileSync(new URL('../panel/src/pages/index.astro', import.meta.url), 'utf8');
+const INDEX_HTML = fs.readFileSync(new URL('../panel/dist/index.html', import.meta.url), 'utf8');
+const TREND_HTML = fs.readFileSync(new URL('../panel/dist/trend.html', import.meta.url), 'utf8');
 const ADMIN_HTML = fs.readFileSync(new URL('../panel/src/pages/admin.astro', import.meta.url), 'utf8');
 const APP_JS = fs.readFileSync(new URL('../panel/public/js/app.js', import.meta.url), 'utf8');
 const APP_ADMIN_JS = fs.readFileSync(new URL('../panel/public/js/app-admin.js', import.meta.url), 'utf8');
@@ -446,8 +447,9 @@ test('B19-10d：两页有内联 SVG favicon 与 meta description；/favicon.ico 
 });
 
 test('B19-10e：趋势标题阈值用 bucketMs 推出的 capacity（12 个样本不再撤「数据收集中」）', async () => {
-  const shim = dom(INDEX_HTML, indexFetch());
-  const page = await runInlineScript(INDEX_HTML, shim);
+  // B23：趋势图移到 /trend；用趋势页产物验证（主面板不再加载 render-trend.js）。
+  const shim = dom(TREND_HTML, indexFetch());
+  const page = await runInlineScript(TREND_HTML, shim);
   const samples = (n) => Array.from({ length: n }, (_, i) => ({ r: i, e: 0, m: 1 }));
   page.renderTrend({ bucketMs: 5 * 60 * 1000, samples: samples(12) });   // capacity = 288
   assert.match(shim.el('trend').innerHTML, /近 24 小时趋势（数据收集中）/, '只攒到 12 个样本（约 1 小时）仍要说明收集中');
