@@ -1467,8 +1467,10 @@ export async function startGateway(overrides = {}) {
       return res.end();
     }
 
-    // 面板静态资源：public 下的 css/js（同源，无构建）；CSP 头已由 applySecurityHeaders 统一加上
-    if (req.method === 'GET' && (url.pathname.startsWith('/css/') || url.pathname.startsWith('/js/'))) {
+    // 面板静态资源：public 下的 css/js/vendor（同源，无构建）；CSP 头已由 applySecurityHeaders 统一加上。
+    // B21：/vendor/ 放第三方前端库（ECharts），前端懒加载；只有命中真实文件才发长缓存（见 serveStatic）。
+    if (req.method === 'GET' && (url.pathname.startsWith('/css/') || url.pathname.startsWith('/js/')
+      || url.pathname.startsWith('/vendor/'))) {
       return serveStatic(res, url.pathname);
     }
 
@@ -1656,7 +1658,15 @@ export async function startGateway(overrides = {}) {
     let stat;
     try { stat = fs.statSync(full); } catch { return notFound(); }
     if (!stat.isFile()) return notFound();
-    res.writeHead(200, { 'content-type': mime, 'x-content-type-options': 'nosniff', 'cache-control': 'no-cache' });
+    // B21：public/vendor/ 下是第三方库（文件名内嵌版本号，如 echarts.min.js），
+    // 命中真实文件才发长缓存 immutable；public/css、public/js 仍是 no-cache 原行为。
+    // 升级库必须改文件名（或加版本参数），否则客户端会一直吃旧缓存。
+    const immutable = rel.startsWith('vendor/');
+    res.writeHead(200, {
+      'content-type': mime,
+      'x-content-type-options': 'nosniff',
+      'cache-control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache',
+    });
     return res.end(fs.readFileSync(full));
   }
 

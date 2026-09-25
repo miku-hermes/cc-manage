@@ -68,6 +68,21 @@ test('F22：.dockerignore 覆盖 config/ 与全部凭据文件名', () => {
   }
 });
 
+// ── B21b：.dockerignore 不能把面板的 ECharts 一起排掉 ─────────────────
+test('B21b：.dockerignore 用根锚定 /vendor，不得有裸 vendor 误伤 public/vendor', () => {
+  // Docker 的 .dockerignore 语义：不含斜杠的模式匹配任意层级。裸 `vendor` 会同时命中
+  // 仓库根的 vendor/（后端内核，应排除）与 public/vendor/（ECharts，必须保留），
+  // 结果 gateway 镜像里没有图表库 → 线上趋势图退化成文本摘要。
+  assert.ok(dockerignore.includes('/vendor'),
+    '.dockerignore 必须用根锚定的 /vendor 只排仓库根的后端内核');
+  assert.ok(!dockerignore.includes('vendor'),
+    '不得出现无斜杠 vendor —— 它匹配任意层级，会把 public/vendor/echarts.min.js 一起排掉');
+  assert.deepEqual(dockerignore.filter((p) => p.replace(/^\.\//, '') === 'vendor'), [],
+    '任何裸 vendor 行都会误伤 public/vendor/');
+  assert.ok(fs.existsSync(path.join(ROOT, 'public/vendor/echarts.min.js')),
+    'public/vendor/echarts.min.js 必须存在，否则镜像里无库可发');
+});
+
 test('F22：编译产物里不含挂载目录之外的凭据（Dockerfile 不 COPY .）', () => {
   const dockerfile = read('Dockerfile');
   assert.doesNotMatch(dockerfile, /^\s*COPY\s+\.\s+\./m, 'Dockerfile 绝不能 COPY . .');

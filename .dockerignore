@@ -5,7 +5,11 @@ data
 test
 spec
 mocks
-vendor
+# /vendor 只排仓库根目录的后端协议内核源码（vendor/commandcode-proxy/，不进 gateway 镜像）；
+# public/vendor/ 必须保留 —— 面板的 ECharts 6.1.0 由 /vendor/echarts.min.js 同源加载。
+# 注意：.dockerignore 里不带斜杠的 `vendor` 会命中任意层级（含 public/vendor/），
+# 一旦写回无斜杠形式，镜像里就没有 ECharts，线上趋势图会退化成文本摘要。
+/vendor
 SPEC.md
 DOCKER.md
 *.log

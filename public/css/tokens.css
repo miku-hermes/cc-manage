@@ -87,6 +87,24 @@
   --header-h: 58px;
   --row-h: 46px;
   --control-h: 36px;
+
+  /* 图表令牌：ECharts 趋势图从这些变量读实际颜色，JS 里不写死任何色值。
+     视觉主次：可用余额 = 品牌洋红（主角，2px + 渐变面积）；请求数 = 低饱和冷色中性
+     （退到背景，1px + 0.7 透明度 + 8% 面积）；错误数 = 语义红细虚线（不再用被
+     「可用/警告」占用的橙色）。--chart-grid 给纵向网格，--chart-grid-h 更淡一档给横向；
+     --chart-now 给「现在」标线，亮度压到网格级（明显低于数据线，只作时间锚点）。 */
+  --chart-series-request: #5c6779;
+  --chart-series-error: #b91c1c;
+  --chart-series-balance: #c5395f;
+  --chart-grid: #e6eaf2;
+  --chart-grid-h: #e7ecf5;
+  --chart-now: #c2cbdc;
+  --chart-axis: #d8deea;
+  --chart-axis-label: #6a7386;
+  --chart-tooltip-bg: rgba(255, 255, 255, .97);
+  --chart-tooltip-border: #e6eaf2;
+  --chart-tooltip-text: #17233b;
+  --chart-cursor: rgba(92, 103, 121, .75);
 }
 
 /* 主题切换按钮图标（机制保留）：手动切到 dark 时亮太阳图标 */
@@ -132,4 +150,18 @@
   --glass-bg: rgba(26, 31, 41, .72);
   --glass-border: rgba(43, 51, 66, .9);
   --scrim: rgba(0, 0, 0, .55);
+
+  /* 图表令牌（暗色覆盖）：请求数压暗成中性（不再是近白），错误数用语义红，余额用品牌色 */
+  --chart-series-request: #6b7688;
+  --chart-series-error: #f87171;
+  --chart-series-balance: #f080a0;
+  --chart-grid: #4a5568;
+  --chart-grid-h: #414c5f;
+  --chart-now: #454f63;
+  --chart-axis: #3a4456;
+  --chart-axis-label: #8590a5;
+  --chart-tooltip-bg: rgba(26, 31, 41, .97);
+  --chart-tooltip-border: #3a4456;
+  --chart-tooltip-text: #e8ecf4;
+  --chart-cursor: rgba(163, 173, 192, .75);
 }

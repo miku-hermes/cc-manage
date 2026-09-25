@@ -13,7 +13,7 @@ Command Code 多账号反代网关：在协议内核 [`vendor/commandcode-proxy/
 
 程序侧只需要一把客户端 key（`sk-cg-...`），网关按**剩余额度 / 在途请求**自动挑一个 Command Code 账号，把请求反代给内核并流式透传响应；同时轮询各账号额度、耗尽自动暂停、到点自动恢复。`/` 是**公开只读**看板（不暴露完整 key），`/admin` 用账号密码登录后管理 CC key、客户端 key 与管理员。
 
-- **零外部依赖**：只用 Node 内置模块，`package.json` 里没有 `dependencies`。
+- **后端零构建依赖**：只用 Node 内置模块，`package.json` 里没有 `dependencies`，克隆下来直接 `node gateway.mjs`。前端面板使用 ECharts 6.1.0 绘制「近 24 小时趋势」图（vendored 在 `public/vendor/`，懒加载，见下）。
 - **Node 22+ / ESM**：所有文件都是 `.mjs`。
 - **密钥不外泄**：日志与已登录的后台 API 只出现 `keyId`（key 的 sha256 前 8 位）与 `keyPrefix`（前 9 个字符），完整 key 永不落日志、永不出现在响应里；匿名可读的公开面板连 `keyId` / `keyPrefix` 都不下发。
 
@@ -28,8 +28,9 @@ src/quota.mjs               Command Code 额度查询
 src/scheduler.mjs           账号选择：打分 + 粘性 + 冷却 + 自动暂停/恢复
 src/proxy.mjs               反代转发（流式透传 + 背压 + 失败换号重试）
 src/log.mjs                 日志 + 脱敏
-public/index.html           公开只读额度面板（纯 HTML + 内联 CSS/JS）
+public/index.html           公开只读额度面板（HTML + css/ + js/）
 public/admin.html           后台：登录/初始化 + CC key / 客户端 key / 管理员管理
+public/vendor/echarts.min.js 前端绘图库 ECharts 6.1.0（simple 构建，Apache-2.0；懒加载，署名见 public/vendor/README.md）
 mocks/mock-cc-upstream.mjs  测试/演示用假 CC 上游
 test/                       node:test 测试（离线可跑）
 ```
@@ -54,6 +55,13 @@ npm start                                            # 监听 127.0.0.1:3051
 （建议 60s 及以下）。否则反代会复用一条后端已关闭的连接，POST 请求写过去就是 EPIPE，
 客户端偶发 502。另外反代应把真实来源写进 `X-Real-IP`（用 `$remote_addr` 覆盖），
 网关在 `X-Forwarded-For` 里**从右往左**取第一个非可信地址，客户端伪造的左侧前缀无效。
+
+### 静态资源缓存与前端库升级
+
+面板的 `public/css`、`public/js` 沿用 `cache-control: no-cache`（改动即时生效）；`public/vendor/` 下的
+第三方库（文件名内嵌版本号）发 `public, max-age=31536000, immutable` 长缓存，避免 492KB 的 ECharts
+每次都被重下。**升级库时必须改文件名或加版本参数**（如同名覆盖，老客户端会一直吃旧缓存），
+详见 `public/vendor/README.md`。
 
 ### Docker 部署（一键起网关 + 协议内核）
 

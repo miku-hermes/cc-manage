@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Command Code 多账号反代网关 + 额度调度 + 网页面板（零外部依赖）",
+  "description": "Command Code 多账号反代网关：额度感知调度 + 只读面板 + Docker 一键部署（后端零构建依赖；面板趋势图使用 ECharts 6.1.0）",
   "main": "gateway.mjs",
   "scripts": {
     "start": "node gateway.mjs",
