@@ -1,6 +1,6 @@
 # cc-manage Docker 封装规格（SPEC.md 的补充任务书）
 
-> 本文件是**增量任务书**，与 `SPEC.md` 同权。已有代码（`gateway.mjs` / `src/*` / `public/` / `test/`）已经验收通过
+> 本文件是**增量任务书**，与 `SPEC.md` 同权。已有代码（`gateway.mjs` / `src/*` / `panel/` / `test/`）已经验收通过
 > （`npm test` 50/50 全绿，反代/流式/脱敏/面板均实测通过），**不要推倒重写，只做本文件要求的增量**。
 
 ---
@@ -31,13 +31,24 @@
 ## 2. `Dockerfile`（网关镜像）
 
 ```dockerfile
-FROM node:22-alpine
+# 构建阶段：Astro 的原生依赖在 musl 下风险高，用 Debian slim；产物是纯静态文件。
+FROM node:22-slim AS panel-build
+WORKDIR /panel
+COPY panel/package.json panel/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY panel/ ./
+RUN npm run build
+
+# 运行阶段：基础镜像与迁移前一致（可注入 digest 钉版本）。
+ARG BASE_IMAGE=node:22-alpine
+FROM ${BASE_IMAGE}
 WORKDIR /app
 ENV NODE_ENV=production
 # 只 COPY 运行必需的，禁止 `COPY . .`
 COPY package.json gateway.mjs ./
 COPY src/ ./src/
-COPY public/ ./public/
+# 面板静态产物落到 /app/public，服务 URL（/、/admin、/css/、/js/、/vendor/）不变。
+COPY --from=panel-build /panel/dist/ ./public/
 RUN mkdir -p /app/data && chown -R node:node /app
 USER node
 EXPOSE 3051

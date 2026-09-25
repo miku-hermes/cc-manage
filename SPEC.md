@@ -40,8 +40,8 @@
 │   ├── scheduler.mjs         # 账号选择：打分 + 粘性 + 冷却 + 自动暂停/恢复
 │   ├── proxy.mjs             # 反代转发（含 SSE 流式边收边转、背压、上游失败换号重试）
 │   └── log.mjs               # 日志 + 脱敏工具
-├── public/
-│   └── index.html            # 额度面板（纯 HTML + 内联 CSS/JS，无框架无 CDN）
+├── panel/                    # Astro 面板工程（源码 src/pages/*.astro + public/css|js）
+│   └── src/pages/index.astro # 额度面板（构建为运行镜像里的 public/index.html）
 ├── mocks/
 │   └── mock-cc-upstream.mjs  # 测试用假 CC 上游（见 §8）
 └── test/

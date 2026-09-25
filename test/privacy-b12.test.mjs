@@ -134,7 +134,7 @@ test('B12-6：/api/status 仍不含任何 key 片段（既有不变量不回归�
 });
 
 test('B12-7：前台 render-cards.js 去掉 displayName / card-display 引用，搜索只按备注名', async (t) => {
-  const src = fs.readFileSync(new URL('../public/js/render-cards.js', import.meta.url), 'utf8');
+  const src = fs.readFileSync(new URL('../panel/public/js/render-cards.js', import.meta.url), 'utf8');
   assert.ok(!src.includes('card-display'), '不得再引用 .card-display');
   assert.ok(!src.includes('displayName'), '不得再引用 displayName');
   assert.ok(!/lastQuota[\s\S]{0,40}displayName/.test(src), '不得按 lastQuota.displayName 搜索');

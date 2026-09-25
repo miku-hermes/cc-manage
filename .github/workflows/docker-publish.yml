@@ -29,6 +29,12 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # B22：根 public/ 是 Astro 构建产物、不进 git。干净 runner 上必须先构建面板，
+      # 否则 gateway 的 GET / 找不到 public/index.html（测试与真实启动都会受影响）。
+      # 构建会 `npm ci`（panel/package-lock.json 已提交，可复现）→ `npm run build` → 同步到 public/。
+      - name: Build panel (panel/dist → root public/)
+        run: bash scripts/panel-build.sh
+
       # CI 开测试并发加速（端口动态分配，并行安全）。
       # B20-2（skip 白名单守护）在本地默认跳过以保套件快，这里显式打开，保证 CI 必然跑它。
       - name: Run tests

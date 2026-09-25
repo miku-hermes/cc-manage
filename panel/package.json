@@ -1,0 +1,13 @@
+{
+  "name": "cc-manage-panel",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "cc-manage 面板前端（Astro 构建管道）。B22 只搭管道：页面/CSS/JS 逐字搬入，零视觉变化。",
+  "scripts": {
+    "build": "astro build"
+  },
+  "dependencies": {
+    "astro": "^5.0.0"
+  }
+}

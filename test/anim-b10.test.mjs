@@ -1,22 +1,22 @@
 // 批次 10：前台/后台动效（首屏 stagger / 数字滚动 / 主题过渡 / 筛选重排淡入）的回归。
-// 只读 public/** 源码 + 复用 DOM 垫片跑页面脚本；不联网、不起服务。
+// 只读 panel/** 源码 + 复用 DOM 垫片跑页面脚本；不联网、不起服务。
 // 用例在本轮改动前的源码上必须变红。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createDomShim, runInlineScript } from './helpers.mjs';
 
-const INDEX_HTML = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
-const ADMIN_HTML = fs.readFileSync(new URL('../public/admin.html', import.meta.url), 'utf8');
-const APP_JS = fs.readFileSync(new URL('../public/js/app.js', import.meta.url), 'utf8');
-const RENDER_HERO_JS = fs.readFileSync(new URL('../public/js/render-hero.js', import.meta.url), 'utf8');
-const RENDER_CARDS_JS = fs.readFileSync(new URL('../public/js/render-cards.js', import.meta.url), 'utf8');
-const DASHBOARD_CSS = fs.readFileSync(new URL('../public/css/dashboard.css', import.meta.url), 'utf8');
-const COMPONENTS_CSS = fs.readFileSync(new URL('../public/css/components.css', import.meta.url), 'utf8');
-const ADMIN_CSS = fs.readFileSync(new URL('../public/css/admin.css', import.meta.url), 'utf8');
-const BASE_CSS = fs.readFileSync(new URL('../public/css/base.css', import.meta.url), 'utf8');
+const INDEX_HTML = fs.readFileSync(new URL('../panel/src/pages/index.astro', import.meta.url), 'utf8');
+const ADMIN_HTML = fs.readFileSync(new URL('../panel/src/pages/admin.astro', import.meta.url), 'utf8');
+const APP_JS = fs.readFileSync(new URL('../panel/public/js/app.js', import.meta.url), 'utf8');
+const RENDER_HERO_JS = fs.readFileSync(new URL('../panel/public/js/render-hero.js', import.meta.url), 'utf8');
+const RENDER_CARDS_JS = fs.readFileSync(new URL('../panel/public/js/render-cards.js', import.meta.url), 'utf8');
+const DASHBOARD_CSS = fs.readFileSync(new URL('../panel/public/css/dashboard.css', import.meta.url), 'utf8');
+const COMPONENTS_CSS = fs.readFileSync(new URL('../panel/public/css/components.css', import.meta.url), 'utf8');
+const ADMIN_CSS = fs.readFileSync(new URL('../panel/public/css/admin.css', import.meta.url), 'utf8');
+const BASE_CSS = fs.readFileSync(new URL('../panel/public/css/base.css', import.meta.url), 'utf8');
 let ANIM_JS = '';
-try { ANIM_JS = fs.readFileSync(new URL('../public/js/anim.js', import.meta.url), 'utf8'); } catch { /* 缺失时下面的用例变红 */ }
+try { ANIM_JS = fs.readFileSync(new URL('../panel/public/js/anim.js', import.meta.url), 'utf8'); } catch { /* 缺失时下面的用例变红 */ }
 
 // 从 css[start]（'{' 缺失处）匹配成对花括号，返回块内文本
 function braceBlock(text, start) {
@@ -93,7 +93,7 @@ function account(overrides = {}) {
 
 // ── 1：anim.js 与 canAnimate 的可见性判据 ────────────────────────────
 test('B10-1：anim.js 的 canAnimate 以 document.visibilityState === "visible" 为判据', () => {
-  assert.ok(ANIM_JS, '存在 public/js/anim.js');
+  assert.ok(ANIM_JS, '存在 panel/public/js/anim.js');
   const idx = ANIM_JS.indexOf('function canAnimate(');
   assert.ok(idx >= 0, 'anim.js 定义 canAnimate');
   const block = braceBlock(ANIM_JS, idx);

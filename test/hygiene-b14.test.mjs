@@ -12,7 +12,7 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const exists = (rel) => fs.existsSync(path.join(ROOT, rel));
 
 const PKG = JSON.parse(read('package.json'));
-const INDEX_HTML = read('public/index.html');
+const INDEX_HTML = read('panel/src/pages/index.astro');
 const WORKFLOW = read('.github/workflows/docker-publish.yml');
 const LINT_JS = read('scripts/lint.mjs');
 
@@ -61,7 +61,7 @@ test('B14-5：package.json 无 dependencies/devDependencies 且根目录无 node
 
 // ── 6：占位模块已删且不再被加载 ─────────────────────────────────────
 test('B14-6：render-kpis.js 已删除且 index.html 不再引用', () => {
-  assert.ok(!exists('public/js/render-kpis.js'), 'public/js/render-kpis.js 必须被删除');
+  assert.ok(!exists('panel/public/js/render-kpis.js'), 'panel/public/js/render-kpis.js 必须被删除');
   assert.doesNotMatch(INDEX_HTML, /render-kpis/, 'index.html 不得再出现 render-kpis');
 });
 

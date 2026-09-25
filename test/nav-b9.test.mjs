@@ -1,16 +1,16 @@
 // 批次 9：四个实测缺陷的回归（搜索框闪烁 / 输入框多余线框 / 暗色主题失效 / 后台首屏闪）。
-// 只读 public/css/*.css、public/js/*.js 与两页 HTML 文本；不联网、不起服务。
+// 只读 panel/public/css/*.css、panel/public/js/*.js 与两页 HTML(.astro) 文本；不联网、不起服务。
 // 用例在批次 9 的（修复前）源码上必须变红。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-const INDEX_HTML = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
-const ADMIN_HTML = fs.readFileSync(new URL('../public/admin.html', import.meta.url), 'utf8');
-const TOKENS_CSS = fs.readFileSync(new URL('../public/css/tokens.css', import.meta.url), 'utf8');
-const COMPONENTS_CSS = fs.readFileSync(new URL('../public/css/components.css', import.meta.url), 'utf8');
-const APP_JS = fs.readFileSync(new URL('../public/js/app.js', import.meta.url), 'utf8');
-const RENDER_GATE_JS = fs.readFileSync(new URL('../public/js/render-gate.js', import.meta.url), 'utf8');
+const INDEX_HTML = fs.readFileSync(new URL('../panel/src/pages/index.astro', import.meta.url), 'utf8');
+const ADMIN_HTML = fs.readFileSync(new URL('../panel/src/pages/admin.astro', import.meta.url), 'utf8');
+const TOKENS_CSS = fs.readFileSync(new URL('../panel/public/css/tokens.css', import.meta.url), 'utf8');
+const COMPONENTS_CSS = fs.readFileSync(new URL('../panel/public/css/components.css', import.meta.url), 'utf8');
+const APP_JS = fs.readFileSync(new URL('../panel/public/js/app.js', import.meta.url), 'utf8');
+const RENDER_GATE_JS = fs.readFileSync(new URL('../panel/public/js/render-gate.js', import.meta.url), 'utf8');
 
 // 从 text[start]（'{' 缺失处）匹配成对花括号，返回块内文本
 function braceBlock(text, start) {

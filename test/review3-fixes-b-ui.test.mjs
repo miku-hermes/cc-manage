@@ -1,13 +1,13 @@
 // 第三轮审计遗留批次 B2：前端 8 条（B2-1 … B2-8）的回归测试。
-// 只读 public/index.html / public/admin.html，零外部依赖，用既有 DOM 垫片跑内联脚本。
+// 只读 panel/src/pages/{index,admin}.astro，零外部依赖，用既有 DOM 垫片跑内联脚本。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { createDomShim, runInlineScript, styleText } from './helpers.mjs';
 
-const INDEX_HTML = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
-const ADMIN_HTML = fs.readFileSync(new URL('../public/admin.html', import.meta.url), 'utf8');
+const INDEX_HTML = fs.readFileSync(new URL('../panel/src/pages/index.astro', import.meta.url), 'utf8');
+const ADMIN_HTML = fs.readFileSync(new URL('../panel/src/pages/admin.astro', import.meta.url), 'utf8');
 const delay = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function dom(html, fetchImpl) {

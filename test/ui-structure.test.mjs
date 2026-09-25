@@ -1,12 +1,12 @@
 // 前端重构批次 1：HTML 壳 + 外部 css/js 的静态结构回归。
-// 只读 public/* 文本 + 起真实网关验证静态路由；不联网。
+// 只读 panel/* 文本 + 起真实网关验证静态路由；不联网。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { startTestGateway, request, inlineStyleText, styleText } from './helpers.mjs';
 
-const INDEX_HTML = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
-const ADMIN_HTML = fs.readFileSync(new URL('../public/admin.html', import.meta.url), 'utf8');
+const INDEX_HTML = fs.readFileSync(new URL('../panel/src/pages/index.astro', import.meta.url), 'utf8');
+const ADMIN_HTML = fs.readFileSync(new URL('../panel/src/pages/admin.astro', import.meta.url), 'utf8');
 
 // ── 1：静态路由 200 + MIME ───────────────────────────────────────────
 test('结构#1：GET /css/tokens.css 与 /js/state.js 返回 200 且 MIME 正确', async (t) => {

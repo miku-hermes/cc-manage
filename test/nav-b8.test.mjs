@@ -1,13 +1,13 @@
 // 批次 8：导航栏三处缺陷的回归（搜索框展开态不可见 / 图标未居中 / 登录后台裸图标）。
-// 只读 public/css/components.css、public/css/dashboard.css 与 public/js/app.js；
+// 只读 panel/public/css/components.css、panel/public/css/dashboard.css 与 panel/public/js/app.js；
 // 不联网、不起服务。用例在批次 7 的（修复前）源码上必须变红。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-const COMPONENTS_CSS = fs.readFileSync(new URL('../public/css/components.css', import.meta.url), 'utf8');
-const DASHBOARD_CSS = fs.readFileSync(new URL('../public/css/dashboard.css', import.meta.url), 'utf8');
-const APP_JS = fs.readFileSync(new URL('../public/js/app.js', import.meta.url), 'utf8');
+const COMPONENTS_CSS = fs.readFileSync(new URL('../panel/public/css/components.css', import.meta.url), 'utf8');
+const DASHBOARD_CSS = fs.readFileSync(new URL('../panel/public/css/dashboard.css', import.meta.url), 'utf8');
+const APP_JS = fs.readFileSync(new URL('../panel/public/js/app.js', import.meta.url), 'utf8');
 
 // 从 css[start]（'{' 缺失处）匹配成对花括号，返回块内文本
 function braceBlock(css, start) {

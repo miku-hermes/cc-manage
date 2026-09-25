@@ -1,10 +1,10 @@
-// 手机端标签条回归：只读 public/index.html 文本，钉住 ≤640px 的 CSS 契约。
+// 手机端标签条回归：只读 panel/src/pages/index.astro 文本，钉住 ≤640px 的 CSS 契约。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { styleText } from './helpers.mjs';
 
-const INDEX_HTML = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+const INDEX_HTML = fs.readFileSync(new URL('../panel/src/pages/index.astro', import.meta.url), 'utf8');
 
 // styleText：内联 <style> + 外链 css 合并（见 helpers.mjs）
 

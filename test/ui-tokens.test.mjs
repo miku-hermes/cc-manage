@@ -1,14 +1,14 @@
 // 批次 2：设计系统令牌 / 断点契约 / 降级动效的回归。
-// 只读 public/css/*.css 与合并样式文本；不联网、不起服务。
+// 只读 panel/public/css/*.css 与合并样式文本；不联网、不起服务。
 // 约定：这些用例在未修复（旧浅色令牌、无 --glass-*、无 reduced-motion）的源码上必须变红。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { styleText } from './helpers.mjs';
 
-const INDEX_HTML = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
-const TOKENS_CSS = fs.readFileSync(new URL('../public/css/tokens.css', import.meta.url), 'utf8');
-const BASE_CSS = fs.readFileSync(new URL('../public/css/base.css', import.meta.url), 'utf8');
+const INDEX_HTML = fs.readFileSync(new URL('../panel/src/pages/index.astro', import.meta.url), 'utf8');
+const TOKENS_CSS = fs.readFileSync(new URL('../panel/public/css/tokens.css', import.meta.url), 'utf8');
+const BASE_CSS = fs.readFileSync(new URL('../panel/public/css/base.css', import.meta.url), 'utf8');
 
 // 从 css[start]（'{' 缺失处）匹配成对花括号，返回块内文本
 function braceBlock(css, start) {

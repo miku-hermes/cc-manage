@@ -1,12 +1,12 @@
 // G3：shortId 前缀碰撞 —— 后台列表按钮必须按完整 keyId 定位对象。
-// 只读 public/admin.html，用既有 DOM 垫片跑内联脚本（零外部依赖、不开端口）。
+// 只读 panel/src/pages/admin.astro，用既有 DOM 垫片跑内联脚本（零外部依赖、不开端口）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { createDomShim, runInlineScript, sleep } from './helpers.mjs';
 
-const ADMIN_HTML = fs.readFileSync(new URL('../public/admin.html', import.meta.url), 'utf8');
+const ADMIN_HTML = fs.readFileSync(new URL('../panel/src/pages/admin.astro', import.meta.url), 'utf8');
 
 // 前 8 字符完全相同、后面不同 —— shortId() 无法区分这两个 keyId。
 const SHARED_PREFIX = '8f3a1c2d';

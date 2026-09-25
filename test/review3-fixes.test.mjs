@@ -282,7 +282,7 @@ test('A6：登录用户名里的换行不能伪造日志行', async (t) => {
 });
 
 // ── A7：后台「改他人密码」必须带上当前管理员密码 ─────────────────────
-const ADMIN_HTML = fs.readFileSync(new URL('../public/admin.html', import.meta.url), 'utf8');
+const ADMIN_HTML = fs.readFileSync(new URL('../panel/src/pages/admin.astro', import.meta.url), 'utf8');
 
 test('A7：修改密码弹窗存在 #p-current 输入框', () => {
   assert.match(ADMIN_HTML, /id="p-current"/, '弹窗必须存在当前管理员密码输入框');

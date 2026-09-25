@@ -10,10 +10,10 @@ import vm from 'node:vm';
 import crypto from 'node:crypto';
 import { startTestGateway, request } from './helpers.mjs';
 
-const INDEX_HTML = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
-const TREND_JS = fs.readFileSync(new URL('../public/js/render-trend.js', import.meta.url), 'utf8');
-const TOKENS_CSS = fs.readFileSync(new URL('../public/css/tokens.css', import.meta.url), 'utf8');
-const VENDOR_README = fs.readFileSync(new URL('../public/vendor/README.md', import.meta.url), 'utf8');
+const INDEX_HTML = fs.readFileSync(new URL('../panel/src/pages/index.astro', import.meta.url), 'utf8');
+const TREND_JS = fs.readFileSync(new URL('../panel/public/js/render-trend.js', import.meta.url), 'utf8');
+const TOKENS_CSS = fs.readFileSync(new URL('../panel/public/css/tokens.css', import.meta.url), 'utf8');
+const VENDOR_README = fs.readFileSync(new URL('../panel/public/vendor/README.md', import.meta.url), 'utf8');
 const PKG = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
 const TEST_THEME = {
@@ -38,7 +38,7 @@ const samplesOf = (n) => Array.from({ length: n }, (_, i) => ({ t: T0 + i * 300_
 // 加载 vendored 的**真实** ECharts（UMD 的 CJS 分支），用 SSR 跑同一条 option/图元管线。
 // 这是 BUG 2 的关键：只在 vm 里断言 option 字段抓不到「renderItem 返回数组 → setOption 抛错」。
 function loadVendoredECharts() {
-  const code = fs.readFileSync(new URL('../public/vendor/echarts.min.js', import.meta.url), 'utf8');
+  const code = fs.readFileSync(new URL('../panel/public/vendor/echarts.min.js', import.meta.url), 'utf8');
   const exportsObj = {};
   const context = { exports: exportsObj, module: { exports: exportsObj }, console, setTimeout, clearTimeout, Date, Math, JSON };
   context.globalThis = context;
@@ -458,8 +458,8 @@ test('B21-13：/vendor/ 命中真实文件才发 immutable 长缓存，css/js �
 });
 
 // ── 14：库文件与署名信息一致 ────────────────────────────────────────
-test('B21-14：public/vendor/README.md 记录版本 / 来源 / 许可证 / sha256，与库文件一致', () => {
-  const buf = fs.readFileSync(new URL('../public/vendor/echarts.min.js', import.meta.url));
+test('B21-14：panel/public/vendor/README.md 记录版本 / 来源 / 许可证 / sha256，与库文件一致', () => {
+  const buf = fs.readFileSync(new URL('../panel/public/vendor/echarts.min.js', import.meta.url));
   const sha = crypto.createHash('sha256').update(buf).digest('hex');
   assert.match(VENDOR_README, /6\.1\.0/, '记录版本 6.1.0');
   assert.match(VENDOR_README, /Apache-2\.0/, '记录许可证 Apache-2.0');
@@ -482,16 +482,16 @@ test('B21-14：public/vendor/README.md 记录版本 / 来源 / 许可证 / sha25
 //        21f 用 custom series 画的「无数据」带在浏览器里一个 polygon 都不出（21g 定位）。
 //   所以把「构建身份」钉死在全量构建上：谁把 vendor 换成 common / simple（或任何不含
 //   mark* / custom 的瘦构建），这里必须在 Node 里就变红，而不是留到浏览器里静默丢功能。
-//   ⚠️ 真有意升级 ECharts（换构建 / 升版本）时，必须同步改下面三个常量 + public/vendor/README.md。
+//   ⚠️ 真有意升级 ECharts（换构建 / 升版本）时，必须同步改下面三个常量 + panel/public/vendor/README.md。
 const EXPECTED_VENDOR_SHA256 = 'b66b25aeb4df84e33199dc21694014d336d222cbd9deb0e5a7c14bd6aa0d0fd0';
 const EXPECTED_MIN_MARK_OCCURRENCES = 8;
 const EXPECTED_MIN_RENDER_ITEM_OCCURRENCES = 1;
 
 test('B21-28 vendor 必须是全量构建（部分构建会静默丢掉 mark*/custom，配置写了也画不出来）', () => {
-  const buf = fs.readFileSync(new URL('../public/vendor/echarts.min.js', import.meta.url));
+  const buf = fs.readFileSync(new URL('../panel/public/vendor/echarts.min.js', import.meta.url));
   const sha = crypto.createHash('sha256').update(buf).digest('hex');
   assert.equal(sha, EXPECTED_VENDOR_SHA256,
-    'vendor 构建身份变了。有意升级请同步本测试 + public/vendor/README.md；' +
+    'vendor 构建身份变了。有意升级请同步本测试 + panel/public/vendor/README.md；' +
     '若非有意，八成又被换回了 common / simple 瘦构建（它在 Node 里不会报错，' +
     '只会在浏览器里静默丢 mark* / custom 图元）');
 
@@ -547,10 +547,10 @@ test('B21-21 vendor URL 的版本串必须随库文件内容变化（否则 immu
     '必须从 render-trend.js 导出 TREND_ECHARTS_BUILD 供测试核对');
   assert.equal(typeof context.TREND_ECHARTS_SRC, 'string', '必须导出 TREND_ECHARTS_SRC');
 
-  const buf = fs.readFileSync(new URL('../public/vendor/echarts.min.js', import.meta.url));
+  const buf = fs.readFileSync(new URL('../panel/public/vendor/echarts.min.js', import.meta.url));
   const shortSha = crypto.createHash('sha256').update(buf).digest('hex').slice(0, 8);
   assert.ok(context.TREND_ECHARTS_BUILD.includes(shortSha),
-    'TREND_ECHARTS_BUILD（' + context.TREND_ECHARTS_BUILD + '）必须包含 public/vendor/echarts.min.js 的 ' +
+    'TREND_ECHARTS_BUILD（' + context.TREND_ECHARTS_BUILD + '）必须包含 panel/public/vendor/echarts.min.js 的 ' +
     'sha256 前 8 位（' + shortSha + '）。换库文件却忘了改版本串 → 老浏览器继续用 immutable 缓存里的旧构建，' +
     '更新对老用户静默失效');
 

@@ -142,6 +142,9 @@ export async function closeServer(server, timeoutMs = 3000) {
 /** 起一个真实网关，上游指向 mock。返回 ctx，测试结束务必 await ctx.close()。 */
 export async function startTestGateway({
   accounts, keys, config = {}, plans, behavior, rootDir, noTimers = true, now,
+  // B22：面板产物目录注入点（默认仓库根 public/）。测试传一个没有 index.html 的目录即可
+  // 复现「面板未构建」→ GET / 必须 503，而不是裸 500。
+  publicDir,
   // B20：默认对齐生产 —— 生产启动走的是 `if (!overrides.noInitialRefresh && accounts.length > 0)`
   // （gateway.mjs 启动即刷一次额度）。这里原先写死 noInitialRefresh: true，于是「启动即刷」
   // 这条容器每次启动都会走的路径在整套测试里从未被跑过。默认值改为 false 后它会在每个
@@ -182,6 +185,7 @@ export async function startTestGateway({
         noTimers,
         noInitialRefresh,
         now,
+        publicDir,
         env: { ...process.env, CC_ACCOUNTS: '', ASSET_NO: '1' },
         config: {
           gatewayPort: picked,
@@ -686,9 +690,9 @@ export function createDomShim({ html, fetchImpl, localStorageData = {} }) {
   };
 }
 
-// ── 页面资源：拆分后样式/脚本在 public/css、public/js ─────────────────
+// ── 页面资源：B22 后源码在 panel/public/css、panel/public/js ─────────────────
 // 测试的「源码数据源」= HTML 内联文本 + 外链文件文本；断言本身一条不动。
-const PUBLIC_DIR = new URL('../public/', import.meta.url);
+const PUBLIC_DIR = new URL('../panel/public/', import.meta.url);
 
 function attrOf(tag, name) {
   const m = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i').exec(tag);
@@ -704,7 +708,7 @@ export function inlineStyleText(html) {
   return [...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)].map((m) => m[1]).join('\n');
 }
 
-/** <link rel="stylesheet" href="..."> 指向的 public/*.css 文件文本（按文档顺序）。 */
+/** <link rel="stylesheet" href="..."> 指向的 panel/public/*.css 文件文本（按文档顺序）。 */
 export function linkedStyleText(html) {
   const out = [];
   for (const m of html.matchAll(/<link\b[^>]*>/gi)) {
@@ -719,7 +723,7 @@ export function linkedStyleText(html) {
 
 /**
  * 合并后的页面样式数据源：HTML 内联 <style> + 所有外链样式表。
- * 拆分前只有内联样式，拆分后样式在 public/css/*.css；用它替换旧的「只取内联」实现，
+ * B22 后样式在 panel/public/css/*.css；用它替换旧的「只取内联」实现，
  * 断言的正则/花括号解析完全不变。
  */
 export function styleText(html) {

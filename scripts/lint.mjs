@@ -8,7 +8,7 @@
 //   3. .only(      —— 测试文件里不得出现 .only( 调用（会静默跳过其余用例）。B20：改为对
 //                     整个文件文本用 /\b(?:test|it|describe)\s*\.only\s*\(/ 扫描，跨行/带空格
 //                     的形态（test\n.only(、test.only (）也拦得住；逐行正则会漏掉这些。
-//   4. console.log(—— src/、gateway.mjs 与 public/js/** 必须走 createLogger / 页面自己的
+//   4. console.log(—— src/、gateway.mjs 与 panel/public/js/** 必须走 createLogger / 页面自己的
 //                     日志策略，不得直接 console.log（B20 补上面板脚本：它直接决定线上页面的
 //                     控制台行为）。vendor/ 是别人的代码，跳过这一条。
 //
@@ -21,7 +21,10 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // vendor 不再整体排除：它的 .mjs/.js 也要过语法检查（见文件头第 1 条）。
-const EXCLUDE_DIRS = new Set(['node_modules', '.git', 'data', 'config']);
+// B22：面板源码整体迁进 panel/（自动纳入 walk）；但 panel/node_modules 与面板构建产物
+// （panel/dist、Astro 生成的 panel/.astro 类型）不是源码，按目录名排除，避免 lint
+// 去检查生成物 / 第三方依赖。
+const EXCLUDE_DIRS = new Set(['node_modules', '.git', 'data', 'config', 'dist', '.astro']);
 const EXTENSIONS = ['.mjs', '.js'];
 // 检查文件数的下界：当前仓库 ~80 个（含 vendor 4 个）。目录改名/被排除时 walk() 会返回
 // 远小于它的集合，这时必须失败而不是打印「lint ok」。
@@ -79,7 +82,7 @@ for (const abs of files) {
 
   const isTest = name.startsWith('test/');
   const isSrcCore = name.startsWith('src/') || name === 'gateway.mjs';
-  const isPublicJs = name.startsWith('public/js/');   // B20：面板脚本也在线上跑，同样不许留调试输出
+  const isPublicJs = name.startsWith('panel/public/js/');   // B20：面板脚本也在线上跑，同样不许留调试输出（B22 迁进 panel/）
 
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
@@ -92,7 +95,7 @@ for (const abs of files) {
     }
     // 4) console.log(
     if ((isSrcCore || isPublicJs) && /console\.log\(/.test(line)) {
-      const where = isSrcCore ? 'src/ 与 gateway.mjs' : 'public/js/ 面板脚本';
+      const where = isSrcCore ? 'src/ 与 gateway.mjs' : 'panel/public/js/ 面板脚本';
       violations.push({ file: name, line: i + 1, message: `${where}禁止 console.log(，请走 createLogger / 页面统一的日志策略` });
     }
   }

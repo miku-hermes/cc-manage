@@ -1,14 +1,14 @@
 // 批次 13：前端迷你折线图（#trend 容器 / render-trend.js / app.js 轮询 / CSS stagger）回归。
-// 只读 public/** 源码 + 用 vm 直接跑纯函数，不联网、不起服务。
+// 只读 panel/** 源码 + 用 vm 直接跑纯函数，不联网、不起服务。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 
-const INDEX_HTML = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
-const APP_JS = fs.readFileSync(new URL('../public/js/app.js', import.meta.url), 'utf8');
-const TREND_JS = fs.readFileSync(new URL('../public/js/render-trend.js', import.meta.url), 'utf8');
-const DASHBOARD_CSS = fs.readFileSync(new URL('../public/css/dashboard.css', import.meta.url), 'utf8');
+const INDEX_HTML = fs.readFileSync(new URL('../panel/src/pages/index.astro', import.meta.url), 'utf8');
+const APP_JS = fs.readFileSync(new URL('../panel/public/js/app.js', import.meta.url), 'utf8');
+const TREND_JS = fs.readFileSync(new URL('../panel/public/js/render-trend.js', import.meta.url), 'utf8');
+const DASHBOARD_CSS = fs.readFileSync(new URL('../panel/public/css/dashboard.css', import.meta.url), 'utf8');
 
 /** 从 css[start] 处的 '{' 匹配成对花括号，返回块内文本。 */
 function braceBlock(text, start) {
@@ -26,7 +26,7 @@ function braceBlock(text, start) {
 }
 
 // B21：ECharts 版的公共测试工具 —— 纯函数上下文 / DOM 垫片上下文 / option 构造。
-const TOKENS_CSS = fs.readFileSync(new URL('../public/css/tokens.css', import.meta.url), 'utf8');
+const TOKENS_CSS = fs.readFileSync(new URL('../panel/public/css/tokens.css', import.meta.url), 'utf8');
 const TEST_THEME = {
   request: 'rgb(1, 2, 3)', error: 'rgb(4, 5, 6)', balance: 'rgb(7, 8, 9)',
   grid: 'rgb(10, 11, 12)', gridH: 'rgb(11, 12, 13)', axis: 'rgb(13, 14, 15)', label: 'rgb(16, 17, 18)',

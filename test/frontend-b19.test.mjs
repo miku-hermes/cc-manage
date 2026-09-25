@@ -1,5 +1,5 @@
 // 批次 19：前端（可访问性 + 真 bug + 确证死代码清理）的回归测试。
-// 只读 public/** 源码 + 复用既有 DOM 垫片跑页面脚本（零依赖、无浏览器）。
+// 只读 panel/** 源码 + 复用既有 DOM 垫片跑页面脚本（零依赖、无浏览器）。
 // 垫片里 getBoundingClientRect 恒为 0，因此断言只用「DOM 结构与事件」，不依赖布局尺寸。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -7,16 +7,16 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { createDomShim, runInlineScript, sleep, startTestGateway, request } from './helpers.mjs';
 
-const INDEX_HTML = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
-const ADMIN_HTML = fs.readFileSync(new URL('../public/admin.html', import.meta.url), 'utf8');
-const APP_JS = fs.readFileSync(new URL('../public/js/app.js', import.meta.url), 'utf8');
-const APP_ADMIN_JS = fs.readFileSync(new URL('../public/js/app-admin.js', import.meta.url), 'utf8');
-const MODAL_JS = fs.readFileSync(new URL('../public/js/modal.js', import.meta.url), 'utf8');
-const RENDER_GATE_JS = fs.readFileSync(new URL('../public/js/render-gate.js', import.meta.url), 'utf8');
-const ADMIN_STATE_JS = fs.readFileSync(new URL('../public/js/admin-state.js', import.meta.url), 'utf8');
-const TOKENS_CSS = fs.readFileSync(new URL('../public/css/tokens.css', import.meta.url), 'utf8');
-const COMPONENTS_CSS = fs.readFileSync(new URL('../public/css/components.css', import.meta.url), 'utf8');
-const DASHBOARD_CSS = fs.readFileSync(new URL('../public/css/dashboard.css', import.meta.url), 'utf8');
+const INDEX_HTML = fs.readFileSync(new URL('../panel/src/pages/index.astro', import.meta.url), 'utf8');
+const ADMIN_HTML = fs.readFileSync(new URL('../panel/src/pages/admin.astro', import.meta.url), 'utf8');
+const APP_JS = fs.readFileSync(new URL('../panel/public/js/app.js', import.meta.url), 'utf8');
+const APP_ADMIN_JS = fs.readFileSync(new URL('../panel/public/js/app-admin.js', import.meta.url), 'utf8');
+const MODAL_JS = fs.readFileSync(new URL('../panel/public/js/modal.js', import.meta.url), 'utf8');
+const RENDER_GATE_JS = fs.readFileSync(new URL('../panel/public/js/render-gate.js', import.meta.url), 'utf8');
+const ADMIN_STATE_JS = fs.readFileSync(new URL('../panel/public/js/admin-state.js', import.meta.url), 'utf8');
+const TOKENS_CSS = fs.readFileSync(new URL('../panel/public/css/tokens.css', import.meta.url), 'utf8');
+const COMPONENTS_CSS = fs.readFileSync(new URL('../panel/public/css/components.css', import.meta.url), 'utf8');
+const DASHBOARD_CSS = fs.readFileSync(new URL('../panel/public/css/dashboard.css', import.meta.url), 'utf8');
 
 const delay = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
 async function waitFor(fn, ms = 1000) {
@@ -363,17 +363,19 @@ test('B19-8：数字滚动中间帧不含小数点；终值格式不变', async 
   assert.equal(el.textContent, '4.00', 'money 终值仍是两位小数（格式不变）');
 });
 
-// ── 9：确证死代码守护（类名 / 令牌不再出现在 public/）────────────────
+// ── 9：确证死代码守护（类名 / 令牌不再出现在 panel/）────────────────
 test('B19-9：删掉的类名 / 令牌不再出现在 CSS 与 HTML/JS 里', () => {
+  // B22：两页 HTML 的源码在 panel/src/pages（.astro），其余资源在 panel/public。
   const files = [
-    'index.html', 'admin.html',
+    '../panel/src/pages/index.astro', '../panel/src/pages/admin.astro',
     'js/utils.js', 'js/anim.js', 'js/api.js', 'js/state.js', 'js/theme.js', 'js/render-hero.js',
     'js/render-cards.js', 'js/render-trend.js', 'js/app.js', 'js/admin-utils.js', 'js/admin-api.js',
     'js/admin-state.js', 'js/login-gate.js', 'js/render-gate.js', 'js/render-users.js',
     'js/render-accounts-table.js', 'js/render-keys-table.js', 'js/logs.js', 'js/modal.js', 'js/app-admin.js',
     'css/tokens.css', 'css/base.css', 'css/components.css', 'css/dashboard.css', 'css/admin.css',
   ];
-  const all = files.map((f) => fs.readFileSync(new URL('../public/' + f, import.meta.url), 'utf8')).join('\n');
+  const all = files.map((f) => fs.readFileSync(new URL(
+    f.startsWith('../') ? f : '../panel/public/' + f, import.meta.url), 'utf8')).join('\n');
   for (const needle of ['skeleton', 'skeleton-shimmer', 'card-display', 'test-note.pending', 'lv-info', '--shadow-soft', '--shadow-lift']) {
     assert.ok(!all.includes(needle), `确证死代码不得再出现：${needle}`);
   }
@@ -472,12 +474,12 @@ test('B19-11①：后台据 dashboardPublic 提示「公开面板对外可见」
 test('B19-11②：前端不再调用 GET /api/accounts 与 GET /api/admin/users（源码守护）', () => {
   const src = [
     APP_JS, APP_ADMIN_JS, MODAL_JS, RENDER_GATE_JS, ADMIN_STATE_JS,
-    fs.readFileSync(new URL('../public/js/utils.js', import.meta.url), 'utf8'),
-    fs.readFileSync(new URL('../public/js/api.js', import.meta.url), 'utf8'),
-    fs.readFileSync(new URL('../public/js/render-hero.js', import.meta.url), 'utf8'),
-    fs.readFileSync(new URL('../public/js/render-cards.js', import.meta.url), 'utf8'),
-    fs.readFileSync(new URL('../public/js/render-trend.js', import.meta.url), 'utf8'),
-    fs.readFileSync(new URL('../public/js/logs.js', import.meta.url), 'utf8'),
+    fs.readFileSync(new URL('../panel/public/js/utils.js', import.meta.url), 'utf8'),
+    fs.readFileSync(new URL('../panel/public/js/api.js', import.meta.url), 'utf8'),
+    fs.readFileSync(new URL('../panel/public/js/render-hero.js', import.meta.url), 'utf8'),
+    fs.readFileSync(new URL('../panel/public/js/render-cards.js', import.meta.url), 'utf8'),
+    fs.readFileSync(new URL('../panel/public/js/render-trend.js', import.meta.url), 'utf8'),
+    fs.readFileSync(new URL('../panel/public/js/logs.js', import.meta.url), 'utf8'),
   ].join('\n');
   assert.ok(!/['"]\/api\/accounts['"]/.test(src), '不得直接调用 GET /api/accounts（只用 /api/accounts/refresh）');
   assert.ok(/\/api\/accounts\/refresh/.test(src), '刷新额度必须走 /api/accounts/refresh');

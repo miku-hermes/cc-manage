@@ -117,6 +117,10 @@ export async function startGateway(overrides = {}) {
   // 未知键 / 无法解析的值收集成 warnings，这里在 logger 就绪后打出来，别静默吞掉。
   const loadedConfig = loadConfig(overrides.configPath ?? path.join(ROOT, 'config.json'), overrides.env ?? process.env);
   const config = { ...loadedConfig, ...(overrides.config ?? {}) };
+  // B22：面板静态产物目录（HTML 走 readPanel/readAdmin，css/js 走 serveStatic）。
+  // 仓库根 public/ 是构建产物（scripts/panel-build.sh 从 panel/dist 同步），不进 git；
+  // overrides.publicDir 是测试注入点：指向一个没有 index.html 的目录即可复现「面板未构建」。
+  const publicDir = overrides.publicDir ?? path.join(ROOT, 'public');
   // B17-#7：把 scrypt 串行队列的深度上限注入 auth 模块（模块级状态，进程内全局生效）。
   setScryptQueueMax(config.scryptMaxQueue);
   const log = createLogger({ level: config.logLevel, file: config.logFile });
@@ -1444,9 +1448,10 @@ export async function startGateway(overrides = {}) {
       }
     }
 
-    // 面板
+    // 面板（根 public/ 是构建产物；未构建时 readPanel 返回 null → 503 可操作提示，不是裸 500）
     if (req.method === 'GET' && url.pathname === '/') {
       const html = readPanel();
+      if (html === null) return sendPanelMissing(res);
       res.setHeader('cache-control', 'no-store');
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'x-content-type-options': 'nosniff' });
       return res.end(html);
@@ -1455,6 +1460,7 @@ export async function startGateway(overrides = {}) {
     // 后台管理页（静态 HTML；数据接口在 /api/admin/*）
     if (req.method === 'GET' && (url.pathname === '/admin' || url.pathname === '/admin/')) {
       const html = readAdmin();
+      if (html === null) return sendPanelMissing(res);
       res.setHeader('cache-control', 'no-store');
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'x-content-type-options': 'nosniff' });
       return res.end(html);
@@ -1627,12 +1633,52 @@ export async function startGateway(overrides = {}) {
     sendJSON(res, 404, { error: { message: 'Not found', type: 'not_found' } });
   }
 
+  // 面板构建产物缺失（ENOENT）→ 返回 null，交给路由回 503 + 可操作提示；
+  // 其它读错误（EACCES 等）原样抛 → 走原有兜底（真故障仍是 500）。只区分 ENOENT 这一种。
+  // warn 去重：面板未构建期间不逐请求刷屏；一旦读到文件即复位，重新构建后可再提示一次。
+  let panelMissingWarned = false;
+  function readPanelFile(name) {
+    const full = path.join(publicDir, name);
+    try {
+      const html = fs.readFileSync(full, 'utf8');
+      panelMissingWarned = false;
+      return html;
+    } catch (e) {
+      if (e?.code !== 'ENOENT') throw e;
+      if (!panelMissingWarned) {
+        panelMissingWarned = true;
+        log.warn(`面板未构建：${full} 不存在（ENOENT）→ 请运行 \`bash scripts/panel-build.sh\``
+          + '（或 `npm run panel:build`）生成面板产物后再刷新');
+      }
+      return null;
+    }
+  }
+
   function readPanel() {
-    return fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+    return readPanelFile('index.html');
   }
 
   function readAdmin() {
-    return fs.readFileSync(path.join(ROOT, 'public', 'admin.html'), 'utf8');
+    return readPanelFile('admin.html');
+  }
+
+  // 面板未构建时的 503 页面：给人看的、能照着做的一句话（含确切命令）。
+  const PANEL_MISSING_HTML = '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
+    + '<meta name="viewport" content="width=device-width, initial-scale=1">'
+    + '<title>面板未构建</title></head><body>'
+    + '<h1>503 · 面板未构建</h1>'
+    + '<p>面板未构建：请运行 <code>bash scripts/panel-build.sh</code>'
+    + '（或 <code>npm run panel:build</code>）后刷新本页。</p>'
+    + '<p>仓库根 <code>public/</code> 是 Astro 构建产物，不在 git 里；干净 checkout 需要先构建。</p>'
+    + '</body></html>';
+
+  function sendPanelMissing(res) {
+    res.writeHead(503, {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+    });
+    return res.end(PANEL_MISSING_HTML);
   }
 
   // 静态资源 MIME：只放行面板用到的两种扩展名
@@ -1652,7 +1698,6 @@ export async function startGateway(overrides = {}) {
     if (!rel || rel.includes('..') || rel.includes('\\') || rel.includes('\0')) return notFound();
     const mime = STATIC_MIME[path.extname(rel).toLowerCase()];
     if (!mime) return notFound();
-    const publicDir = path.join(ROOT, 'public');
     const full = path.resolve(publicDir, rel);
     if (full !== publicDir && !full.startsWith(publicDir + path.sep)) return notFound();
     let stat;

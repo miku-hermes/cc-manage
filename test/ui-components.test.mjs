@@ -1,5 +1,5 @@
 // 批次 3：JS 组件化 + 事件委托的回归测试。
-// 只读 public/*.html（外链 js 按文档顺序在 vm 里执行），用既有 DOM 垫片跑真实事件，
+// 只读 panel/src/pages/*.astro（外链 js 按文档顺序在 vm 里执行），用既有 DOM 垫片跑真实事件，
 // 不联网、不起服务。约定：这些用例在未修复（仍用 $('x').onclick 直绑）的源码上必须变红。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -7,8 +7,8 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { createDomShim, runInlineScript, sleep } from './helpers.mjs';
 
-const INDEX_HTML = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
-const ADMIN_HTML = fs.readFileSync(new URL('../public/admin.html', import.meta.url), 'utf8');
+const INDEX_HTML = fs.readFileSync(new URL('../panel/src/pages/index.astro', import.meta.url), 'utf8');
+const ADMIN_HTML = fs.readFileSync(new URL('../panel/src/pages/admin.astro', import.meta.url), 'utf8');
 const delay = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function dom(html, fetchImpl, opts = {}) {

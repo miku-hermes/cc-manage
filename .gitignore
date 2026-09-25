@@ -13,3 +13,9 @@ config.local.json
 # 用 config/* 而不是 config/ —— 目录被整体忽略时，! 反选规则不生效。
 config/*
 !config/*.example.json
+# B22：面板迁到 Astro 构建管道 —— 依赖、构建产物与本地服务目录都不是源码。
+panel/node_modules/
+panel/dist/
+panel/.astro/
+# 仓库根的 public/ 现在是构建产物（由 panel/dist 同步而来），不再是源码。
+/public/

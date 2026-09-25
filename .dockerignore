@@ -1,3 +1,13 @@
+# B22：面板的依赖 / 构建产物 / Astro 生成类型一律不进构建上下文 —— 镜像里会在
+# panel-build 阶段重新 `npm ci` + `npm run build`。panel/ 源码本身必须保留：
+# 构建阶段的 `COPY panel/ ./` 依赖它（含 panel/public/ 下的 css/js/vendor 静态资源）。
+panel/node_modules
+panel/dist
+panel/.astro
+# 仓库根的 public/ 是 panel-build 从 panel/dist 同步出来的构建产物，同样不该进上下文。
+# 必须**根锚定**写 `/public`：不带斜杠的 `public` 会命中任意层级，把 panel/public/
+# （含 ECharts）一起排掉，镜像里就没有图表库了 —— 与下面 /vendor 是同一类坑。
+/public
 .git
 .gitignore
 node_modules
@@ -6,8 +16,8 @@ test
 spec
 mocks
 # /vendor 只排仓库根目录的后端协议内核源码（vendor/commandcode-proxy/，不进 gateway 镜像）；
-# public/vendor/ 必须保留 —— 面板的 ECharts 6.1.0 由 /vendor/echarts.min.js 同源加载。
-# 注意：.dockerignore 里不带斜杠的 `vendor` 会命中任意层级（含 public/vendor/），
+# panel/public/vendor/ 必须保留 —— 面板的 ECharts 6.1.0 由 /vendor/echarts.min.js 同源加载。
+# 注意：.dockerignore 里不带斜杠的 `vendor` 会命中任意层级（含 panel/public/vendor/），
 # 一旦写回无斜杠形式，镜像里就没有 ECharts，线上趋势图会退化成文本摘要。
 /vendor
 SPEC.md

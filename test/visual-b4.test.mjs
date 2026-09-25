@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createDomShim, runInlineScript } from './helpers.mjs';
 
-const INDEX_HTML = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+const INDEX_HTML = fs.readFileSync(new URL('../panel/src/pages/index.astro', import.meta.url), 'utf8');
 
 function dom(html, fetchImpl) {
   return createDomShim({ html, fetchImpl: fetchImpl ?? (async () => ({ ok: true, status: 200, json: async () => ({}) })) });
@@ -224,7 +224,7 @@ test('B4-11：前台卡片不渲染 keyId/keyPrefix 文本（keyId 仅存于 dat
 });
 
 // ── 批次 5：KPI 卡结构重排（标签在上 → 大数字 → sub）+ 语义图标 ──────
-const DASHBOARD_CSS = fs.readFileSync(new URL('../public/css/dashboard.css', import.meta.url), 'utf8');
+const DASHBOARD_CSS = fs.readFileSync(new URL('../panel/public/css/dashboard.css', import.meta.url), 'utf8');
 
 /** 取 6 张卡各自的 HTML 块：`<div class="kpi" id="kpi-box-…">` → 下一张卡 / </section>。 */
 function kpiBlocks() {
