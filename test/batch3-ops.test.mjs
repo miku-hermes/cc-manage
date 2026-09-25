@@ -169,16 +169,20 @@ test('L2：startTestGateway 启动失败时关掉 mock server 且不留临时目
 
 test('L2：cleanupTestResources 忽略关闭异常，keepDir 时不删调用方给的目录', async () => {
   const dir = makeTmpDir();
-  fs.writeFileSync(path.join(dir, 'keep.txt'), 'x');
-  await cleanupTestResources({
-    gateway: { stop: async () => { throw new Error('stop 失败'); } },
-    upstream: { close: async () => { throw new Error('close 失败'); } },
-    dir,
-    keepDir: true,
-  });
-  assert.ok(fs.existsSync(dir), '调用方给的目录不该被删');
-  await cleanupTestResources({ dir });
-  assert.ok(!fs.existsSync(dir), '默认要删掉自己建的目录');
+  try {
+    fs.writeFileSync(path.join(dir, 'keep.txt'), 'x');
+    await cleanupTestResources({
+      gateway: { stop: async () => { throw new Error('stop 失败'); } },
+      upstream: { close: async () => { throw new Error('close 失败'); } },
+      dir,
+      keepDir: true,
+    });
+    assert.ok(fs.existsSync(dir), '调用方给的目录不该被删');
+    await cleanupTestResources({ dir });
+    assert.ok(!fs.existsSync(dir), '默认要删掉自己建的目录');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // ── L2：挂起保护 ─────────────────────────────────────────────────────

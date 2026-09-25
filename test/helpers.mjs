@@ -55,6 +55,30 @@ export async function retryOnPortConflict(alloc, attempts = 3) {
   throw lastError;
 }
 
+// ── 临时目录登记 + 进程退出兜底清理 ──────────────────────────────────
+// 背景：node --test 的每个测试文件是独立进程，漏掉的 cc-manage-test-* 目录会一直
+// 攒在 /tmp。这里在 makeTmpDir() 时登记，进程退出时统一兜底删除，防止将来再犯。
+const tmpDirs = new Set();
+let sweepRegistered = false;
+
+// 只注册一次 exit 监听（守卫标志），避免同一进程里重复挂监听。
+if (!sweepRegistered) {
+  sweepRegistered = true;
+  process.on('exit', () => sweepTmpDirs());
+}
+
+/**
+ * 兜底清理：删掉登记表里所有临时目录。
+ * 幂等：可重复调用、不抛；单个目录失败只忽略，不影响其它目录；对已不在磁盘上的
+ * 目录用 force 直接 no-op（删除后又被在途回调「复活」的目录正好靠这一步收掉）。
+ */
+export function sweepTmpDirs() {
+  for (const dir of tmpDirs) {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* 单个失败忽略 */ }
+  }
+  tmpDirs.clear();
+}
+
 /**
  * 收掉测试资源。失败路径与正常收尾共用：起网关失败时必须把已经起来的 mock server
  * 与临时目录一起回收，否则 node --test 子进程会挂着不退出（假挂起，CI 只能等到超时）。
@@ -63,14 +87,23 @@ export async function retryOnPortConflict(alloc, attempts = 3) {
 export async function cleanupTestResources({ gateway, upstream, dir, keepDir = false } = {}) {
   await gateway?.stop?.().catch(() => {});
   await upstream?.close?.().catch(() => {});
-  if (dir && !keepDir) {
-    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* 忽略 */ }
+  if (!dir) return;
+  if (keepDir) {
+    // keepDir：这次不删，目录交给调用方 → 必须注销登记项，退出兜底不得误删。
+    tmpDirs.delete(dir);
+    return;
   }
+  // 普通收尾：删目录但**保留**登记项。网关在途异步回调可能在删除后又把
+  // data/state.json 写回来（实测泄漏根因），保留登记才能在退出兜底时收掉复活目录；
+  // sweepTmpDirs 对「已删的登记项」是幂等的（force 不抛）。
+  try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* 忽略 */ }
 }
 
 /** 建一个隔离的临时工作目录（accounts.json / keys.json / data/ 都在里面）。 */
 export function makeTmpDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'cc-manage-test-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-manage-test-'));
+  tmpDirs.add(dir);
+  return dir;
 }
 
 export function writeAccountFiles(dir, { accounts, keys }) {
