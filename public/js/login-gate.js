@@ -23,8 +23,13 @@ $('gate-submit').onclick = async () => {
   }
 };
 for (const id of ['gate-user', 'gate-pass', 'gate-pass2']) {
-  $(id).addEventListener('keydown', (e) => { if (e.key === 'Enter') $('gate-submit').click(); });
+  // 调 .onclick()（而不是 .click()）：与直调处理器等价，且不依赖宿主对合成 click 的支持。
+  $(id).addEventListener('keydown', (e) => { if (e.key === 'Enter') $('gate-submit').onclick(); });
 }
+// 登录门包在 <form> 里（密码管理器识别）；#gate-submit 仍是 type=button，Enter 走上面的 keydown，
+// 这里只兜底取消任何原生提交，避免多字段表单出现整页刷新。
+const gateForm = $('gate-form');
+if (gateForm) gateForm.addEventListener('submit', (e) => { if (e.preventDefault) e.preventDefault(); });
 
 /** 退出登录：清会话 + 回登录页（敏感 DOM 由 showGate → clearSensitiveData 负责）。 */
 async function logout() {

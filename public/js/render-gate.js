@@ -1,6 +1,21 @@
 // ── 登录 / 初始化页 ─────────────────────────────────────────────────
 /* 会话失效 / 登出：账号 keyPrefix、客户端 key、管理员、运行日志都不能留在 DOM 里。
    共享终端下 session 过期或点过「退出登录」后，F12 / 页面另存仍能读到这些内容。 */
+/* 登出 / session 失效时必须清空的**输入**类敏感字段。
+   清单必须覆盖所有会写残留信息的元素（b19 守护测试会扫描 app-admin.js / modal.js 的赋值目标）。 */
+const SENSITIVE_VALUE_IDS = [
+  'a-key', 'a-name',           // CC key 明文 + 备注名
+  'u-name', 'u-pass',          // 新管理员用户名 / 密码
+  'p-pass', 'p-current',       // 新密码 / 当前管理员密码
+  'r-name', 'k-name',          // 改备注输入 / 客户端名称
+];
+/* 登出 / session 失效时必须清空的**文本**类字段：
+   备注名 + keyId 片段（#r-sub）、管理员名（#p-sub）、一次性明文 key、报错原文。 */
+const SENSITIVE_TEXT_IDS = [
+  'r-sub', 'p-sub',
+  'a-err', 'r-err', 'u-err', 'p-err', 'k-err', 'k-warn', 'k-plain',
+];
+
 function clearSensitiveData() {
   state.accounts = [];
   state.keys = [];
@@ -11,10 +26,11 @@ function clearSensitiveData() {
   for (const id of ['acc-count', 'key-count', 'user-count', 'event-count']) $(id).textContent = '—';
   // 弹窗里的一次性明文 key / 粘贴过的 CC key / 管理员密码框都不能留在 DOM 里：
   // 共享终端下「生成 key 后退出」或「弹窗开着时 session 401」会把这些内容暴露出去。
-  // 同时复位 .modal.open（z-index 50 的遮罩会盖在登录页上，肉眼可见）。
+  // 同时复位 .modal.open（z-index 50 的遮罩会盖在登录页上，肉眼可见）并还原背景 inert。
   resetNewKeyModal();                       // 清 #k-plain / #k-name，复位 #k-form / #k-result
-  for (const id of ['a-key', 'u-pass', 'p-pass', 'p-current', 'r-name']) $(id).value = '';
-  for (const m of document.querySelectorAll('.modal')) m.classList.remove('open');
+  for (const id of SENSITIVE_VALUE_IDS) { const el = $(id); if (el) el.value = ''; }
+  for (const id of SENSITIVE_TEXT_IDS) { const el = $(id); if (el) el.textContent = ''; }
+  resetModalState();
   renameTarget = null;
   passTarget = null;
   $('who').innerHTML = '';

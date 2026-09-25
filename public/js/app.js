@@ -5,6 +5,7 @@ document.addEventListener('click', (e) => {
   const t = e.target;
   if (!t || !t.closest) return;
   if (t.closest('#theme')) { setTheme(currentTheme() === 'dark' ? 'light' : 'dark'); return; }
+  if (t.closest('#refresh-quota')) { refreshQuota(); return; }
   // 搜索框：点图标或输入框都只负责展开，绝不在这里收起。
   // <label class="search-box"> 包着 <input>，浏览器会把图标点击再投递给 input；
   // 若图标分支还 toggle 收起，就会出现「展开→缩回→再展开」的闪烁。
@@ -35,26 +36,17 @@ document.addEventListener('input', (e) => {
   renderCards();
 });
 
-// 搜索框键盘：Enter / 空格展开并聚焦，Escape 收起。
+// 搜索框键盘：Escape 收起并放掉焦点（label 已不再是 role=button，无需再处理 Enter/空格）。
 document.addEventListener('keydown', (e) => {
   const t = e.target;
   if (!t || !t.closest) return;
   const sb = t.closest('.search-box');
   if (!sb) return;
-  if (e.key === 'Escape') {
-    sb.classList.remove('expanded');
-    const input = sb.querySelector('input');
-    if (t.blur) t.blur();               // 焦点在图标上时也要放掉，才能撤掉 :focus-within
-    if (input) input.blur();
-    return;
-  }
-  const isInput = t.tagName && t.tagName.toUpperCase() === 'INPUT';
-  if (!isInput && (e.key === 'Enter' || e.key === ' ')) {
-    if (e.preventDefault) e.preventDefault();
-    sb.classList.add('expanded');
-    const input = sb.querySelector('input');
-    if (input) input.focus();
-  }
+  if (e.key !== 'Escape') return;
+  sb.classList.remove('expanded');
+  const input = sb.querySelector('input');
+  if (t.blur) t.blur();               // 焦点在图标上时也要放掉，才能撤掉 :focus-within
+  if (input) input.blur();
 });
 
 // 搜索框获得焦点：只要焦点落进 .search-box 就补上 expanded（兜底点击投递差异）。
@@ -104,7 +96,6 @@ function tickFreshness() {
 function petals() {
   if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
   const host = $('petals');
-  const vw = Math.max(320, window.innerWidth);
   const tints = ['var(--accent)', '#f7b6c9', 'var(--accent-hover)'];
   const count = 10;
   for (let i = 0; i < count; i++) {
@@ -151,10 +142,33 @@ function reflowCards() {
   reflowTimer = setTimeout(() => { host.classList.remove('is-reflow'); reflowTimer = null; }, 260);
 }
 
+// ── 手动刷新额度：POST /api/accounts/refresh（后端已就绪 + 匿名节流）──
+let refreshingQuota = false;
+async function refreshQuota() {
+  if (refreshingQuota) return;                       // 除禁用态外的兜底：防连点
+  const btn = $('refresh-quota');
+  refreshingQuota = true;
+  if (btn) btn.disabled = true;
+  try {
+    const r = await apiFetch('/api/accounts/refresh', { method: 'POST' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    if (data.throttled) setHint('刚刷新过，请稍候', false);
+    else setHint('', false);
+    render(data);                                    // 直接用响应里的新快照重绘
+  } catch (e) {
+    setHint('刷新失败：' + e.message, true);
+  } finally {
+    refreshingQuota = false;
+    if (btn) btn.disabled = false;
+  }
+}
+
 /** 启动：恢复主题 + 首屏渲染 + 定时器（原来的顶层启动语句）。 */
 function boot() {
   const savedTheme = storedTheme();
   if (savedTheme) document.documentElement.setAttribute('data-theme', savedTheme);
+  watchSystemTheme();                        // 未手动选择时跟随系统主题变化
   petals();
   tick();
   setInterval(tick, 1000);

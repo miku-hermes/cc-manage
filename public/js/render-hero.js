@@ -112,8 +112,7 @@ function render(d) {
   const accounts = d.accounts || [];
   setStaleFrom(d);   // 阈值跟随后端轮询配置（空闲间隔的 2 倍）
 
-  $('health').textContent = '可用 ' + num(s.available) + ' / ' + num(s.accounts);
-  $('health').className = 'pill ' + (Number(s.available) > 0 ? 'ok' : 'bad');
+  setHealth('可用 ' + num(s.available) + ' / ' + num(s.accounts), { tone: Number(s.available) > 0 ? 'ok' : 'bad' });
   $('updated').textContent = '更新于 ' + timeText(d.now);
   $('cadence').textContent = cadenceText(d.quotaPoll);
   // 公开面板不下发也不渲染内网上游地址（host/port 对匿名访客无用，只泄露拓扑）
@@ -176,8 +175,7 @@ function showPrivate() {
   setNumber($('balance'), 0, NaN, money, 0);   // 同步写 — 并取消在途动画
   $('bal-label').textContent = '剩余额度（USD）';
   $('bal-breakdown').textContent = '';
-  $('health').textContent = '需要登录后台';
-  $('health').className = 'pill bad';
+  setHealth('需要登录后台', { tone: 'bad' });
   setNumber($('tokens'), 0, NaN, num, 0);      // 同步写 0 并取消在途动画
   $('upstream').textContent = '';
   $('updated').textContent = '';

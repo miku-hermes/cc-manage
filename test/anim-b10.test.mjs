@@ -102,7 +102,12 @@ test('B10-1：anim.js 的 canAnimate 以 document.visibilityState === "visible" 
   assert.match(block, /prefersReducedMotion\(\)/, '尊重系统减少动态效果');
   // 两页都按 utils → anim → 其余 的顺序引入
   assert.match(INDEX_HTML, /<script src="js\/anim\.js"><\/script>/, 'index.html 引入 anim.js');
-  assert.match(ADMIN_HTML, /<script src="js\/anim\.js"><\/script>/, 'admin.html 引入 anim.js');
+  // 反向断言（比原来更强：原来只证明「引用了」，现在证明「不该引用」）。依据：
+  //   grep -cE "setNumber|canAnimate|playIntro|prefersReducedMotion" public/js/app-admin.js → 0
+  //   grep -cE ... public/js/anim.js public/js/app.js public/js/render-hero.js → 7 / 1 / 10
+  // 后台没有数字滚动，admin 页面脚本对 anim.js 暴露的四个 API 零引用，引它只是白载 53 行
+  // 外加一个请求；前台 index.html 经 render-hero.js 真正使用，故上面那一行保持原样。
+  assert.doesNotMatch(ADMIN_HTML, /<script src="js\/anim\.js"><\/script>/, 'admin.html 不引入 anim.js（后台没有任何数字滚动，白载 53 行）');
   const utilsAt = INDEX_HTML.indexOf('<script src="js/utils.js">');
   const animAt = INDEX_HTML.indexOf('<script src="js/anim.js">');
   const heroAt = INDEX_HTML.indexOf('<script src="js/render-hero.js">');

@@ -10,8 +10,8 @@ const TREND_PAD_X = 4;
 const TREND_PAD_Y = 2;
 // y=0 锚线（底部基线）在 viewBox 里的高度。
 const TREND_BASELINE_Y = TREND_VIEWBOX_H - TREND_PAD_Y;
-// 每 5 分钟一个采样时，攒满 24 小时窗口需要 12 个样本（1 小时）；
-// 少于它时标题不得声称「近 24 小时」。
+// 满窗样本数由 bucketMs 推出（5 分钟桶 → 288，见 trendCapacity）；
+// 这里是拿不到 bucketMs 时的兜底（1 小时 / 12 个样本），少于满窗时标题不得声称「近 24 小时」。
 const TREND_FULL_WINDOW_SAMPLES = 12;
 
 /** 非有限数（null / undefined / NaN / 非数字字符串）一律当 0 处理。 */
@@ -96,12 +96,19 @@ function spanText(minutes) {
   return (Number.isInteger(h) ? h : h.toFixed(1)) + ' 小时';
 }
 
+/** 24 小时窗口的满窗样本数：由后端 bucketMs 推出（5 分钟桶 → 288），不写死。 */
+function trendCapacity(data) {
+  const bucketMs = trendNum(data?.bucketMs) || 5 * 60 * 1000;
+  const perMin = Math.max(1, Math.round(bucketMs / 60000));
+  return Math.max(1, Math.round((24 * 60) / perMin));
+}
+
 /** 顶部区间文案：如实说明样本覆盖的时长；数据不足时明说「收集中」。 */
 function trendRangeText(samples, data) {
   const bucketMs = trendNum(data?.bucketMs) || 5 * 60 * 1000;
   const perMin = Math.max(1, Math.round(bucketMs / 60000));
   const n = Array.isArray(samples) ? samples.length : 0;
-  const capacity = Math.max(1, Math.round((24 * 60) / perMin)); // 24 小时窗口能装多少样本（5 分钟 → 288）
+  const capacity = trendCapacity(data); // 24 小时窗口能装多少样本（5 分钟 → 288）
   if (n < 2) {
     // 数据不足：明说收集中，并给出「已攒 n / 满窗 capacity」的比例，别让人误以为是全量累计
     return '数据收集中 · ' + n + '/' + capacity + ' 个样本（每 ' + perMin + ' 分钟一个）';
@@ -111,12 +118,16 @@ function trendRangeText(samples, data) {
 }
 
 /**
- * 标题：样本不足 1 小时（< 12 个）时别硬说「近 24 小时」，明说还在收集中；
- * 攒够了才显示纯「近 24 小时趋势」。右侧区间文案仍由 trendRangeText 负责。
+ * 标题：样本不足「满 24 小时窗口」（capacity，由 bucketMs 推出）时别硬说「近 24 小时」，
+ * 明说还在收集中；攒够了才显示纯「近 24 小时趋势」。右侧区间文案仍由 trendRangeText 负责。
+ * capacity 缺失（无 bucketMs 的调用）时退回 TREND_FULL_WINDOW_SAMPLES 兜底。
  */
-function trendTitle(sampleCount) {
+function trendTitle(sampleCount, capacity) {
   const n = trendNum(sampleCount);
-  return n < TREND_FULL_WINDOW_SAMPLES ? '近 24 小时趋势（数据收集中）' : '近 24 小时趋势';
+  const full = Number.isFinite(Number(capacity)) && Number(capacity) > 0
+    ? Math.round(Number(capacity))
+    : TREND_FULL_WINDOW_SAMPLES;
+  return n < full ? '近 24 小时趋势（数据收集中）' : '近 24 小时趋势';
 }
 
 /**
@@ -186,7 +197,7 @@ function renderTrend(data) {
   const eLast = lastOf(es);
   const mLast = lastOf(ms);
   host.innerHTML = '<div class="trend-head-row">'
-    + '<span class="trend-title">' + esc(trendTitle(samples.length)) + '</span>'
+    + '<span class="trend-title">' + esc(trendTitle(samples.length, trendCapacity(data))) + '</span>'
     + '<span class="trend-range aux-text">' + esc(trendRangeText(samples, data)) + '</span>'
     + '</div>'
     + '<div class="trend-grid">'

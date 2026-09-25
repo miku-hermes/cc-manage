@@ -12,8 +12,11 @@ function bar(label, w, opts) {
   const reset = has ? resetText(w, { zeroMeansIdle: label.indexOf('5 小时') === 0 }) : '';
   const empty = pct === null || pct <= 0;
   // 金额不再只藏在 title 里：触屏 / 键盘用户拿不到 title，同步给 aria-label。
+  // 但 aria-label 挂在无 role 的 div 上等于没写：ARIA 规范里 role=generic 不允许
+  // aria-label，多数辅助技术不会朗读（同文件 .credits-bar 正是靠 role="img" 才有 name）。
+  // 故 .bar-group 显式声明 role="group"，让 aria-label 真正进入无障碍树。
   const amountText = amounts ? label + '：已用 ' + amounts : '';
-  return '<div class="bar-group"' + (amountText ? ' title="' + esc(amountText) + '" aria-label="' + esc(amountText) + '"' : '') + '>'
+  return '<div class="bar-group" role="group"' + (amountText ? ' title="' + esc(amountText) + '" aria-label="' + esc(amountText) + '"' : '') + '>'
     + '<div class="bar-head"><span class="bar-label">' + label + '</span>'
     + '<span class="bar-pct">' + pctText(pct) + '</span></div>'
     + '<div class="bar ' + cls(pct) + (empty ? ' is-empty' : '') + '"><i style="width:' + (pct === null ? 0 : Math.max(0, Math.min(100, pct))) + '%"></i></div>'
@@ -145,7 +148,7 @@ function card(a, wideLast = false, index = 0) {
   // 头行：备注名 + 计划标签 + 状态胶囊。前台只显示用户自己的备注名，
   // 不下发也不渲染 key 的任何片段（keyId 仅出现在底部 .tags 的 data-key-id 里做滚动回填）。
   // B12：公开接口不再下发上游身份字段，卡片不再渲染副标题片段。
-  const head = '<div class="card-head"><h2>' + esc(a.name)
+  const head = '<div class="card-head"><h2>' + esc(a.name || a.keyPrefix || shortId(a.keyId) || '未命名账号')
     + planPill(q) + '</h2>'
     + '<span class="status is-' + esc(st.tone) + '"><span class="dot" aria-hidden="true"></span>' + esc(st.t) + '</span></div>';
 

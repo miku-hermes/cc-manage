@@ -56,7 +56,7 @@ function renderAccounts() {
     const raw = q && Number.isFinite(q.remaining) ? q.remaining : null;
     const dead = ex && (ex.kind === 'monthly' || ex.kind === 'balance');
     const balanceTitle = raw === null ? '账面余额未知' : '账面 ' + money(raw)
-      + (dead ? ' · ' + esc(a.exhausted.label || '额度已用完') + '，不可用' : '');
+      + (dead ? ' · ' + (a.exhausted.label || '额度已用完') + '，不可用' : '');
     // 额度构成（月度/购买/赠送）——数据后端早就有，只是之前没渲染。
     const credits = q && q.credits
       ? '<div class="cell-sub aux-text">月度 ' + money(q.credits.monthlyCredits)
@@ -70,7 +70,7 @@ function renderAccounts() {
       ? quotaBar('5h', q.fiveHour, { spent: !!ex && ex.kind === 'window' && ex.window === 'fiveHour' })
         + quotaBar('周', q.weekly, { spent: !!ex && ex.kind === 'window' && ex.window === 'weekly' })
         + quotaBar('月', q.monthly, { spent: !!ex && ex.kind === 'monthly' })
-        + '<div class="cell-sub aux-text">余额 <span class="usable-balance" title="' + balanceTitle + '">' + money(usable) + '</span>'
+        + '<div class="cell-sub aux-text">余额 <span class="usable-balance" title="' + esc(balanceTitle) + '">' + money(usable) + '</span>'
         + (q.plan && q.plan.planId ? ' · 套餐 ' + esc(planLabel(q.plan.planId)) : '')
         + (q.displayName ? ' · ' + esc(q.displayName) : '') + '</div>'
         + credits
@@ -86,7 +86,7 @@ function renderAccounts() {
         + ' · ' + esc(timeText(test.at)) + '</div>'
       : '';
     return '<tr>'
-      + '<td data-label="备注名"><div class="cell-name">' + esc(a.name) + '</div>' + testNote + '</td>'
+      + '<td data-label="备注名"><div class="cell-name">' + esc(a.name || a.keyPrefix || shortId(a.keyId) || '未命名账号') + '</div>' + testNote + '</td>'
       + '<td data-label="keyId / keyPrefix" class="mono cell-sub">' + id + '<br>' + maskedKey(a.keyPrefix) + '</td>'
       + '<td data-label="额度" class="cell-quota">' + quota + '</td>'
       + '<td data-label="状态">' + statusTag(a) + '</td>'

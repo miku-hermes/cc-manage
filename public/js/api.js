@@ -22,7 +22,6 @@ async function load() {
     render(data);
   } catch (e) {
     if (generation !== loadGeneration) return;
-    $('health').textContent = '加载失败：' + e.message;
-    $('health').className = 'pill bad';
+    setHealth('加载失败：' + e.message, { alert: true });
   }
 }

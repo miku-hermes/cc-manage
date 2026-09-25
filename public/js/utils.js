@@ -1,6 +1,23 @@
 const $ = (id) => document.getElementById(id);
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
-function num(n) { const v = Number(n); return Number.isFinite(v) ? v.toLocaleString('zh-CN') : '0'; }
+/** keyId 前 8 位：卡片 / 表格在备注名缺失时的可识别兜底（与后台 admin-utils 同口径）。 */
+function shortId(id) { return String(id ?? '').slice(0, 8); }
+// 整数指标专用：显式 maximumFractionDigits:0，避免数字滚动中间帧出现「981.482」这种小数。
+function num(n) { const v = Number(n); return Number.isFinite(v) ? v.toLocaleString('zh-CN', { maximumFractionDigits: 0 }) : '0'; }
+
+/* 网关状态 pill：role=status / aria-live=polite，文案只在**变化时**写 DOM ——
+   5 秒轮询反复写同样的字符串会把读屏刷爆（每次赋值都可能触发一次播报）。
+   加载失败（alert=true）改用 role=alert + aria-live=assertive，让故障被立刻读出。 */
+function setHealth(text, opts = {}) {
+  const el = $('health');
+  if (!el) return;
+  if (el.textContent !== text) el.textContent = text;
+  el.className = 'pill ' + (opts.alert ? 'bad' : (opts.tone || ''));
+  const role = opts.alert ? 'alert' : 'status';
+  const live = opts.alert ? 'assertive' : 'polite';
+  if (el.getAttribute('role') !== role) el.setAttribute('role', role);
+  if (el.getAttribute('aria-live') !== live) el.setAttribute('aria-live', live);
+}
 // null / undefined / 空串都表示「没有数」，一律显示 —（Number(null)===0 会把「无快照」画成 0.00）。
 function money(n) { if (n === null || n === undefined || n === '') return '—'; const v = Number(n); return Number.isFinite(v) ? v.toFixed(2) : '—'; }
 /* 套餐 planId → 人看的名字。映射表见任务书；未知值原样返回，不猜、不吞。 */

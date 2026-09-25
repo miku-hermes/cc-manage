@@ -133,8 +133,6 @@ td.actions .btn { height: 28px; padding: 0 10px; font-size: var(--fs-xs); margin
 
 .test-note.bad { color: var(--danger); }
 
-.test-note.pending { color: var(--text-tertiary); }
-
 /* ── 表单：focus 环统一到品牌色 ─────────────────────────── */
 label { font-size: var(--fs-sm); color: var(--text-secondary); }
 
@@ -179,8 +177,6 @@ textarea {
 .event-level::before {
   content: ""; width: 8px; height: 8px; border-radius: var(--pill); background: var(--text-tertiary); flex: none;
 }
-
-.event-level.lv-info::before { background: var(--info); }
 
 .event-level.lv-ok::before { background: var(--success); }
 

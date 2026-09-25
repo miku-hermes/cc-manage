@@ -11,3 +11,19 @@ function setTheme(t) {
   document.documentElement.setAttribute('data-theme', t);
   try { localStorage.setItem(THEME_STORE, t); } catch { /* 忽略 */ }
 }
+
+/** 无手动选择时跟随系统：系统主题变化就同步 data-theme（图标与配色一起换）。 */
+function applySystemTheme() {
+  if (storedTheme()) return;                 // 手动选择优先，系统变化不改写
+  if (prefersDark()) document.documentElement.setAttribute('data-theme', 'dark');
+  else document.documentElement.removeAttribute('data-theme');
+}
+/** 监听系统主题变化：只在用户从未手动选择过主题时生效。 */
+function watchSystemTheme() {
+  if (!window.matchMedia) return;
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  if (!mq) return;
+  const onChange = () => applySystemTheme();
+  if (typeof mq.addEventListener === 'function') mq.addEventListener('change', onChange);
+  else if (typeof mq.addListener === 'function') mq.addListener(onChange);
+}

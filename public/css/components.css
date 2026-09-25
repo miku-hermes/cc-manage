@@ -184,7 +184,7 @@
 .modal {
   position: fixed; inset: 0; z-index: 50; display: none;
   align-items: center; justify-content: center; padding: 20px;
-  background: rgba(23, 35, 59, .38);
+  background: var(--scrim);
   -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
 }
 
@@ -251,16 +251,3 @@
 
 .toast.bad { border-color: var(--danger); color: var(--danger-ink); }
 
-/* ── 骨架屏：shimmer 占位 ───────────────────────────────── */
-.skeleton {
-  position: relative; overflow: hidden; border-radius: var(--radius-sm);
-  background: var(--surface-2); color: transparent; min-height: 14px;
-}
-
-.skeleton::after {
-  content: ""; position: absolute; inset: 0; transform: translateX(-100%);
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .75), transparent);
-  animation: skeleton-shimmer 1.4s var(--ease-out) infinite;
-}
-
-@keyframes skeleton-shimmer { to { transform: translateX(100%); } }

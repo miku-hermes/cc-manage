@@ -21,7 +21,23 @@ async function loadKeys() {
 async function loadUsers() {
   const data = await apiJSON('/api/admin/session');
   state.users = data.users || [];
+  state.dashboardPublic = data.dashboardPublic !== false;
   renderUsers();
+  renderPublicNote();
+}
+
+/* 公开面板可见性提示：dashboardPublic=true 时任何访客都能看到账号数与额度快照，
+   对「安全开关有没有关严」是个有价值的提醒；false（隐私模式）则隐藏提示。 */
+function renderPublicNote() {
+  const el = $('public-note');
+  if (!el) return;
+  if (state.dashboardPublic) {
+    el.textContent = '当前公开面板对外可见（PUBLIC_DASHBOARD=1）：任何访客都能看到账号数量与额度快照。如需隐藏，请设 PUBLIC_DASHBOARD=0 后重启。';
+    el.className = 'banner warn';
+  } else {
+    el.textContent = '';
+    el.className = 'banner warn hidden';
+  }
 }
 async function loadAll() {
   try {
@@ -242,6 +258,32 @@ $('p-submit').onclick = () => guard(async () => {
   toast('密码已更新');
 });
 
+// ── 弹窗表单：Enter 提交 → submit 事件（按钮的 onclick 原样保留）──────
+// 原生点击 <button type="submit"> 会先触发出 click（onclick 逻辑）再触发出 submit；
+// 在 form 的 click 上 preventDefault，取消原生提交，避免同一个动作跑两遍。
+const MODAL_FORMS = [
+  ['m-account', 'a-submit'],
+  ['m-rename', 'r-submit'],
+  ['m-user', 'u-submit'],
+  ['m-pass', 'p-submit'],
+  ['m-newkey', 'k-submit'],
+];
+for (const [modalFormId, submitId] of MODAL_FORMS) {
+  const modal = $(modalFormId);
+  const form = modal && modal.querySelector('form');
+  if (!form) continue;
+  form.addEventListener('click', (e) => {
+    const t = e && e.target;
+    const btn = t && t.closest ? t.closest('button[type="submit"]') : null;
+    if (btn && e.preventDefault) e.preventDefault();
+  });
+  form.addEventListener('submit', (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    const btn = $(submitId);
+    if (btn && typeof btn.onclick === 'function') btn.onclick();
+  });
+}
+
 // ── 工具条 / 弹窗入口 / 主题：document 级事件委托 ─────────────────────
 // 不再逐个 $('x').onclick 直绑；用 data 属性 / 目标 id 定位，行为不变。
 document.addEventListener('click', (e) => {
@@ -290,6 +332,7 @@ async function boot() {
 function start() {
   const savedTheme = storedTheme();
   if (savedTheme) document.documentElement.setAttribute('data-theme', savedTheme);
+  watchSystemTheme();                        // 未手动选择时跟随系统主题变化
   boot().catch(showLoadError);
   setInterval(() => {
     if (!document.hidden && document.body.className !== 'gate') loadEvents().catch(() => {});

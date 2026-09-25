@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>cc-manage · 额度面板</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20fill='%23e8668a'%20d='M12%202.6l2.5%206.2%206.2%202.5-6.2%202.5-2.5%206.2-2.5-6.2L3.3%2011.3l6.2-2.5z'/%3E%3C/svg%3E">
+<meta name="description" content="cc-manage 额度面板：Command Code 多账号反代网关的账号额度、可用性与请求 KPI 概览。">
 <style>
   /* 原生控件配色（滚动条 / 表单 / 日期选择器）：基础 + 手动主题分派。
      B2-13 契约要求这块留在 HTML 内联 <style> 里；拆分后仍原样保留。 */
@@ -42,7 +44,7 @@ try {
   </div>
 
   <div class="tools">
-    <label class="search-box" role="button" tabindex="0">
+    <label class="search-box">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
         <circle cx="11" cy="11" r="7"/><path d="M20 20l-3.4-3.4"/>
       </svg>
@@ -68,7 +70,7 @@ try {
         <span id="bal-label" class="bal-label">剩余额度（USD）</span>
       </div>
       <p id="bal-breakdown" class="hero-breakdown aux-text"></p>
-      <p class="hero-sub">网关状态 <span id="health" class="pill">加载中…</span></p>
+      <p class="hero-sub">网关状态 <span id="health" class="pill" role="status" aria-live="polite">加载中…</span></p>
       <p class="hero-meta aux-text"><span id="upstream"></span><span id="updated"></span><span id="cadence" class="hero-cadence"></span></p>
     </div>
     <div class="hero-aside">
@@ -78,6 +80,7 @@ try {
       </div>
       <div id="date" class="hero-date"></div>
       <div class="hero-tokens">累计 token <b id="tokens">0</b></div>
+      <button id="refresh-quota" class="btn refresh-quota" type="button">刷新额度</button>
     </div>
   </section>
 

@@ -355,7 +355,18 @@ test('B2-16：.bar-group 带 aria-label（同 title 文案）', async () => {
   const shim = dom(INDEX_HTML);
   const page = await runInlineScript(INDEX_HTML, shim);
   const out = page.bar('本周窗口', { used: 1, cap: 2, percent: 50, resetAt: 0 }, {});
-  assert.match(out, /<div class="bar-group" title="本周窗口：已用 1\.00 \/ 2\.00" aria-label="本周窗口：已用 1\.00 \/ 2\.00">/);
+  // 断言改成「属性顺序无关、逐属性核对同一个起始标签」：HTML 属性顺序没有语义，
+  // 旧正则把 class→title→aria-label→> 的书写顺序钉死，任何在中间插入属性的合法改动
+  // （如本批次为让 aria-label 真正进无障碍树而补的 role="group"）都会被误判为失败 ——
+  // 那是测试在断言实现细节而非行为。新写法不依赖顺序，且仍要求 class / title /
+  // aria-label / role 四项同时落在同一个 .bar-group 标签内，因此是更强而非更弱的断言。
+  const groups = out.match(/<div class="bar-group"[^>]*>/g) || [];
+  assert.equal(groups.length, 1, '恰好一个 .bar-group 起始标签');
+  const tag = groups[0];
+  assert.match(tag, /class="bar-group"/, '保留 bar-group 类');
+  assert.match(tag, /title="本周窗口：已用 1\.00 \/ 2\.00"/, '金额进 title（鼠标悬停可见）');
+  assert.match(tag, /aria-label="本周窗口：已用 1\.00 \/ 2\.00"/, '金额同步进 aria-label（触屏/键盘可达）');
+  assert.match(tag, /role="group"/, 'aria-label 需要 role 才进无障碍树（role=generic 禁止 aria-label）');
 });
 
 // ── 17：标签条渐隐由状态类控制 ────────────────────────────────────

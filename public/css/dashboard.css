@@ -33,17 +33,6 @@ body::before {
 
 .tools { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
 
-.btn {
-  display: inline-flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer;
-  height: 36px; min-height: 34px; padding: 0 14px; border-radius: var(--radius-sm);
-  border: 1px solid var(--border-strong); background: var(--surface-1); color: var(--text-secondary);
-  font-size: var(--fs-sm);
-  transition: color var(--dur-150) var(--ease-out), border-color var(--dur-150) var(--ease-out),
-    background var(--dur-150) var(--ease-out), transform var(--dur-150) var(--ease-out);
-}
-
-.btn:disabled { opacity: .5; cursor: progress; }
-
 .icon-btn {
   display: grid; place-items: center; cursor: pointer; width: 36px; height: 36px;
   border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
@@ -57,6 +46,10 @@ body::before {
 .icon-btn svg { width: 16px; height: 16px; }
 
 .hint { font-size: var(--fs-xs); color: var(--warning); }
+
+.hint.bad { color: var(--danger); }
+
+.refresh-quota { margin-top: 10px; }
 
 /* ── 主区域（所有块左边缘对齐同一条竖线）────────────────── */
 main {
@@ -318,8 +311,6 @@ main {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0;
 }
 
-.card-display { font-size: var(--fs-xs); font-weight: 400; color: var(--text-secondary); }
-
 /* 计划标签：mono 小 pill，浅底，取 plan.planId 派生的友好名 */
 .plan-pill {
   font-size: var(--fs-2xs); font-weight: 500; color: var(--text-secondary);
@@ -505,5 +496,3 @@ body.is-intro .bar > i, body.is-intro .credits-bar > i { animation: bar-grow .7s
   body.is-intro .bar > i, body.is-intro .credits-bar > i, #cards.is-reflow .card { animation: none; }
 }
 
-/* 共用令牌在 tokens.css；这里恢复前台专属的阴影分层（后台用更深的 elevation） */
-:root { --shadow-lift: 0 8px 22px rgba(232, 102, 138, .16); }

@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>cc-manage · 后台</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20fill='%23e8668a'%20d='M12%202.6l2.5%206.2%206.2%202.5-6.2%202.5-2.5%206.2-2.5-6.2L3.3%2011.3l6.2-2.5z'/%3E%3C/svg%3E">
+<meta name="description" content="cc-manage 后台：管理 Command Code 账号、API 客户端 key 与管理员账号。">
 <style>
   /* 原生控件配色（滚动条 / 表单 / 日期选择器）：基础 + 手动主题分派。
      B2-13 契约要求这块留在 HTML 内联 <style> 里；拆分后仍原样保留。 */
@@ -57,6 +59,7 @@ try {
 
 <main class="gate-main" id="gate-main" style="display:none">
   <section class="gate-card">
+    <form id="gate-form" novalidate>
     <div class="gate-logo" aria-hidden="true">
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.6l2.5 6.2 6.2 2.5-6.2 2.5-2.5 6.2-2.5-6.2L3.3 11.3l6.2-2.5z"/></svg>
     </div>
@@ -79,6 +82,7 @@ try {
       <button class="btn primary" type="button" id="gate-submit">登录</button>
     </div>
     <div class="gate-err hidden" id="gate-err"></div>
+    </form>
   </section>
 </main>
 
@@ -112,6 +116,7 @@ try {
     <button id="load-retry" class="btn" type="button">重试</button>
   </div>
   <div id="readonly" class="banner hidden"></div>
+  <div id="public-note" class="banner warn hidden"></div>
   <div id="autherr" class="banner hidden"></div>
 
   <!-- CC 账号（Command Code key）管理 -->
@@ -215,6 +220,7 @@ try {
 <!-- 新增 CC 账号 -->
 <div class="modal" id="m-account">
   <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="m-account-title">
+    <form>
     <h3 id="m-account-title">新增 CC 账号</h3>
     <p class="sub">填备注名 + Command Code API key（<span class="mono">user_…</span>）。提交后不回显 key，列表只显示 keyId / keyPrefix。</p>
     <div class="field">
@@ -228,14 +234,16 @@ try {
     <div class="err-text" id="a-err"></div>
     <div class="dialog-actions">
       <button class="btn" type="button" data-close="m-account">取消</button>
-      <button class="btn primary" type="button" id="a-submit">创建</button>
+      <button class="btn primary" type="submit" id="a-submit">创建</button>
     </div>
+    </form>
   </div>
 </div>
 
 <!-- 改备注 -->
 <div class="modal" id="m-rename">
   <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="m-rename-title">
+    <form>
     <h3 id="m-rename-title">修改备注</h3>
     <p class="sub" id="r-sub"></p>
     <div class="field">
@@ -245,14 +253,16 @@ try {
     <div class="err-text" id="r-err"></div>
     <div class="dialog-actions">
       <button class="btn" type="button" data-close="m-rename">取消</button>
-      <button class="btn primary" type="button" id="r-submit">保存</button>
+      <button class="btn primary" type="submit" id="r-submit">保存</button>
     </div>
+    </form>
   </div>
 </div>
 
 <!-- 新增管理员 -->
 <div class="modal" id="m-user">
   <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="m-user-title">
+    <form>
     <h3 id="m-user-title">新增管理员</h3>
     <p class="sub">密码用 scrypt 加盐哈希保存，文件里不含明文。</p>
     <div class="field">
@@ -266,14 +276,16 @@ try {
     <div class="err-text" id="u-err"></div>
     <div class="dialog-actions">
       <button class="btn" type="button" data-close="m-user">取消</button>
-      <button class="btn primary" type="button" id="u-submit">创建</button>
+      <button class="btn primary" type="submit" id="u-submit">创建</button>
     </div>
+    </form>
   </div>
 </div>
 
 <!-- 修改密码 -->
 <div class="modal" id="m-pass">
   <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="m-pass-title">
+    <form>
     <h3 id="m-pass-title">修改密码</h3>
     <p class="sub" id="p-sub"></p>
     <div class="field hidden" id="p-current-field">
@@ -287,14 +299,16 @@ try {
     <div class="err-text" id="p-err"></div>
     <div class="dialog-actions">
       <button class="btn" type="button" data-close="m-pass">取消</button>
-      <button class="btn primary" type="button" id="p-submit">保存</button>
+      <button class="btn primary" type="submit" id="p-submit">保存</button>
     </div>
+    </form>
   </div>
 </div>
 
 <!-- 生成客户端 key -->
 <div class="modal" id="m-newkey">
   <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="m-newkey-title">
+    <form>
     <h3 id="m-newkey-title">生成新 key</h3>
     <p class="sub">key 由服务端生成（sk-cg- + 32 字节随机），只显示一次。</p>
     <div id="k-form">
@@ -316,8 +330,9 @@ try {
     </div>
     <div class="dialog-actions">
       <button class="btn" type="button" data-close="m-newkey">关闭</button>
-      <button class="btn primary" type="button" id="k-submit">生成</button>
+      <button class="btn primary" type="submit" id="k-submit">生成</button>
     </div>
+    </form>
   </div>
 </div>
 
@@ -325,7 +340,6 @@ try {
 
 
 <script src="js/admin-utils.js"></script>
-<script src="js/anim.js"></script>
 <script src="js/admin-api.js"></script>
 <script src="js/admin-state.js"></script>
 <script src="js/theme.js"></script>

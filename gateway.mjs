@@ -1460,6 +1460,13 @@ export async function startGateway(overrides = {}) {
       return res.end(html);
     }
 
+    // 图标：两页 HTML 已用内联 data-URI <link rel="icon">，这里再兜底 /favicon.ico，
+    // 避免浏览器在 <link> 未被识别时直接请求该路径而吃一个 404。
+    if (req.method === 'GET' && url.pathname === '/favicon.ico') {
+      res.writeHead(204, { 'cache-control': 'public, max-age=86400' });
+      return res.end();
+    }
+
     // 面板静态资源：public 下的 css/js（同源，无构建）；CSP 头已由 applySecurityHeaders 统一加上
     if (req.method === 'GET' && (url.pathname.startsWith('/css/') || url.pathname.startsWith('/js/'))) {
       return serveStatic(res, url.pathname);

@@ -1,6 +1,6 @@
 const state = {
-  auth: null, writable: true, accounts: [], keys: [], users: [], events: [], tests: [],
-  level: '', readonlyReason: '', mode: 'login',
+  auth: null, writable: true, accounts: [], keys: [], users: [], events: [],
+  level: '', readonlyReason: '', mode: 'login', dashboardPublic: null,
 };
 let renameTarget = null;
 let passTarget = null;
