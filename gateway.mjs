@@ -1495,8 +1495,11 @@ export async function startGateway(overrides = {}) {
     // B24e：HEAD 与 GET 走同一分支（HEAD 只看状态码/头部，Node 会自动吞掉响应体）。
     //   之前只认 GET，`curl -sI /assets/<hash>.css` 会漏到结尾的 API 404（52 字节 JSON），
     //   与 GET 200 不一致。条件收敛成「GET 或 HEAD」即可，不碰白名单 / 穿越 / 缓存策略。
+    // B38：/img/ 放品牌 logo 等无内容哈希的图片 —— 不命中 serveStatic 的 immutable 分支，
+    // 走 no-cache，因此换图立即生效（/assets/ 的文件名带哈希，放那儿换图不生效）。
     const isStaticAsset = url.pathname.startsWith('/css/') || url.pathname.startsWith('/js/')
-      || url.pathname.startsWith('/vendor/') || url.pathname.startsWith('/assets/');
+      || url.pathname.startsWith('/vendor/') || url.pathname.startsWith('/assets/')
+      || url.pathname.startsWith('/img/');
     if ((req.method === 'GET' || req.method === 'HEAD') && isStaticAsset) {
       return serveStatic(res, url.pathname);
     }
@@ -1709,10 +1712,12 @@ export async function startGateway(overrides = {}) {
     return res.end(PANEL_MISSING_HTML);
   }
 
-  // 静态资源 MIME：只放行面板用到的两种扩展名
+  // 静态资源 MIME：只放行面板真正用到的扩展名。
+  // .png 是顶栏品牌 logo（public/img/miku.png，照抄参考主题 komari-mikus 的图）。
   const STATIC_MIME = {
     '.css': 'text/css; charset=utf-8',
     '.js': 'text/javascript; charset=utf-8',
+    '.png': 'image/png',
   };
 
   /**

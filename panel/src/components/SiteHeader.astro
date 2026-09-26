@@ -1,13 +1,13 @@
 ---
 /* 站点头部：品牌 + 搜索 + 视图切换（网格/列表）+ 主题 + 后台入口。
    search=false 时（趋势页）不渲染搜索框；viewSwitch=false 时（趋势/后台页）不渲染视图切换。 */
-import { Search, Moon, Sun, Lock, Activity, LayoutGrid, List } from '@lucide/astro';
+import { Search, Moon, Sun, Lock, LayoutGrid, List } from '@lucide/astro';
 const { search = true, viewSwitch = false, view = 'grid' } = Astro.props;
 ---
 <header class="header navbar sticky top-0 z-30 min-h-14 border-b border-base-300 bg-base-100/95 backdrop-blur-md shadow-sm p-0">
   <div class="navbar-row mx-auto flex w-full max-w-6xl items-center px-4 2xl:max-w-[1600px]">
   <div class="navbar-start gap-2 px-0">
-    <span class="logo text-primary" aria-hidden="true"><Activity size={22} /></span>
+    <a class="logo" href="/" aria-label="返回首页"><img class="logo-icon" src="/img/miku.png" alt="" width="36" height="36"></a>
     <span class="brand-name text-lg font-bold tracking-tight">cc-manage</span>
   </div>
   <div class="navbar-end tools flex items-center gap-1 px-2">

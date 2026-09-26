@@ -501,3 +501,21 @@
 @media (max-width: 639px) {
   .hero-sub .pill { padding: .15rem .45rem; font-size: .7rem; letter-spacing: 0; }
 }
+
+/* ── 顶栏品牌 logo（照抄参考主题 komari-mikus 的 .logo / .logo-icon 规则）──────────
+   图片是主题自带的那张 miku.png，放在 public/img/（不是 public/assets/）：
+   /assets/ 走 immutable 长缓存，而这张图文件名没有内容哈希，放那儿以后换图不会生效。
+   36×36 + object-fit:contain 是关键：原图 474×355（4:3 横版），不加 contain 会被压扁。 */
+.logo { display: flex; align-items: center; gap: .625rem; flex: none; }
+.logo-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-sm);
+  object-fit: contain;
+  flex-shrink: 0;
+  transition: transform var(--dur-150, .15s) ease;
+}
+.logo:hover .logo-icon { transform: rotate(-10deg) scale(1.1); }
+@media (max-width: 639px) {
+  .logo-icon { width: 28px; height: 28px; }
+}
