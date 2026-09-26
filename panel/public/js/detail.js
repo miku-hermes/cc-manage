@@ -47,15 +47,15 @@ function openAccountDetail(account, trigger) {
   const parts = [['月度',quota.credits?.monthlyCredits],['购买',quota.credits?.purchasedCredits],['赠送',quota.credits?.freeCredits]].filter(x=>Number.isFinite(Number(x[1]))&&Number(x[1])>0);
   const credits = document.getElementById('m-detail-credits'); credits.replaceChildren(); credits.setAttribute('aria-label', parts.map(x=>x[0]+' '+detailMoney(Number(x[1]))).join(' · '));
   const total = parts.reduce((sum,x)=>sum+Number(x[1]),0);
-  for (const [label,value] of parts) { const seg=document.createElement('span');seg.className='seg-'+({月度:'month',购买:'buy',赠送:'gift'}[label]);seg.style.width=(Number(value)/total*100)+'%';seg.title=label+' '+detailMoney(Number(value));credits.appendChild(seg); }
+  for (const [label,value] of parts) { const kind={月度:'month',购买:'buy',赠送:'gift'}[label]; const seg=document.createElement('i');seg.className='seg-'+kind+' bg-'+({month:'primary',buy:'secondary',gift:'accent'}[kind]);seg.style.width=(Number(value)/total*100)+'%';seg.title=label+' '+detailMoney(Number(value));credits.appendChild(seg); }
   detailText('m-detail-credit-label', parts.length ? parts.map(x=>x[0]+' '+detailMoney(Number(x[1]))).join(' · ') : '额度构成无数据');
   const windows=document.getElementById('m-detail-windows'); windows.replaceChildren(detailWindow('5 小时',quota.fiveHour,Date.now()),detailWindow('本周',quota.weekly,Date.now()),detailWindow('本月',quota.monthly,Date.now()));
-  detailHistory=[]; detailText('m-detail-burn','数据不足'); detailText('m-detail-updated', '额度更新于 ' + (Number.isFinite(Number(quota.fetchedAt)) ? Math.max(0,Math.floor((Date.now()-Number(quota.fetchedAt))/1000))+' 秒前' : '时间无数据'));
+  detailHistory=[]; detailText('m-detail-chart-empty','数据不足'); detailText('m-detail-burn','数据不足'); detailText('m-detail-updated', '额度更新于 ' + (Number.isFinite(Number(quota.fetchedAt)) ? Math.max(0,Math.floor((Date.now()-Number(quota.fetchedAt))/1000))+' 秒前' : '时间无数据'));
   if (trigger && trigger.focus) trigger.focus();
   openModal('m-detail');
   const key=String(account.keyId||'');
   apiFetch('/api/history/accounts').then(r=>r.json()).then(body=>{
-    const item=body?.accounts?.find(x=>String(x.keyId)===key); if(!item)return;
+    const item=body?.accounts?.find(x=>String(x.keyId)===key); if(!item){detailHistory=[];paintDetailChart();return;}
     detailHistory=Array.isArray(item.samples)?item.samples.filter(x=>Number.isFinite(Number(x.t))&&Number.isFinite(Number(x.remaining))):[];
     if(item.burnPerHour!=null&&item.etaHours!=null&&Number.isFinite(Number(item.burnPerHour))&&Number.isFinite(Number(item.etaHours))) detailText('m-detail-burn',`最近平均消耗 ${detailMoney(Number(item.burnPerHour))}/小时 · 按此速度预计可用约 ${Number(item.etaHours).toFixed(1)} 小时（估算）`);
     else detailText('m-detail-burn','数据不足');

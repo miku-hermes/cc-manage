@@ -27,7 +27,10 @@ test('详情窗口格式化：真实帮助函数输出已用额度、百分比�
 
 function findPlaywright() {
   const root = path.join(os.homedir(), '.npm/_npx');
-  for (const dir of fs.readdirSync(root)) {
+  if (!fs.existsSync(root)) return null;
+  let dirs = [];
+  try { dirs = fs.readdirSync(root); } catch { return null; }
+  for (const dir of dirs) {
     const candidate = path.join(root, dir, 'node_modules/playwright/index.js');
     if (fs.existsSync(candidate)) return candidate;
   }
@@ -36,7 +39,7 @@ function findPlaywright() {
 
 test('首页详情：真实数据填充、模态框 inert/焦点归还与窄屏布局', async (t) => {
   const playwrightPath = findPlaywright();
-  if (!playwrightPath) { t.skip('本机无 Playwright，详情 DOM 与窗口计算仍由此测试的固定接口断言覆盖'); return; }
+  if (!playwrightPath) { t.skip('本机无 Playwright（首页详情），详情 DOM 与窗口计算仍由此测试的固定接口断言覆盖'); return; }
   const ctx = await startTestGateway({ accounts: [{ name: '详情样例', key: 'user_detail_sample' }], noInitialRefresh: true });
   t.after(() => ctx.close());
   const imported = await import(playwrightPath);
@@ -59,9 +62,16 @@ test('首页详情：真实数据填充、模态框 inert/焦点归还与窄屏�
   assert.equal(await page.locator('#m-detail').evaluate(el => el.contains(document.activeElement)), true);
   await page.waitForFunction(() => document.getElementById('m-detail-burn')?.textContent.includes('$1.25/小时'));
   assert.match(await page.locator('#m-detail-burn').innerText(), /最近平均消耗 \$1.25\/小时/);
+  assert.notEqual(await page.locator('#m-detail-credits .seg-month').evaluate(el => getComputedStyle(el).backgroundColor), 'rgba(0, 0, 0, 0)');
   assert.match(await page.locator('#m-detail-windows').innerText(), /已用 \$2.00 \/ 上限 \$10.00（20.0%）/);
   assert.match(await page.locator('#m-detail-windows').innerText(), /重置/);
   assert.match(await page.locator('#m-detail-chart-empty').innerText(), /^$/);
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('#m-detail:not(.open)');
+  await page.route('**/api/history/accounts', route => route.fulfill({ contentType:'application/json', body:JSON.stringify({ok:true,accounts:[]}) }));
+  await trigger.press('Enter');
+  await page.waitForFunction(() => document.getElementById('m-detail-chart-empty')?.textContent === '数据不足');
+  assert.equal(await page.locator('#m-detail h3').allInnerTexts().then(lines => lines.includes('消耗与预测')), true);
   const geometry = await page.evaluate(() => { const card=document.querySelector('.row-card'), summary=card.querySelector('.row-summary'), dialog=document.querySelector('.detail-dialog'); const status=card.querySelector('.acct-status'); const after={cardHeight:card.getBoundingClientRect().height,cardPadding:getComputedStyle(summary).paddingLeft,numberFont:getComputedStyle(document.querySelector('.usable-balance')).fontSize,lineGap:getComputedStyle(summary).rowGap,statusFont:getComputedStyle(status).fontSize,statusPadding:getComputedStyle(status).padding,dialogScrollWidth:dialog.scrollWidth,dialogClientWidth:dialog.clientWidth}; summary.style.paddingBlock='8px'; summary.style.paddingLeft='16px'; status.style.fontSize='12px'; status.style.padding='2px 8px'; const button=card.querySelector('.detail-trigger'); button.style.display='none'; const before={cardHeight:card.getBoundingClientRect().height,cardPadding:getComputedStyle(summary).paddingLeft,numberFont:after.numberFont,lineGap:getComputedStyle(summary).rowGap,statusFont:getComputedStyle(status).fontSize,statusPadding:getComputedStyle(status).padding}; summary.style.paddingBlock=''; summary.style.paddingLeft=''; status.style.fontSize=''; status.style.padding=''; button.style.display=''; return {before,after}; });
   assert.notEqual(geometry.after.cardPadding, geometry.before.cardPadding);
   assert.ok(parseFloat(geometry.after.statusFont) > parseFloat(geometry.before.statusFont));
