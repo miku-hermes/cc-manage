@@ -2,11 +2,14 @@
 /* 状态胶囊（daisyUI badge）。variant="health"：Hero 的网关状态，role=status / aria-live=polite。
    默认 variant="status"：账号行右侧状态徽章，结构里只留 aria-hidden 的色点，文案由 JS 追加。
    B24e：类名从 `status` 改为 `acct-status` —— `status` 是 daisyUI 自带组件（8×8 方点 +
-   aspect-ratio:1），撞名会把徽章钉成正方形、文字换行溢出到卡片外。 */
+   aspect-ratio:1），撞名会把徽章钉成正方形、文字换行溢出到卡片外。
+   B24i：min-w-[var(--status-col,0px)] 是状态列的统一宽度地板（值由 render-cards.js 的
+   syncStatusColumn 实测写入），四行状态徽章等宽 —— 左右边缘都对齐；badge 自带
+   justify-content:center，文案在列内居中且不裁断。 */
 const { variant = 'status', id = '', text = '加载中…' } = Astro.props;
 ---
 {variant === 'health' ? (
   <span id={id} class="pill badge badge-ghost" role="status" aria-live="polite">{text}</span>
 ) : (
-  <span class="acct-status badge badge-ghost shrink-0 whitespace-nowrap" data-f="account-status"><span class="dot" aria-hidden="true"></span></span>
+  <span class="acct-status badge badge-ghost shrink-0 whitespace-nowrap min-w-[var(--status-col,0px)]" data-f="account-status"><span class="dot" aria-hidden="true"></span></span>
 )}

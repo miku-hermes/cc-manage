@@ -97,12 +97,24 @@ function creditsTotals(accounts) {
   };
 }
 
+/* Hero 的**唯一**百分比口径：环内读数与左侧旁词「本月已用 X%」共用这一个格式化结果，
+   两处逐字符相同 —— 不再出现「环里 63% / 旁边 62.6%」这种一件事两种写法。
+   一位小数（不吞精度，与卡片进度条的 pctText 口径一致）；夹紧到 [0,100]（环本身画不出
+   更多，旁词也不谎报超过上限）；≥99.95% 进位成「100%」—— 6 字符（100.0%）在 52px 的环里
+   会压到描边，5 字符放得下。 */
+function heroPctText(p) {
+  const v = Number(p);
+  if (p === null || p === undefined || !Number.isFinite(v)) return '—';
+  const c = Math.max(0, Math.min(100, v));
+  return c >= 99.95 ? '100%' : c.toFixed(1) + '%';
+}
+
 /** Hero 构成明细：月度/购买/赠送求和 + 本月已用加权百分比（只算 cap>0 的账号）。 */
 function breakdownText(accounts) {
   const t = creditsTotals(accounts);
   if (!t.count) return '尚未获取额度快照';
   // 口径写清：剩余额度是上方的大数字；这一行是「本月已用百分比 + 月度池构成」。
-  const used = t.cap > 0 ? '本月已用 ' + pctText(t.percent) : '本月用量待同步';
+  const used = t.cap > 0 ? '本月已用 ' + heroPctText(t.percent) : '本月用量待同步';
   // 恒为 0 的额度构成不占位（购买 0 / 赠送 0 直接不出现）。
   const parts = [];
   if (t.monthly > 0) parts.push('月度 $' + money(t.monthly));
@@ -170,15 +182,17 @@ function render(d) {
   $('bal-label').textContent = '剩余额度（USD）' + (unsynced ? ' · 含 ' + unsynced + ' 个未同步账号' : '');
   // 余额下方的构成明细（聚合口径见 breakdownText）。
   $('bal-breakdown').textContent = breakdownText(accounts);
-  // daisyUI radial-progress：本月额度已用的单一图形表达（读数仍在 breakdown 文字里）。
+  // daisyUI radial-progress：本月额度已用的单一图形表达（读数与 breakdown 文字共用
+  // heroPctText 的同一个字符串，不再一个取整、一个一位小数）。
   const totals = creditsTotals(accounts);
   const gauge = $('usage-gauge');
   if (gauge) {
     if (totals.cap > 0 && Number.isFinite(totals.percent)) {
       const pct = Math.max(0, Math.min(100, Math.round(totals.percent)));
+      const pctLabel = heroPctText(totals.percent);   // 与 breakdownText 同一口径（逐字符相同）
       gauge.setAttribute('style', '--value:' + pct);
-      gauge.textContent = pct + '%';
-      gauge.setAttribute('aria-label', '本月额度已用 ' + pct + '%');
+      gauge.textContent = pctLabel;
+      gauge.setAttribute('aria-label', '本月额度已用 ' + pctLabel);
     } else {
       gauge.setAttribute('style', '--value:0');
       gauge.textContent = '—';

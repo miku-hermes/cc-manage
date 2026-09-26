@@ -185,7 +185,9 @@ function fillHead(root, a) {
 function fillStatus(root, st) {
   const status = field(root, 'account-status');
   if (!status) return;
-  status.className = 'acct-status badge shrink-0 whitespace-nowrap ' + toneBadge(st.tone) + ' is-' + st.tone;
+  // B24i：min-w 把 --status-col（全表最宽状态徽章的实测盒宽）兜成地板 —— 四行状态列等宽，
+  // 文案由 daisyUI badge 自带的 justify-content:center 在列内居中。
+  status.className = 'acct-status badge shrink-0 whitespace-nowrap min-w-[var(--status-col,0px)] ' + toneBadge(st.tone) + ' is-' + st.tone;
   const dot = status.querySelector('.dot');
   for (const c of [...status.children]) if (c !== dot) status.removeChild(c);
   status.appendChild(document.createTextNode(st.t));
@@ -245,6 +247,30 @@ function syncNameColumn() {
 }
 window.syncNameColumn = syncNameColumn;
 
+/** B24i：状态列统一宽度 —— 状态文案长短差很多（「月额度已用完」6 字 vs「可用」2 字），
+    内容自适应时中间那列的右边缘会参差 40 多像素。这里量出全表**最宽状态徽章的盒宽**
+    （getBoundingClientRect = border-box，min-width 也按 border-box 生效，不会因为 1px
+    边框再差出 2px）写进 #cards 的 --status-col；模板用 min-w-[var(--status-col,0px)] 把
+    这个宽度兜成地板：每行徽章等宽 → 左右边缘都对齐，文案完整不裁、不换行（min-width 只
+    加地板，不封顶，最长文案天然放得下）。
+    宽度是量出来的「本表最长状态文案所需宽」，不是写死的像素值。
+    没有布局引擎（scrollWidth/rect 恒 0）时量不到值，保持内容自适应。 */
+function syncStatusColumn() {
+  const host = $('cards');
+  if (!host || !host.style || typeof host.style.setProperty !== 'function') return;
+  const badges = host.querySelectorAll('.row-card .acct-status');
+  if (!badges.length) { host.style.setProperty('--status-col', '0px'); return; }
+  host.style.setProperty('--status-col', '0px');     // 先归零：状态变短后列要能缩回去
+  let max = 0;
+  for (const b of badges) {
+    const rect = typeof b.getBoundingClientRect === 'function' ? b.getBoundingClientRect() : null;
+    max = Math.max(max, rect ? Number(rect.width) || 0 : 0, Number(b.scrollWidth) || 0);
+  }
+  if (max <= 0) return;
+  host.style.setProperty('--status-col', Math.ceil(max) + 'px');
+}
+window.syncStatusColumn = syncStatusColumn;
+
 function renderCards() {
   if (!state.data) return;
   const all = state.data.accounts;
@@ -257,6 +283,7 @@ function renderCards() {
       : '账号池为空。请在 accounts.json 里配置账号，或用 CC_ACCOUNTS 环境变量注入。';
     $('cards').innerHTML = emptyCard(msg);
     syncNameColumn();
+    syncStatusColumn();
     syncTagMasks();
     return;
   }
@@ -266,6 +293,7 @@ function renderCards() {
   }
   $('cards').innerHTML = list.map((a, i) => card(a, i === list.length - 1 && list.length % 2 === 1, i)).join('');
   syncNameColumn();
+  syncStatusColumn();
   for (const el of document.querySelectorAll('#cards .tags[data-key-id]')) {
     const key = el.getAttribute('data-key-id');
     if (scrollOf.has(key)) el.scrollLeft = scrollOf.get(key);

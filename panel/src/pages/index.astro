@@ -52,12 +52,16 @@ document.addEventListener('toggle', (e) => {
   }
 }, true);
 $('cards').addEventListener('scroll', syncTagMasks, true);
-/* 名称列统一宽度（syncNameColumn 在 render-cards.js）：窗口尺寸 / 字体加载会改变文本像素宽，
-   重算一次才能保持徽章起点对齐。防抖，避免拖动窗口时反复重排。 */
+/* 名称列 / 状态列统一宽度（syncNameColumn、syncStatusColumn 在 render-cards.js）：
+   窗口尺寸 / 字体加载会改变文本像素宽，重算一次才能保持徽章起点与状态列左右边缘对齐。
+   防抖，避免拖动窗口时反复重排。 */
 let nameColTimer = null;
 function scheduleNameColumn() {
   if (nameColTimer) clearTimeout(nameColTimer);
-  nameColTimer = setTimeout(() => { if (typeof syncNameColumn === 'function') syncNameColumn(); }, 120);
+  nameColTimer = setTimeout(() => {
+    if (typeof syncNameColumn === 'function') syncNameColumn();
+    if (typeof syncStatusColumn === 'function') syncStatusColumn();
+  }, 120);
 }
 addEventListener('resize', scheduleNameColumn);
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(scheduleNameColumn);

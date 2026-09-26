@@ -18,7 +18,9 @@ import { RefreshCw, TrendingUp, ChevronRight } from '@lucide/astro';
       <span id="bal-label" class="bal-label text-sm text-base-content/70">剩余额度（USD）</span>
     </div>
     <div class="hero-usage flex items-center gap-3">
-      <span id="usage-gauge" class="radial-progress text-primary [--size:3.25rem]" style="--value:0" role="progressbar" aria-label="本月额度已用 0%">0%</span>
+      <!-- B24i：环内读数与左侧旁词共用 render-hero.js 的 heroPctText 同一个字符串（占位值
+           也按同一口径写成一位小数），不再一个取整、一个一位小数。 -->
+      <span id="usage-gauge" class="radial-progress text-primary [--size:3.25rem]" style="--value:0" role="progressbar" aria-label="本月额度已用 0.0%">0.0%</span>
       <p id="bal-breakdown" class="hero-breakdown aux-text text-sm text-base-content/70"></p>
     </div>
     <p class="hero-sub text-sm">网关状态 <StatusPill variant="health" id="health" /></p>
