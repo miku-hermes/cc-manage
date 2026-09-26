@@ -142,6 +142,12 @@ const ALLOWED_SKIPS = [
     why: 'deploy.test.mjs：需要本机装了 docker compose；CI 的 smoke job 覆盖这条路径。',
   },
   {
+    reason: '本机无 Playwright（首页详情）',
+    max: 1,
+    why: 'detail-modal.test.mjs 的真实弹窗与窄屏几何断言需要 Playwright + Chromium；'
+      + '不依赖浏览器的 detailWindow 固定输入/输出与无数据断言仍在任何环境运行。',
+  },
+  {
     reason: '本机无 Playwright',
     max: 1,
     why: 'b25-narrow-overflow.test.mjs 的真机断言需要 Playwright + Chromium，CI runner 未安装，故必须跳过。'

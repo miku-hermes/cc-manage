@@ -187,7 +187,7 @@ function fillStatus(root, st) {
   if (!status) return;
   // B24i：min-w 把 --status-col（全表最宽状态徽章的实测盒宽）兜成地板 —— 四行状态列等宽，
   // 文案由 daisyUI badge 自带的 justify-content:center 在列内居中。
-  status.className = 'acct-status badge shrink-0 whitespace-nowrap min-w-[var(--status-col,0px)] ' + toneBadge(st.tone) + ' is-' + st.tone;
+  status.className = 'acct-status badge shrink-0 whitespace-nowrap min-w-[var(--status-col,0px)] px-2.5 py-1 text-sm ' + toneBadge(st.tone) + ' is-' + st.tone;
   const dot = status.querySelector('.dot');
   for (const c of [...status.children]) if (c !== dot) status.removeChild(c);
   status.appendChild(document.createTextNode(st.t));
@@ -203,6 +203,12 @@ function card(a, wideLast = false, index = 0) {
   node.className = 'card row-card collapse collapse-arrow border border-base-300 bg-base-100 is-' + st.tone
     + (st.tone === 'bad' ? ' is-crit' : '') + (wideLast ? ' card-wide' : '');
   node.setAttribute('style', '--i:' + index);
+  node.setAttribute('data-key-id', String(a.keyId ?? ''));
+  const detailButton = field(node, 'detail-trigger');
+  if (detailButton) {
+    detailButton.setAttribute('aria-label', '查看 ' + (a.name || a.keyPrefix || shortId(a.keyId) || '未命名账号') + ' 详情');
+    detailButton.setAttribute('data-focus-return', String(index));
+  }
 
   fillHead(node, a);
   fillStatus(node, st);
@@ -273,6 +279,7 @@ window.syncStatusColumn = syncStatusColumn;
 
 function renderCards() {
   if (!state.data) return;
+  if (document.querySelector && document.querySelector('#m-detail.open')) return;
   const all = state.data.accounts;
   const f = state.filter.trim().toLowerCase();
   const byView = all.filter(inViewFilter);

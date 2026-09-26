@@ -1,5 +1,6 @@
 // ── 弹窗：打开 / 关闭 + 背景 inert + Tab 焦点陷阱 + Esc 焦点归还（B2-15 / B19）
 let modalFocusReturn = null;
+let modalFocusReturnKey = null;
 
 // 打开弹窗前给「背景」（body 里除 .modal 外的所有元素）加 inert，
 // 记下每个元素原本是否已有 inert，关闭时逐一还原。键盘 / 辅助技术都进不到背景。
@@ -55,12 +56,13 @@ function dialogOf(modalEl) {
 function focusableIn(root) {
   if (!root || !root.querySelectorAll) return [];
   // 用 '*' 取全部后代再过滤：顺序严格按文档顺序（垫片的逗号选择器会按分组返回，不可依赖）。
-  return root.querySelectorAll('*').filter(isFocusable);
+  return Array.from(root.querySelectorAll('*')).filter(isFocusable);
 }
 
 function openModal(id) {
   // 打开前记下焦点，关闭时归还 —— 键盘 / 屏幕阅读器用户不会丢上下文。
   modalFocusReturn = document.activeElement && document.activeElement.focus ? document.activeElement : null;
+  modalFocusReturnKey = modalFocusReturn && modalFocusReturn.getAttribute ? modalFocusReturn.getAttribute('data-focus-return') : null;
   setBackgroundInert(true);
   const modal = $(id);
   modal.classList.add('open', 'modal-open');
@@ -74,8 +76,13 @@ function closeModal(id) {
   if (modal) modal.classList.remove('open', 'modal-open');
   if (document.querySelectorAll('.modal.open').length) return;   // 还有别的弹窗开着
   setBackgroundInert(false);
-  if (modalFocusReturn && modalFocusReturn.focus) modalFocusReturn.focus();
+  if (modalFocusReturn && modalFocusReturn.focus && modalFocusReturn.isConnected !== false) modalFocusReturn.focus();
+  else if (modalFocusReturnKey) {
+    const replacement = Array.from(document.querySelectorAll('[data-focus-return]')).find((el) => el.getAttribute('data-focus-return') === modalFocusReturnKey);
+    if (replacement && replacement.focus) replacement.focus();
+  }
   modalFocusReturn = null;
+  modalFocusReturnKey = null;
 }
 
 /** 一次性关掉全部弹窗并还原背景 inert（登出 / session 失效用，不归还焦点）。 */
@@ -83,6 +90,7 @@ function resetModalState() {
   for (const m of document.querySelectorAll('.modal')) m.classList.remove('open', 'modal-open');
   setBackgroundInert(false);
   modalFocusReturn = null;
+  modalFocusReturnKey = null;
 }
 
 // Esc 关闭当前打开的弹窗（并归还焦点）
@@ -92,8 +100,13 @@ document.addEventListener('keydown', (e) => {
   if (!open.length) return;
   for (const m of open) m.classList.remove('open', 'modal-open');
   setBackgroundInert(false);
-  if (modalFocusReturn && modalFocusReturn.focus) modalFocusReturn.focus();
+  if (modalFocusReturn && modalFocusReturn.focus && modalFocusReturn.isConnected !== false) modalFocusReturn.focus();
+  else if (modalFocusReturnKey) {
+    const replacement = Array.from(document.querySelectorAll('[data-focus-return]')).find((el) => el.getAttribute('data-focus-return') === modalFocusReturnKey);
+    if (replacement && replacement.focus) replacement.focus();
+  }
   modalFocusReturn = null;
+  modalFocusReturnKey = null;
 });
 
 // Tab / Shift+Tab 在打开的弹窗内循环（首尾回绕），焦点绝不走出 aria-modal。
