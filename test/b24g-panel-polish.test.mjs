@@ -486,7 +486,7 @@ test('B24g-2：新鲜度文字不是最小字号，两主题对比度均 ≥4.5:
   assert.equal(results.dark.alpha, 1, `不许用透明度弱化（${results.dark.source} 的 alpha=${results.dark.alpha}）`);
 
   // 实现锚点：模板与脚本都得用 aux-text（AA 令牌），不得再叠加 text-base-content/NN。
-  assert.match(ACCOUNT_CARD_SRC, /class="card-fresh aux-text text-sm"/, '模板：新鲜度 = aux-text + text-sm');
+  assert.match(ACCOUNT_CARD_SRC, /class="card-fresh[^"]*\baux-text\b[^"]*\btext-sm\b[^"]*"/, '模板：新鲜度 = aux-text + text-sm');
   assert.match(RENDER_CARDS_JS, /'card-fresh aux-text text-sm'/, '脚本重建的类名同样'),
   assert.doesNotMatch(ACCOUNT_CARD_SRC, /card-fresh[^"]*text-base-content\//, '不得再用 base-content/NN 的透明色');
 });

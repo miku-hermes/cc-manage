@@ -1052,7 +1052,7 @@ test('三个额度窗口的 resetAt 由上游原样透传，页面才有得显�
   const html = (await request(`${ctx.baseUrl}/`)).body;
   assert.match(pageSource(html), /function resetText/, '必须有「重置于 …」的渲染函数');
   assert.match(pageSource(html), /function untilText/, '必须有「还有多久」的换算');
-  assert.match(pageSource(html), /class="bar-reset"/, '进度条下面要有重置时间的容器');
+  assert.match(pageSource(html), /class="bar-reset[^"]*"/, '进度条下面要有重置时间的容器');
   assert.match(pageSource(html), /resetText\(w, \{ zeroMeansIdle/, '5h 窗口要按「空闲」语义特殊处理');
 });
 

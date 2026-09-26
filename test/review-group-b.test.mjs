@@ -101,8 +101,8 @@ test('回归#11：后台额度显示 usableRemaining，monthly/balance 死余额
   const windowBlocked = account({ available: false, exhausted: { kind: 'window', window: 'weekly', label: '周额度已用完', resetAt: 0 }, lastQuota: quota(4) });
   adminAccounts(page, [dead, windowBlocked]);
   const out = shim.el('accounts').innerHTML;
-  assert.match(out, /class="usable-balance" title="账面 0\.10 · 月额度已用完，不可用">0\.00<\/span>/);
-  assert.match(out, /class="usable-balance" title="账面 4\.00">4\.00<\/span>/, 'window 只是排队，照实显示余额');
+  assert.match(out, /class="usable-balance[^"]*" title="账面 0\.10 · 月额度已用完，不可用">0\.00<\/span>/);
+  assert.match(out, /class="usable-balance[^"]*" title="账面 4\.00">4\.00<\/span>/, 'window 只是排队，照实显示余额');
   assert.doesNotMatch(out, /余额 0\.10/, '死余额不得直接以可见余额出现');
   assert.equal(page.usableRemaining(dead), 0);
   assert.equal(page.usableRemaining(windowBlocked), 4);

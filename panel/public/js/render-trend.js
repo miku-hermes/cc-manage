@@ -747,7 +747,7 @@ function buildTrendOption({ samples, capacity, theme, reducedMotion } = {}) {
       padding: [8, 10],
       textStyle: { color: palette.tooltipText, fontSize: 12 },
       axisPointer: { type: 'line', lineStyle: { color: palette.cursor, width: 1, type: 'dashed' } },
-      extraCssText: 'border-radius:10px;',
+      extraCssText: 'border-radius:10px;font-variant-numeric:tabular-nums;',
       formatter: trendTooltipFormatter,
     },
     series,
@@ -1057,7 +1057,7 @@ function trendSummaryHtml(samples, rangeKey) {
   const errNote = st.errZero
     ? '本时段无错误'
     : (st.errorRate === null ? '' : '错误率 ' + st.errorRate.toFixed(1) + '%');
-  return '<div class="trend-summary mt-3 flex flex-wrap gap-4 border-t border-base-300 pt-3">'
+  return '<div class="trend-summary tabular-nums mt-3 flex flex-wrap gap-4 border-t border-base-300 pt-3">'
     + trendStatHtml(rangeLabel + '请求', trendInt(st.requests), '次', '', '（' + rangeLabel + '合计）')
     + trendStatHtml(rangeLabel + '错误', trendInt(st.errors), '次', '', errNote)
     + trendStatHtml('最新样本 ' + lastClock + ' · 余额', trendUsdText(st.latestBucket ? st.latestBucket.m : NaN), 'USD', '', '（' + lastClock + ' 定稿的 5 分钟桶）')
@@ -1084,7 +1084,7 @@ function trendStatsHtml(stats) {
     + '<div class="stat-value text-2xl tabular-nums">' + esc(value)
     + (unit ? ' <span class="text-sm font-normal text-base-content/60">' + esc(unit) + '</span>' : '')
     + '</div>'
-    + '<div class="stat-desc text-xs text-base-content/60">' + esc(desc) + '</div>'
+    + '<div class="stat-desc text-xs text-base-content/60 tabular-nums">' + esc(desc) + '</div>'
     + '</div>';
   return card(rl + '请求总数', trendInt(st.requests), '次', rl + '内累计')
     + card(rl + '错误数', trendInt(st.errors), '次', errDesc)

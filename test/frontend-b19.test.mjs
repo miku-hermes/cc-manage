@@ -435,7 +435,7 @@ test('B19-10c：balanceTitle 整体转义（title 属性不泄漏原始引号）
   });
   await waitFor(() => shim.el('accounts').innerHTML.includes('usable-balance'));
   const html = shim.el('accounts').innerHTML;
-  const m = /<span class="usable-balance" title="([^"]*)"/.exec(html);
+  const m = /<span class="usable-balance[^"]*" title="([^"]*)"/.exec(html);
   assert.ok(m, '存在 usable-balance 的 title');
   assert.ok(!html.includes('onmouseover="x"'), '原始引号不得拼进属性（未转义）');
   assert.match(m[1], /&quot;/, '引号必须被转义为 &quot;');
