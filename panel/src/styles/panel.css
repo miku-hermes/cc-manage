@@ -119,6 +119,11 @@
   --elev-3: 0 8px 24px rgba(16, 24, 40, .16), 0 24px 48px rgba(16, 24, 40, .18);
 }
 
+@layer components {
+  .card, .kpis, #trend-stats { box-shadow: var(--elev-1); }
+  #updated::before, #cadence::before { content: "·"; margin-right: 1rem; }
+}
+
 @layer base {
   /* 运行时令牌：浅色值。--chart-* 供 render-trend.js 通过 getComputedStyle 读取；
      --accent/--danger/--text-secondary 是页面语义别名（导出给 JS 与测试口径）。 */

@@ -113,8 +113,8 @@ function heroPctText(p) {
 function breakdownText(accounts) {
   const t = creditsTotals(accounts);
   if (!t.count) return '尚未获取额度快照';
-  // 口径写清：剩余额度是上方的大数字；这一行是「本月已用百分比 + 月度池构成」。
-  const used = t.cap > 0 ? '本月已用 ' + heroPctText(t.percent) : '本月用量待同步';
+  // 环承担百分比语义；此行说明用量口径与额度构成，避免重复报数。
+  const used = t.cap > 0 ? '本月已用' : '本月用量待同步';
   // 恒为 0 的额度构成不占位（购买 0 / 赠送 0 直接不出现）。
   const parts = [];
   if (t.monthly > 0) parts.push('月度 $' + money(t.monthly));

@@ -51,6 +51,13 @@ function status(accounts, extra = {}) {
   };
 }
 
+// ── 余额语义标签：断言模板经渲染填值后的真实卡片 DOM ───────────────
+test('P0：渲染后的账号余额明确标注为剩余', async () => {
+  const { page } = await boot();
+  const rendered = page.card(account({ lastQuota: quota({ remaining: 6.62 }) }));
+  assert.match(rendered, /<span class=\"text-xs text-base-content\/60\">剩余<\/span><b class=\"usable-balance[^>]*>6\.62<\/b>/);
+});
+
 // ── ① 构成明细聚合：两个账号的 credits 三项分别求和 ──────────────────
 test('B4-1：Hero 构成明细对两账号的月度/购买/赠送分别求和（真实 credits）', async () => {
   const { shim, page } = await boot();
@@ -58,8 +65,8 @@ test('B4-1：Hero 构成明细对两账号的月度/购买/赠送分别求和（
   const b = account({ keyId: 'bbbb2222', lastQuota: quota({ credits: { monthlyCredits: 3, purchasedCredits: 2, freeCredits: 1.5 } }) });
   page.render(status([a, b]));
   assert.equal(shim.el('bal-breakdown').textContent,
-    '本月已用 0.0% · 月度 $5.00 · 购买 $3.00 · 赠送 $2.00',
-    '已用率在前（口径写清），2+3 / 1+2 / 0.5+1.5 三项求和');
+    '本月已用 · 月度 $5.00 · 购买 $3.00 · 赠送 $2.00',
+    '用量与额度构成清晰，2+3 / 1+2 / 0.5+1.5 三项求和');
 });
 
 // ── ② Y% 是 Σused/Σcap 的加权值，不是各账号百分比的简单平均 ──────────
@@ -70,12 +77,14 @@ test('B4-2：本月已用百分比按 Σused/Σcap 加权（只算 cap>0）', as
   const b = account({ keyId: 'bbbb2222', lastQuota: quota({ monthly: { used: 1, cap: 8, percent: 12.5, resetAt: 0 } }) });
   page.render(status([a, b]));
   const text = shim.el('bal-breakdown').textContent;
-  assert.match(text, /本月已用 20\.0%/);
+  assert.match(text, /^本月已用 · /);
+  assert.doesNotMatch(text, /%/);
   assert.doesNotMatch(text, /31\.3%/, '不得用简单平均');
   // cap 为 0 的账号不参与分母：加进来也不改变结果
   const c = account({ keyId: 'cccc3333', lastQuota: quota({ monthly: { used: 99, cap: 0, percent: 0, resetAt: 0 } }) });
   page.render(status([a, b, c]));
-  assert.match(shim.el('bal-breakdown').textContent, /本月已用 20\.0%/);
+  assert.match(shim.el('bal-breakdown').textContent, /^本月已用 · /);
+  assert.doesNotMatch(shim.el('bal-breakdown').textContent, /%/);
 });
 
 // ── ③ 分段进度条三段宽度 = 各段金额 / 三段之和 ───────────────────────

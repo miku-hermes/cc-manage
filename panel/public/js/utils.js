@@ -28,7 +28,7 @@ function setHealth(text, opts = {}) {
   if (el.getAttribute('aria-live') !== live) el.setAttribute('aria-live', live);
 }
 // null / undefined / 空串都表示「没有数」，一律显示 —（Number(null)===0 会把「无快照」画成 0.00）。
-function money(n) { if (n === null || n === undefined || n === '') return '—'; const v = Number(n); return Number.isFinite(v) ? v.toFixed(2) : '—'; }
+function money(n) { if (n === null || n === undefined || n === '') return '—'; const v = Number(n); return Number.isFinite(v) ? v.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'; }
 /* 套餐 planId → 人看的名字。映射表见任务书；未知值原样返回，不猜、不吞。 */
 function planLabel(planId) {
   if (planId === null || planId === undefined) return null;

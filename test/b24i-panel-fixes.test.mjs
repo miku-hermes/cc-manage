@@ -305,17 +305,22 @@ function percentFixture() {
 }
 function gaugeAndBreakdown(shim) {
   const gaugeText = shim.el('usage-gauge').textContent;
-  const m = /本月已用\s+([\d.]+%)/.exec(shim.el('bal-breakdown').textContent);
-  return { gaugeText, breakdownText: m ? m[1] : null, aria: shim.el('usage-gauge').getAttribute('aria-label') };
+  const breakdown = shim.el('bal-breakdown').textContent;
+  return { gaugeText, breakdownText: breakdown, aria: shim.el('usage-gauge').getAttribute('aria-label') };
 }
 
-test('B24i-3：环内读数与旁词「本月已用 X%」是同一个口径（逐字符相同）', async () => {
+test('P1：产物卡片阴影引用非透明的现有 elev 令牌', () => {
+  assert.match(CSS, /box-shadow:\s*var\(--elev-1\)/);
+  assert.match(CSS, /--elev-1:0 1px 2px #1018280a/);
+});
+
+test('B24i-3：环内呈现百分比，旁文说明用量与额度且不重复百分比', async () => {
   const { shim, page } = await boot();
   page.render(status(percentFixture()));
   const got = gaugeAndBreakdown(shim);
-  assert.equal(got.breakdownText, '62.6%', `旁词必须给出加权已用率（实际 ${got.breakdownText}）`);
-  assert.equal(got.gaugeText, got.breakdownText,
-    `环内与旁词必须逐字符相同（环内 ${got.gaugeText} / 旁词 ${got.breakdownText}）`);
+  assert.equal(got.gaugeText, '62.6%', '进度环承担百分比语义');
+  assert.match(got.breakdownText, /^本月已用 · /, '旁文说明用量及额度构成');
+  assert.doesNotMatch(got.breakdownText, /%/, '旁文不重复百分比');
   assert.equal(got.aria, '本月额度已用 62.6%', 'aria-label 用同一个口径');
   // 鉴别力 / 变异验证：旧的取整写法（Math.round → 63%）与旁词可区分 ⇒ 改回去必红。
   assert.notEqual(got.gaugeText, Math.round(62.6) + '%', '鉴别力：62.6 与取整后的 63 必须可区分');
@@ -323,9 +328,9 @@ test('B24i-3：环内读数与旁词「本月已用 X%」是同一个口径（�
 
 test('B24i-3b：两处共用同一个格式化函数；边界值也一致（≥99.95 → 100%，无 cap → —）', async () => {
   assert.match(RENDER_HERO_JS, /function heroPctText\(/, 'render-hero.js 必须有唯一的百分比口径函数');
-  // 环内与旁词都必须引用它（≥2 处调用 + 1 处定义）。
-  assert.ok((RENDER_HERO_JS.match(/heroPctText\(/g) || []).length >= 3,
-    'heroPctText 必须同时被 breakdownText 与 gauge 使用');
+  // 百分比只由环使用；breakdown 不应再次格式化百分比。
+  assert.ok((RENDER_HERO_JS.match(/heroPctText\(/g) || []).length >= 2,
+    'heroPctText 必须供环内百分比使用');
   // 不得再有「取整 + '%'」这种第二种写法。
   assert.doesNotMatch(RENDER_HERO_JS, /gauge\.textContent\s*=\s*pct\s*\+\s*'%'/, '环内不得再自行取整拼串');
 
@@ -334,11 +339,12 @@ test('B24i-3b：两处共用同一个格式化函数；边界值也一致（≥9
   page.render(status([account({ keyId: 'aaaa1111', lastQuota: quota({ monthly: { used: 99.96, cap: 100, percent: 99.96, resetAt: 0 } }) })]));
   let got = gaugeAndBreakdown(shim);
   assert.equal(got.gaugeText, '100%', `边界值环内（实际 ${got.gaugeText}）`);
-  assert.equal(got.gaugeText, got.breakdownText, '边界值两处仍逐字符相同');
+  assert.match(got.breakdownText, /^本月已用 · /);
+  assert.doesNotMatch(got.breakdownText, /%/);
   // 超过 100% 也夹到同一处（环画不出更多，旁词不谎报）。
   page.render(status([account({ keyId: 'aaaa1111', lastQuota: quota({ monthly: { used: 120, cap: 100, percent: 120, resetAt: 0 } }) })]));
   got = gaugeAndBreakdown(shim);
-  assert.equal(got.gaugeText, got.breakdownText, '超过 100% 时两处仍一致');
+  assert.doesNotMatch(got.breakdownText, /%/, '超过 100% 旁文仍不重复');
   assert.equal(got.gaugeText, '100%');
   // 没有 cap：环内「—」、旁词兜底文案（不出现伪百分比）。
   page.render(status([account({ keyId: 'aaaa1111', lastQuota: quota({ monthly: { used: 5, cap: 0, percent: 0, resetAt: 0 } }) })]));
