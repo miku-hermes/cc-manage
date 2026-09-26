@@ -3,7 +3,7 @@
 import { Search, Moon, Sun, Lock, Activity } from '@lucide/astro';
 const { search = true } = Astro.props;
 ---
-<header class="header navbar sticky top-0 z-30 min-h-12 border-b border-base-300 bg-base-100/85 backdrop-blur-md">
+<header class="header navbar sticky top-0 z-30 min-h-12 border-b border-base-300 bg-base-100/95 backdrop-blur-md shadow-sm">
   <!-- A6：顶栏内容与 main 共用同一 max-w + px-4 容器，logo 左边界 == 内容列左边界。 -->
   <div class="navbar-row mx-auto flex w-full max-w-6xl items-center px-4 2xl:max-w-[1600px]">
   <div class="navbar-start gap-2 px-0">
@@ -24,7 +24,7 @@ const { search = true } = Astro.props;
     <a class="admin-link btn btn-ghost btn-circle btn-sm tooltip tooltip-bottom" href="/admin" data-tip="登录后台" aria-label="登录后台" title="账号密码登录后台，管理 CC key 与客户端 key">
       <Lock size={18} />
     </a>
-    <span id="keyhint" class="hint text-xs text-base-content/60"></span>
+    <span id="keyhint" class="hint text-xs aux-text"></span>
   </div>
   </div>
 </header>

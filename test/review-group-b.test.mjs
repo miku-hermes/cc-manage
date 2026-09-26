@@ -198,8 +198,8 @@ test('视觉#9：额度/更新时间/内核辅助文字统一 aux-text，小字�
   // B24：aux-text 改由 Tailwind @utility 提供颜色（同一 --text-secondary 令牌，选择器语法变了）。
   assert.match(styleText(INDEX_HTML), /\.aux-text\{color:var\(--text-secondary\)\}/);
   // 令牌值语义不变（AA 小字）；徽章色改用 daisyUI 语义令牌（warning→--color-warning / error→--color-error）。
-  assert.match(styleText(INDEX_HTML), /--text-secondary:\s*#4d5666/);
-  assert.match(styleText(INDEX_HTML), /--text-tertiary:\s*#6a7386/);
+  assert.match(styleText(INDEX_HTML), /--text-secondary:\s*#604e70/);
+  assert.match(styleText(INDEX_HTML), /--text-tertiary:\s*#766687/);
   assert.match(styleText(INDEX_HTML), /\.badge-warning\{--badge-color:var\(--color-warning\)/);
   assert.match(styleText(INDEX_HTML), /\.badge-error\{--badge-color:var\(--color-error\)/);
 });

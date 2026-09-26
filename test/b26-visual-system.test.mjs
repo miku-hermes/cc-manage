@@ -13,7 +13,7 @@ const adminHtml = fs.readFileSync(new URL('../panel/dist/admin.html', import.met
 const trendHtml = fs.readFileSync(new URL('../panel/dist/trend.html', import.meta.url), 'utf8');
 
 test('B26-A1：动效仅用快/常规/慢与进场/离场/双向令牌', () => {
-  for (const token of ['--dur-fast: 120ms', '--dur-normal: 240ms', '--dur-slow: 400ms', '--ease-enter:', '--ease-exit:', '--ease-standard:']) {
+  for (const token of ['--dur-fast: 150ms', '--dur-normal: 250ms', '--dur-slow: 400ms', '--ease-enter:', '--ease-exit:', '--ease-standard:']) {
     assert.ok(css.includes(token), `缺失令牌 ${token}`);
   }
   assert.doesNotMatch(styleText(indexHtml) + styleText(adminHtml) + styleText(trendHtml), /(?:transition|animation)-duration:\s*333ms\b/);
@@ -40,7 +40,7 @@ test('B26-A5：主题切换有原生 View Transition 并安全降级、尊重 re
 });
 
 test('B26-C5：浅色请求折线不淡出，保留请求数作为次级视觉层级', () => {
-  assert.match(css, /--chart-series-request:\s*#4d5666/);
+  assert.match(css, /--chart-series-request:\s*#604e70/);
   assert.match(trend, /lineStyle: \{ width: TREND_REQUEST_LINE_WIDTH, color: palette\.request \}/);
   assert.doesNotMatch(trend, /lineStyle: \{ width: TREND_REQUEST_LINE_WIDTH, color: palette\.request, opacity/);
   const linear = (channel) => {

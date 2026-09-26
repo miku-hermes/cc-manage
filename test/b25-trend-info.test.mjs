@@ -252,7 +252,14 @@ function tokenBlocks() {
   assert.ok(darkAt > 0, 'panel.css 必须有深色令牌块');
   const lightAt = PANEL_CSS.lastIndexOf(':root {', darkAt);
   const lightBlock = PANEL_CSS.slice(lightAt, darkAt);
-  const darkBlock = PANEL_CSS.slice(darkAt, PANEL_CSS.indexOf('\n    }', darkAt) + 6);
+  const darkOpen = PANEL_CSS.indexOf('{', darkAt);
+  let depth = 0;
+  let darkEnd = darkOpen;
+  for (; darkEnd < PANEL_CSS.length; darkEnd += 1) {
+    if (PANEL_CSS[darkEnd] === '{') depth += 1;
+    else if (PANEL_CSS[darkEnd] === '}' && --depth === 0) break;
+  }
+  const darkBlock = PANEL_CSS.slice(darkAt, darkEnd + 1);
   const grab = (block, name) => {
     const noComments = block.replace(/\/\*[\s\S]*?\*\//g, '');
     const m = new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*:\\s*([^;]+);').exec(noComments);

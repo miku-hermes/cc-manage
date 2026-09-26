@@ -55,7 +55,7 @@ function status(accounts, extra = {}) {
 test('P0：渲染后的账号余额明确标注为剩余', async () => {
   const { page } = await boot();
   const rendered = page.card(account({ lastQuota: quota({ remaining: 6.62 }) }));
-  assert.match(rendered, /<span class=\"text-xs text-base-content\/60\">剩余<\/span><b class=\"usable-balance[^>]*>6\.62<\/b>/);
+  assert.match(rendered, /<span class=\"text-xs aux-text\">剩余<\/span><b class=\"usable-balance[^>]*>6\.62<\/b>/);
 });
 
 // ── ① 构成明细聚合：两个账号的 credits 三项分别求和 ──────────────────

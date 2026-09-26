@@ -187,16 +187,12 @@ test('B10-5：首屏数字同步显示，后续格式化结果变化才滚动', 
 // 原来查：dashboard/components/admin.css 里至少 3 个主要面选择器带 background-color 过渡。
 // 现在查：主要面在源码里挂 Tailwind transition-colors，且构建 CSS 里 transition-property 含
 //         background-color（切主题不再硬闪）。等价性：至少 3 个主要面参与颜色过渡。
-test('B10-6：至少 3 个主要面带 background-color 过渡（Tailwind transition-colors）', () => {
-  let hit = 0;
-  for (const [label, src] of [
-    ['HeroCard', fs.readFileSync(new URL('../panel/src/components/HeroCard.astro', import.meta.url), 'utf8')],
-    ['AccountCard', fs.readFileSync(new URL('../panel/src/components/AccountCard.astro', import.meta.url), 'utf8')],
-    ['KpiCard(JS)', RENDER_HERO_JS],
-  ]) {
-    if (/transition-colors/.test(src)) hit += 1;
-  }
-  assert.ok(hit >= 3, `至少 3 个主要面含 transition-colors，实际 ${hit}`);
+test('B10-6：Hero、账号卡与 KPI 均采用新主题过渡', () => {
+  const hero = fs.readFileSync(new URL('../panel/src/components/HeroCard.astro', import.meta.url), 'utf8');
+  const account = fs.readFileSync(new URL('../panel/src/components/AccountCard.astro', import.meta.url), 'utf8');
+  assert.match(hero, /transition-\[box-shadow,transform,background-color\]/, 'Hero 卡同时过渡阴影、位移与底色');
+  assert.match(account, /transition-\[box-shadow,transform,background-color\]/, '账号卡同时过渡阴影、位移与底色');
+  assert.match(PANEL_CSS, /\.kpi \{[^}]*transition: box-shadow var\(--transition\), transform var\(--transition\)/, 'KPI 卡片使用主题标准过渡');
   assert.match(BUILD_CSS, /transition-property:[^;]*background-color/, '构建 CSS 里过渡属性包含 background-color');
 });
 

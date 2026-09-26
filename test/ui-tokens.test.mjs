@@ -12,6 +12,7 @@ const INDEX_HTML = fs.readFileSync(new URL('../panel/dist/index.html', import.me
 // B24：手写 CSS 已删除，令牌与降级规则迁进 panel/src/styles/panel.css（Tailwind @theme + 运行时令牌）。
 const TOKENS_CSS = fs.readFileSync(new URL('../panel/src/styles/panel.css', import.meta.url), 'utf8');
 const BASE_CSS = TOKENS_CSS;
+const EMPTY_STATE_JS = fs.readFileSync(new URL('../panel/public/js/utils.js', import.meta.url), 'utf8');
 
 // 从 css[start]（'{' 缺失处）匹配成对花括号，返回块内文本
 function braceBlock(css, start) {
@@ -49,16 +50,29 @@ function rules(css) {
   return list;
 }
 
-// ── 1：tokens.css 含玻璃与动效令牌，且为浅色单一主题 ──────────────
-test('令牌#1：tokens.css 定义 --glass-bg / --glass-blur 与 --dur-normal / --ease-enter', () => {
-  assert.match(TOKENS_CSS, /--glass-bg:\s*rgba\(255,\s*255,\s*255,\s*\.?\d*7\)/, '玻璃底色 rgba(255,255,255,.7) 量级');
-  assert.match(TOKENS_CSS, /--glass-blur:\s*16px/, '玻璃模糊 16px');
-  assert.match(TOKENS_CSS, /--glass-border:/, '玻璃描边令牌');
-  assert.match(TOKENS_CSS, /--dur-normal:\s*240ms/, '弹框动效时长 250ms');
-  assert.match(TOKENS_CSS, /--dur-fast:\s*120ms/, '交互动效时长 150ms');
-  assert.match(TOKENS_CSS, /--ease-enter:\s*cubic-bezier\(\.22,\s*\.61,\s*\.36,\s*1\)/, '统一缓出曲线');
-  assert.match(TOKENS_CSS, /--elev-1:/, '柔和分层阴影 1');
-  assert.match(TOKENS_CSS, /--elev-2:/, '柔和分层阴影 2');
+// ── 1：Komari-Mikus 粉紫令牌与双主题契约 ──────────────
+function luminance(hex) {
+  const channels = hex.match(/[0-9a-f]{2}/gi).map((channel) => parseInt(channel, 16) / 255);
+  const linear = channels.map((value) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+  return linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722;
+}
+function contrast(foreground, background) {
+  const first = luminance(foreground);
+  const second = luminance(background);
+  return (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05);
+}
+
+test('令牌#1：粉紫浅/深主题、语义色、圆角与动效令牌完整', () => {
+  for (const token of ['--bg-primary: #f8f6f9', '--bg-card: #ffffff', '--text-primary: #2d1b3d', '--text-secondary: #604e70', '--border-color: #e8e0f0', '--accent: #e8668a', '--accent-hover: #d44a72', '--radius-sm: 8px', '--radius-md: 12px', '--radius-lg: 16px', '--radius-xl: 20px', '--shadow-card:', '--shadow-md:', '--transition: 250ms', '--dur-normal: 250ms', '--dur-fast: 150ms']) {
+    assert.ok(TOKENS_CSS.includes(token), `定义新视觉令牌 ${token}`);
+  }
+  assert.match(TOKENS_CSS, /:root\[data-theme="dark"\][\s\S]*?--bg-primary:\s*#0f0a15/);
+  assert.match(TOKENS_CSS, /:root\[data-theme="dark"\][\s\S]*?--accent:\s*#ff8fa3/);
+  assert.match(TOKENS_CSS, /--color-primary:\s*oklch\(65% 0\.17 5\)/, 'daisyUI 主色映射樱花粉');
+  assert.match(TOKENS_CSS, /--font-mono:/, '数字字体使用本机等宽栈');
+  assert.doesNotMatch(TOKENS_CSS, /--elev-/i, '旧 elev 令牌不再存在');
+  assert.match(TOKENS_CSS, /--chart-series-cpu:\s*#e8668a/);
+  assert.match(TOKENS_CSS, /--chart-series-ram:\s*#2f8f62/);
 });
 
 // ── 2：≤640px 标签条契约（改由 Tailwind max-sm 工具类承担）──────────
@@ -67,6 +81,23 @@ test('令牌#1：tokens.css 定义 --glass-bg / --glass-blur 与 --dur-normal / 
 // 现在查：AccountCard 的 class 里有 max-sm:flex-nowrap / max-sm:overflow-x-auto，胶囊有 shrink-0；
 //         且构建后的 CSS 在同一个窄屏断点块里真的产出对应声明。等价性：断点、声明、不压缩三点不变，
 //         只是从手写选择器换成 Tailwind 工具类（构建产物里仍是同一条 CSS 声明）。
+test('首页空态：提供进入账号管理的下一步动作', () => {
+  assert.match(EMPTY_STATE_JS, /class=\"btn btn-primary btn-sm mt-2 w-fit\" href=\"\/admin\">管理账号/);
+});
+
+test('令牌#1b：辅助正文、暗色次级文字与状态徽章达到 WCAG AA', () => {
+  assert.ok(contrast('#604e70', '#f8f6f9') >= 4.5, '浅色辅助正文对页面底达到 4.5:1');
+  assert.ok(contrast('#766687', '#f8f6f9') >= 4.5, '浅色 tertiary 对页面底达到 4.5:1');
+  assert.ok(contrast('#aa99b9', '#0f0a15') >= 4.5, '暗色 tertiary 对页面底达到 4.5:1');
+  assert.ok(contrast('#24583e', '#e8f5e9') >= 4.5, '成功徽章文字对底色达到 4.5:1');
+  assert.ok(contrast('#805000', '#fff8e1') >= 4.5, '警告徽章文字对底色达到 4.5:1');
+  assert.ok(contrast('#8d2535', '#fde8eb') >= 4.5, '错误徽章文字对底色达到 4.5:1');
+  assert.ok(contrast('#2d1b3d', '#e8668a') >= 4.5, '樱花粉主按钮深紫文字达到 4.5:1');
+  assert.ok(contrast('#193b2a', '#4caf7d') >= 4.5, '成功语义按钮文字达到 4.5:1');
+  assert.ok(contrast('#18334f', '#5c9ced') >= 4.5, '信息语义按钮文字达到 4.5:1');
+  assert.ok(contrast('#300d18', '#e74c5e') >= 4.5, '错误语义按钮文字达到 4.5:1');
+});
+
 test('令牌#2：≤640px 标签条单行横滚契约（Tailwind max-sm + shrink-0）', () => {
   assert.match(ACCOUNT_CARD, /class="tags[^"]*max-sm:flex-nowrap[^"]*max-sm:overflow-x-auto/, '标签条窄屏单行横滚类');
   assert.match(RENDER_CARDS, /shrink-0/, '标签胶囊不得被压缩');

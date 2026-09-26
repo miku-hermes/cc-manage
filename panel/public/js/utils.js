@@ -3,7 +3,7 @@ const $ = (id) => document.getElementById(id);
 function emptyCard(inner) {
   // 结构与唯一出处保持在这里（b23 契约）：外层 class="card empty" 是钩子，
   // 视觉由内层 daisyUI/Tailwind 类承担 —— 不引入第二份空态结构。
-  return '<div class="card empty"><div class="card-body text-base-content/60">' + inner + '</div></div>';
+  return '<div class="card empty"><div class="card-body aux-text">' + inner + '<a class="btn btn-primary btn-sm mt-2 w-fit" href="/admin">管理账号</a></div></div>';
 }
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 /** keyId 前 8 位：卡片 / 表格在备注名缺失时的可识别兜底（与后台 admin-utils 同口径）。 */

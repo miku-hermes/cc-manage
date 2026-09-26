@@ -1,10 +1,3 @@
-/* B24 前端完整重构：唯一样式入口。
-   - 组件与配色主力：Tailwind CSS v4（@import）+ daisyUI 5（@plugin），不再有手写组件样式。
-   - 设计令牌：@theme（浅色默认值）+ daisyUI 自定义主题对 light/dark（oklch 调色）。
-   - @layer base 里的自定义属性是**运行时令牌**：data-theme 切换的图表/状态色，以及
-     ECharts 通过 getComputedStyle 读取的 --chart-*。Tailwind 的 @theme 没有「按
-     data-theme 覆盖」的语义，daisyUI 主题块只承载 daisyUI 自己的调色，所以这一小段
-     必须是普通自定义属性 —— 这是全仓仅存的手写 CSS，且只定义变量、不写组件样式。 */
 @import "tailwindcss";
 
 @source "../components";
@@ -15,276 +8,266 @@
 
 @plugin "daisyui" { themes: false; }
 
-/* ── 品牌色：靛蓝（与旧桃粉无关）──────────────────────────────────── */
 @plugin "daisyui/theme" {
   name: "light";
   default: true;
   prefersdark: false;
   color-scheme: light;
   --color-base-100: oklch(100% 0 0);
-  --color-base-200: oklch(97.5% 0.008 258);
-  --color-base-300: oklch(92.5% 0.014 258);
-  --color-base-content: oklch(26% 0.03 262);
-  --color-primary: oklch(51% 0.19 264);
-  --color-primary-content: oklch(98% 0.01 264);
-  --color-secondary: oklch(60% 0.09 222);
-  --color-secondary-content: oklch(98% 0.01 222);
-  --color-accent: oklch(66% 0.12 192);
-  --color-accent-content: oklch(20% 0.03 192);
-  --color-neutral: oklch(34% 0.02 262);
-  --color-neutral-content: oklch(97% 0.006 262);
-  --color-info: oklch(60% 0.14 240);
-  --color-info-content: oklch(98% 0.01 240);
-  --color-success: oklch(54% 0.15 155);
-  --color-success-content: oklch(98% 0.02 155);
-  --color-warning: oklch(70% 0.15 80);
-  --color-warning-content: oklch(25% 0.05 80);
-  --color-error: oklch(51% 0.19 27);
-  --color-error-content: oklch(98% 0.01 27);
+  --color-base-200: oklch(97.5% 0.008 315);
+  --color-base-300: oklch(92.5% 0.018 315);
+  --color-base-content: oklch(25% 0.055 305);
+  --color-primary: oklch(65% 0.17 5);
+  --color-primary-content: #2d1b3d;
+  --color-secondary: oklch(52% 0.06 305);
+  --color-secondary-content: oklch(100% 0 0);
+  --color-accent: oklch(65% 0.17 5);
+  --color-accent-content: #2d1b3d;
+  --color-neutral: oklch(25% 0.055 305);
+  --color-neutral-content: oklch(100% 0 0);
+  --color-info: oklch(65% 0.13 250);
+  --color-info-content: #18334f;
+  --color-success: oklch(61% 0.12 155);
+  --color-success-content: #193b2a;
+  --color-warning: oklch(68% 0.14 75);
+  --color-warning-content: oklch(25% 0.055 305);
+  --color-error: oklch(57% 0.18 20);
+  --color-error-content: #300d18;
   --radius-selector: 0.5rem;
   --radius-field: 0.5rem;
   --radius-box: 0.75rem;
   --border: 1px;
-  --depth: 1;
+  --depth: 0;
   --noise: 0;
 }
 
-/* ── 深色主题：逐值调过（不是叠 opacity 的浅色版）────────────────── */
 @plugin "daisyui/theme" {
   name: "dark";
   default: false;
   prefersdark: true;
   color-scheme: dark;
-  --color-base-100: oklch(21.5% 0.017 262);
-  --color-base-200: oklch(25% 0.019 262);
-  --color-base-300: oklch(29% 0.021 262);
-  --color-base-content: oklch(95% 0.012 262);
-  --color-primary: oklch(72% 0.15 264);
-  --color-primary-content: oklch(18% 0.05 264);
-  --color-secondary: oklch(74% 0.08 222);
-  --color-secondary-content: oklch(18% 0.04 222);
-  --color-accent: oklch(78% 0.11 192);
-  --color-accent-content: oklch(18% 0.04 192);
-  --color-neutral: oklch(80% 0.02 262);
-  --color-neutral-content: oklch(20% 0.02 262);
-  --color-info: oklch(76% 0.12 240);
-  --color-info-content: oklch(18% 0.04 240);
-  --color-success: oklch(76% 0.15 155);
-  --color-success-content: oklch(18% 0.04 155);
-  --color-warning: oklch(82% 0.15 80);
-  --color-warning-content: oklch(22% 0.05 80);
-  --color-error: oklch(72% 0.17 27);
-  --color-error-content: oklch(18% 0.05 27);
+  --color-base-100: oklch(20% 0.035 300);
+  --color-base-200: oklch(16% 0.035 300);
+  --color-base-300: oklch(27% 0.045 300);
+  --color-base-content: oklch(91% 0.025 305);
+  --color-primary: oklch(74% 0.13 5);
+  --color-primary-content: oklch(16% 0.035 300);
+  --color-secondary: oklch(72% 0.035 305);
+  --color-secondary-content: oklch(16% 0.035 300);
+  --color-accent: oklch(74% 0.13 5);
+  --color-accent-content: oklch(16% 0.035 300);
+  --color-neutral: oklch(91% 0.025 305);
+  --color-neutral-content: oklch(16% 0.035 300);
+  --color-info: oklch(75% 0.10 250);
+  --color-info-content: oklch(16% 0.035 300);
+  --color-success: oklch(76% 0.11 155);
+  --color-success-content: oklch(16% 0.035 300);
+  --color-warning: oklch(79% 0.12 75);
+  --color-warning-content: oklch(16% 0.035 300);
+  --color-error: oklch(71% 0.15 20);
+  --color-error-content: oklch(16% 0.035 300);
   --radius-selector: 0.5rem;
   --radius-field: 0.5rem;
   --radius-box: 0.75rem;
   --border: 1px;
-  --depth: 1;
+  --depth: 0;
   --noise: 0;
 }
 
-/* ── 语义令牌（@theme）：布局 / 字号 / 动效 / 非 daisyUI 色 ───────── */
 @theme {
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", ui-sans-serif, sans-serif;
-  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Cascadia Mono", monospace;
-
-  /* 三套独立配色：品牌（brand）/ 状态（ok·warn·crit）/ 数据序列（series-*）。
-     状态色只表达健康度；数据量只由 series-* 承担。 */
-  --color-brand: oklch(51% 0.19 264);
-  --color-ok: oklch(54% 0.15 155);
-  --color-warn: oklch(70% 0.15 80);
-  --color-crit: oklch(51% 0.19 27);
-  --color-series-1: oklch(58% 0.10 250);
-  --color-series-2: oklch(51% 0.19 27);
-  --color-series-3: oklch(56% 0.11 192);
-
-  --glass-bg: rgba(255, 255, 255, .7);
-  --glass-blur: 16px;
-  --glass-border: rgba(230, 234, 242, .9);
-  --scrim: rgba(23, 35, 59, .38);
-  --dur-fast: 120ms;
-  --dur-normal: 240ms;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", sans-serif;
+  --font-mono: "SF Mono", "Fira Code", "Cascadia Code", Consolas, monospace;
+  --color-brand: #e8668a;
+  --color-ok: #4caf7d;
+  --color-warn: #f5a623;
+  --color-crit: #e74c5e;
+  --color-series-1: #e8668a;
+  --color-series-2: #4caf7d;
+  --color-series-3: #5c9ced;
+  --dur-fast: 150ms;
+  --dur-normal: 250ms;
   --dur-slow: 400ms;
-  --ease-enter: cubic-bezier(.22, .61, .36, 1);
+  --dur-bounce: 500ms;
+  --ease-standard: cubic-bezier(.4, 0, .2, 1);
+  --ease-enter: cubic-bezier(.4, 0, .2, 1);
   --ease-exit: cubic-bezier(.4, 0, 1, 1);
   --ease-standard: cubic-bezier(.4, 0, .2, 1);
-  --animate-enter: enter var(--dur-normal) var(--ease-enter) both;
-  --animate-exit: exit var(--dur-fast) var(--ease-exit) both;
-  --animate-shift: shift var(--dur-normal) var(--ease-standard) both;
-  @keyframes enter { from { opacity: 0; translate: 0 6px; } to { opacity: 1; translate: 0 0; } }
-  @keyframes exit { from { opacity: 1; } to { opacity: 0; } }
-  @keyframes shift { from { translate: 0 4px; } to { translate: 0 0; } }
-  --elev-1: 0 1px 2px rgba(16, 24, 40, .04), 0 4px 16px rgba(16, 24, 40, .06);
-  --elev-2: 0 2px 4px rgba(16, 24, 40, .05), 0 12px 30px rgba(16, 24, 40, .12);
-  --elev-3: 0 8px 24px rgba(16, 24, 40, .16), 0 24px 48px rgba(16, 24, 40, .18);
-}
-
-@layer components {
-  .card, .kpis, #trend-stats { box-shadow: var(--elev-1); }
-  #updated::before, #cadence::before { content: "·"; margin-right: 1rem; }
+  --animate-enter: fadeInUp 400ms ease both;
+  @keyframes fadeInUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 }
 
 @layer base {
-  /* 运行时令牌：浅色值。--chart-* 供 render-trend.js 通过 getComputedStyle 读取；
-     --accent/--danger/--text-secondary 是页面语义别名（导出给 JS 与测试口径）。 */
   :root {
-    --text-secondary: #4d5666;
-    --text-tertiary: #6a7386;
-    --accent: #4b57c9;
-    --danger: #b91c1c;
-    --success: #15803d;
-    --warning: #b45309;
-    /* B25：浅色主题的图表色逐值调深，白底上真的看得见（旧值网格 1.2:1 ≈ 隐形）。
-       --chart-series-request 与 --text-secondary 同值（单一中性色令牌口径）。 */
-    --chart-series-request: #4d5666;   /* vs #fff 7.68:1；乘线条 0.7 淡出后仍 3.53:1 */
-    --chart-series-error: #b91c1c;     /* vs #fff 6.47:1 */
-    --chart-series-balance: #0f766e;   /* vs #fff 5.47:1 */
-    --chart-grid: #c3ccdc;             /* 纵向网格 vs #fff 1.62:1（旧 #e6eaf2 仅 1.21:1） */
-    --chart-grid-h: #d5dce7;           /* 横向网格更淡一档 vs #fff 1.38:1 */
-    --chart-now: #b6c0d2;              /* 「现在」参考线 vs #fff 1.83:1 */
-    --chart-axis: #aeb9cc;             /* 坐标轴线 vs #fff 1.98:1 */
-    --chart-axis-label: #6a7386;       /* 轴标签 vs #fff 4.76:1（AA 小字） */
-    --chart-area-request: rgba(77, 86, 102, .14);
-    --chart-area-balance: rgba(15, 118, 110, .22);
+    color-scheme: light;
+    --bg-primary: #f8f6f9;
+    --bg-secondary: #ffffff;
+    --bg-tertiary: #f0edf3;
+    --bg-card: #ffffff;
+    --bg-card-rgb: 255, 255, 255;
+    --bg-card-hover: #faf8fc;
+    --bg-modal: #ffffff;
+    --bg-overlay: rgba(0, 0, 0, .4);
+    --text-primary: #2d1b3d;
+    --text-secondary: #604e70;
+    --text-tertiary: #766687;
+    --text-inverse: #ffffff;
+    --border-color: #e8e0f0;
+    --border-color-rgb: 232, 224, 240;
+    --border-light: #f0eaf5;
+    --accent: #e8668a;
+    --accent-rgb: 232, 102, 138;
+    --accent-light: #fce4ec;
+    --accent-hover: #d44a72;
+    --success: #4caf7d;
+    --success-light: #e8f5e9;
+    --warning: #f5a623;
+    --warning-light: #fff8e1;
+    --danger: #e74c5e;
+    --danger-light: #fde8eb;
+    --info: #5c9ced;
+    --info-light: #e3f0ff;
+    --shadow-sm: 0 1px 3px rgba(45, 27, 61, .06);
+    --shadow-md: 0 4px 12px rgba(45, 27, 61, .08);
+    --shadow-lg: 0 8px 30px rgba(45, 27, 61, .12);
+    --shadow-card: 0 2px 8px rgba(45, 27, 61, .05);
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 16px;
+    --radius-xl: 20px;
+    --transition-fast: 150ms cubic-bezier(.4, 0, .2, 1);
+    --transition: 250ms cubic-bezier(.4, 0, .2, 1);
+    --transition-slow: 400ms cubic-bezier(.4, 0, .2, 1);
+    --transition-bounce: 500ms cubic-bezier(.34, 1.56, .64, 1);
+    --scrim: rgba(0, 0, 0, .4);
+    --chart-series-request: #604e70;
+    --chart-series-error: #e74c5e;
+    --chart-series-balance: #2f8f62;
+    --chart-series-cpu: #e8668a;
+    --chart-series-ram: #2f8f62;
+    --chart-series-network: #5c9ced;
+    --chart-series-disk: #91b9ee;
+    --chart-series-connection: #9a72bd;
+    --chart-grid: #d4c6e0;
+    --chart-grid-h: #e8e0f0;
+    --chart-now: #c8b9d4;
+    --chart-axis: #b8a7c7;
+    --chart-axis-label: #766687;
+    --chart-area-request: rgba(118, 95, 134, .14);
+    --chart-area-balance: rgba(76, 175, 125, .18);
     --chart-tooltip-bg: rgba(255, 255, 255, .97);
-    --chart-tooltip-border: #e6eaf2;
-    --chart-tooltip-text: #17233b;
-    --chart-cursor: rgba(92, 103, 121, .75);
-    --scrim: rgba(23, 35, 59, .38);
+    --chart-tooltip-border: #e8e0f0;
+    --chart-tooltip-text: #2d1b3d;
+    --chart-cursor: rgba(107, 90, 125, .75);
   }
-
-  /* 深色运行时令牌：逐值给出，不用 opacity 兑暗。 */
   :root[data-theme="dark"] {
-    --text-secondary: #a3adc0;
-    --text-tertiary: #8590a5;
-    --accent: #8f9bff;
-    --danger: #f87171;
-    --success: #4ade80;
-    --warning: #fbbf24;
-    /* B25：深色主题请求线旧值 0.7 淡出后只有 2.58:1（暗底上仍偏暗）→ 提亮到 3.61:1。 */
-    --chart-series-request: #8b96a6;
-    --chart-series-error: #f87171;
-    --chart-series-balance: #2dd4bf;
-    --chart-grid: #4a5568;
-    --chart-grid-h: #414c5f;
-    --chart-now: #454f63;
-    --chart-axis: #3a4456;
-    --chart-axis-label: #8590a5;
-    --chart-area-request: rgba(139, 150, 166, .10);
-    --chart-area-balance: rgba(45, 212, 191, .20);
-    --chart-tooltip-bg: rgba(26, 31, 41, .97);
-    --chart-tooltip-border: #3a4456;
-    --chart-tooltip-text: #e8ecf4;
-    --chart-cursor: rgba(163, 173, 192, .75);
-    --scrim: rgba(0, 0, 0, .55);
+    color-scheme: dark;
+    --bg-primary: #0f0a15;
+    --bg-secondary: #1a1225;
+    --bg-tertiary: #241a32;
+    --bg-card: #1e1530;
+    --bg-card-rgb: 30, 21, 48;
+    --bg-card-hover: #261c3a;
+    --bg-modal: #1e1530;
+    --bg-overlay: rgba(0, 0, 0, .6);
+    --text-primary: #e8dff0;
+    --text-secondary: #b7a9c5;
+    --text-tertiary: #aa99b9;
+    --text-inverse: #0f0a15;
+    --border-color: #2d2040;
+    --border-color-rgb: 45, 32, 64;
+    --border-light: #241a32;
+    --accent: #ff8fa3;
+    --accent-rgb: 255, 143, 163;
+    --accent-light: #3d1a2a;
+    --accent-hover: #ffb7c5;
+    --success: #5ec492;
+    --success-light: #1a2e22;
+    --warning: #f5b84a;
+    --warning-light: #2e2818;
+    --danger: #ff6b7a;
+    --danger-light: #2e1a1e;
+    --info: #7ab3f7;
+    --info-light: #1a2230;
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, .2);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, .3);
+    --shadow-lg: 0 8px 30px rgba(0, 0, 0, .4);
+    --shadow-card: 0 2px 8px rgba(0, 0, 0, .2);
+    --scrim: rgba(0, 0, 0, .6);
+    --chart-series-request: #b7a9c5;
+    --chart-series-error: #ff6b7a;
+    --chart-series-balance: #5ec492;
+    --chart-series-cpu: #ff8fa3;
+    --chart-series-ram: #5ec492;
+    --chart-series-network: #7ab3f7;
+    --chart-series-disk: #a2cafa;
+    --chart-series-connection: #be9bdd;
+    --chart-grid: #5b4b70;
+    --chart-grid-h: #554363;
+    --chart-now: #554265;
+    --chart-axis: #624d74;
+    --chart-axis-label: #aa99b9;
+    --chart-area-request: rgba(183, 169, 197, .12);
+    --chart-area-balance: rgba(94, 196, 146, .18);
+    --chart-tooltip-bg: rgba(30, 21, 48, .97);
+    --chart-tooltip-border: #2d2040;
+    --chart-tooltip-text: #e8dff0;
+    --chart-cursor: rgba(183, 169, 197, .75);
   }
-
-  html {
-    font-family: var(--font-sans);
-  }
-
-  /* 可见焦点环：键盘可达必须看得见（不靠 UA 默认的细虚线）。 */
-  :focus-visible {
-    outline: 2px solid var(--color-primary);
-    outline-offset: 2px;
-    border-radius: 4px;
-  }
-
-  /* 现代 CSS：/ ↔ /trend 的跨文档视图过渡。 */
-  @view-transition {
-    navigation: auto;
-  }
+  html { font-family: var(--font-sans); background: var(--bg-primary); color: var(--text-primary); }
+  body { background: var(--bg-primary); color: var(--text-primary); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-sm); }
+  @view-transition { navigation: auto; }
   :root { view-transition-name: theme-root; }
-  ::view-transition-old(theme-root),
-  ::view-transition-new(theme-root) { animation-duration: var(--dur-fast); }
+  ::view-transition-old(theme-root), ::view-transition-new(theme-root) { animation-duration: var(--dur-fast); }
   @media (prefers-reduced-motion: reduce) {
-    ::view-transition-old(theme-root),
-    ::view-transition-new(theme-root) { animation-duration: 0ms; }
-  }
-
-  /* 现代 CSS：入场用 @starting-style（弹窗 / toast / 卡片明细），而不是 keyframes。 */
-  .pop-in {
-    opacity: 1;
-    translate: 0 0;
-    transition: opacity var(--dur-normal) var(--ease-enter), translate var(--dur-normal) var(--ease-enter);
-  }
-  @starting-style {
-    .pop-in {
-      opacity: 0;
-      translate: 0 6px;
-    }
-  }
-
-  @media (hover: hover) {
-    .card:hover { box-shadow: var(--elev-2); translate: 0 -2px; }
-    .btn:active { scale: .98; }
-  }
-
-  /* 列表里存在 crit 行时，总览区自动出现警示描边（:has() 驱动，无需脚本）。 */
-  .overview:has(~ .accounts .is-crit) {
-    outline: 2px solid var(--color-error);
-    outline-offset: 2px;
-  }
-
-  /* daisyUI modal 的遮罩色走 --scrim（浅/深各自取值）。 */
-  .modal-backdrop {
-    background: var(--scrim);
+    *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0ms !important; animation-duration: 0ms !important; animation-iteration-count: 1 !important; }
+    ::view-transition-old(theme-root), ::view-transition-new(theme-root) { animation-duration: 0ms; }
   }
 }
 
-/* ── Tailwind 自定义 utility：把「语义辅助文字 / 窄屏可滑动提示」交给框架 ──
-   aux-text 是模板里的语义钩子：颜色由运行时令牌 --text-secondary 提供（浅/深各自取值，
-   满足小字 AA 对比度），而不是每个元素各写一遍 text-*。
-   mask-fade-x / mask-fade-x-none / scrollbar-thin-x 同理：状态由 syncTagMasks 维护的
-   .is-scrollable / .at-end 类驱动，具体声明仍由 Tailwind 编译（不再手写 .tags 组件样式）。 */
-@utility aux-text {
-  color: var(--text-secondary);
+@layer components {
+  .card, .kpis, #trend-stats { border: 1px solid var(--border-color); border-radius: var(--radius-md); background: var(--bg-card); box-shadow: var(--shadow-card); transition: box-shadow var(--transition), transform var(--transition), background-color var(--transition); }
+  .card:hover, .kpis:hover, #trend-stats:hover { box-shadow: var(--shadow-md); }
+  .node-card:active, .row-card:active { transform: scale(.98); transition: transform 100ms ease; }
+  .kpis { border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+  .kpi { min-width: 0; padding: 1rem; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: var(--bg-card); box-shadow: var(--shadow-card); transition: box-shadow var(--transition), transform var(--transition); }
+  .kpi:hover { box-shadow: var(--shadow-md); }
+  .pop-in { opacity: 1; translate: 0 0; transition: opacity var(--dur-normal) var(--ease-enter), translate var(--dur-normal) var(--ease-enter); }
+  @starting-style { .pop-in { opacity: 0; translate: 0 6px; } }
+  @media (hover: hover) { .card:hover { translate: 0 -1px; } .btn:active { scale: .98; } }
+  .overview:has(~ .accounts .is-crit) { outline: 2px solid var(--color-error); outline-offset: 2px; }
+  .modal-backdrop { background: var(--scrim); }
+  .tabular-nums { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .kpi-value, .stat-value, .stat-value * { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: 700; }
+  .kpi-label, .stat-label { color: var(--text-secondary); font-size: .85rem; font-weight: 500; }
+  .header { background: color-mix(in srgb, var(--bg-card) 92%, transparent); border-color: var(--border-color); }
+  .badge-success { border-color: transparent; background: var(--success-light); color: #24583e; }
+  .badge-warning { border-color: transparent; background: var(--warning-light); color: #805000; }
+  .badge-error { border-color: transparent; background: var(--danger-light); color: #8d2535; }
+  :root[data-theme="dark"] .badge-success { color: #5ec492; }
+  :root[data-theme="dark"] .badge-warning { color: #f5b84a; }
+  :root[data-theme="dark"] .badge-error { color: #ff6b7a; }
+  .row-card { cursor: pointer; }
+  .row-card:hover { background: var(--bg-card-hover); }
+  .row-card .card-head, .hero-card h1 { color: var(--text-primary); }
+  .dot { width: .45rem; height: .45rem; border-radius: 9999px; background: var(--accent); }
+  .acct-status.is-ok .dot { background: var(--success); }
+  .acct-status.is-warn .dot { background: var(--warning); }
+  .acct-status.is-bad .dot { background: var(--danger); }
+  .accounts > * { animation: fadeInUp 400ms ease both; }
+  .accounts > :nth-child(1) { animation-delay: 50ms; }
+  .accounts > :nth-child(2) { animation-delay: 100ms; }
+  .accounts > :nth-child(3) { animation-delay: 150ms; }
+  .accounts > :nth-child(4) { animation-delay: 200ms; }
+  .accounts > :nth-child(5) { animation-delay: 250ms; }
+  .accounts > :nth-child(6) { animation-delay: 300ms; }
+  .accounts > :nth-child(n+7) { animation-delay: 350ms; }
+  #updated::before, #cadence::before { content: "·"; margin-right: 1rem; }
 }
 
-@utility mask-fade-x {
-  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
-  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
-}
-
-@utility mask-fade-x-none {
-  -webkit-mask-image: none;
-  mask-image: none;
-}
-
-/* 错误/未同步提示统一带警示前缀（⚠），不靠颜色单独表意（阈值自解释）。 */
-@utility cell-error {
-  &::before { content: '⚠ '; }
-}
-
-@utility scrollbar-thin-x {
-  &::-webkit-scrollbar { height: 4px; }
-  &::-webkit-scrollbar-thumb {
-    background: color-mix(in oklab, var(--color-base-content) 25%, transparent);
-    border-radius: 9999px;
-  }
-}
-
-/* ── 动效降级：尊重 prefers-reduced-motion（全局兜底）────────────── */
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    transition-duration: 0ms !important;
-    animation-duration: 0ms !important;
-    animation-iteration-count: 1 !important;
-    scroll-behavior: auto !important;
-  }
-}
-
-
-@media (max-width: 639px) {
-  .hero-aside .trend-link {
-    flex-basis: 100%;
-    justify-content: flex-start;
-  }
-
-  body {
-    padding-bottom: 1rem;
-    padding-bottom: max(1rem, env(safe-area-inset-bottom));
-  }
-}
+@utility aux-text { color: var(--text-secondary); }
+@utility mask-fade-x { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
+@utility mask-fade-x-none { -webkit-mask-image: none; mask-image: none; }
+@utility cell-error { &::before { content: '⚠ '; } }
+@utility scrollbar-thin-x { &::-webkit-scrollbar { height: 4px; } &::-webkit-scrollbar-thumb { background: color-mix(in oklab, var(--color-base-content) 25%, transparent); border-radius: 9999px; } }
+@media (max-width: 639px) { .hero-aside .trend-link { flex-basis: 100%; justify-content: flex-start; } body { padding-bottom: 1rem; padding-bottom: max(1rem, env(safe-area-inset-bottom)); } }

@@ -4,7 +4,7 @@
 import StatusPill from './StatusPill.astro';
 import { RefreshCw, TrendingUp, ChevronRight } from '@lucide/astro';
 ---
-<section class="hero-card overview card overflow-hidden border border-base-300 bg-base-100 transition-colors">
+<section class="hero-card overview card overflow-hidden border border-base-300 bg-base-100 transition-[box-shadow,transform,background-color]">
   <!-- B24d：类名从 hero 改为 hero-card —— daisyUI 自带 .hero 组件（display:grid;
        place-items:center），一个纯装饰类名把整张卡的内容挤成居中缩水块，
        圆环与「网关状态」行因此失去左对齐。 -->
@@ -15,20 +15,20 @@ import { RefreshCw, TrendingUp, ChevronRight } from '@lucide/astro';
     </div>
     <div class="hero-balance flex flex-wrap items-baseline gap-x-3 gap-y-1">
       <b id="balance" class="text-4xl font-extrabold tracking-tight tabular-nums">—</b>
-      <span id="bal-label" class="bal-label text-sm text-base-content/70">剩余额度（USD）</span>
+      <span id="bal-label" class="bal-label text-sm aux-text">剩余额度（USD）</span>
     </div>
     <div class="hero-usage flex items-center gap-3">
       <!-- B24i：环内读数与左侧旁词共用 render-hero.js 的 heroPctText 同一个字符串（占位值
            也按同一口径写成一位小数），不再一个取整、一个一位小数。 -->
       <span id="usage-gauge" class="radial-progress tabular-nums text-primary [--size:3.25rem]" style="--value:0" role="progressbar" aria-label="本月额度已用 0.0%">0.0%</span>
-      <p id="bal-breakdown" class="hero-breakdown tabular-nums aux-text text-sm text-base-content/70"></p>
+      <p id="bal-breakdown" class="hero-breakdown tabular-nums aux-text text-sm"></p>
     </div>
     <p class="hero-sub text-sm">网关状态 <StatusPill variant="health" id="health" /></p>
-    <p class="hero-meta aux-text flex flex-wrap gap-x-4 gap-y-1 text-xs text-base-content/60">
+    <p class="hero-meta aux-text flex flex-wrap gap-x-4 gap-y-1 text-xs">
       <span id="upstream"></span><span id="updated" class="tabular-nums"></span><span id="cadence" class="hero-cadence"></span>
     </p>
     <div class="hero-aside flex flex-wrap items-center gap-2 border-t border-base-300 pt-2">
-      <span class="hero-tokens text-sm text-base-content/70">累计 token <b id="tokens" class="text-base-content tabular-nums">0</b></span>
+      <span class="hero-tokens text-sm aux-text">累计 token <b id="tokens" class="text-base-content tabular-nums">0</b></span>
       <button id="refresh-quota" class="btn btn-primary btn-sm gap-1" type="button"><RefreshCw size={15} />刷新额度</button>
       <a class="trend-link btn btn-ghost btn-sm gap-1" href="/trend" aria-label="查看近 24 小时趋势">
         <TrendingUp size={15} />近 24 小时趋势<ChevronRight size={14} />

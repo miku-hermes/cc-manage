@@ -392,10 +392,10 @@ test('B19-9：删掉的类名 / 令牌不再出现在 CSS 与 HTML/JS 里', () =
 // ── 10：其余小项 ────────────────────────────────────────────────────
 // 原来查：tokens.css 里 --scrim 浅 rgba(23,35,59,.38) / 深 rgba(0,0,0,.55)，components.css 的 .modal 用 var(--scrim)。
 // 现在查：panel.css 里同一对 --scrim 值，且 daisyUI modal 的 .modal-backdrop 用 var(--scrim)。
-//         等价性：遮罩仍是「浅色半透明蓝黑 / 深色更黑」两套值，仍由同一令牌驱动。
+//         等价性：遮罩仍是「浅色黑色遮罩 / 深色更黑」两套值，仍由同一令牌驱动。
 test('B19-10a：--scrim 令牌（浅/深）与 .modal-backdrop 使用 var(--scrim)', () => {
-  assert.match(PANEL_CSS, /--scrim:\s*rgba\(23,\s*35,\s*59,\s*\.38\)/, '浅色 scrim');
-  assert.match(PANEL_CSS, /:root\[data-theme="dark"\][\s\S]*--scrim:\s*rgba\(0,\s*0,\s*0,\s*\.55\)/, '暗色 scrim');
+  assert.match(PANEL_CSS, /--scrim:\s*rgba\(0,\s*0,\s*0,\s*\.4\)/, '浅色 scrim');
+  assert.match(PANEL_CSS, /:root\[data-theme="dark"\][\s\S]*--scrim:\s*rgba\(0,\s*0,\s*0,\s*\.6\)/, '暗色 scrim');
   assert.match(PANEL_CSS, /\.modal-backdrop\s*\{[^}]*background:\s*var\(--scrim\)/, '.modal-backdrop 用 --scrim');
 });
 

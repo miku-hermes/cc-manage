@@ -27,12 +27,11 @@ function assertElevation(selector, token, expectedComponents) {
 }
 
 test('产物 CSS：所有卡片层级使用项目阴影令牌', () => {
-  assertElevation('.card,.kpis,#trend-stats', '--elev-1', 1);
-  assertElevation('.card:hover', '--elev-2', 1);
-  const token = CSS.match(/--elev-1:([^;}]+)/)?.[1];
-  assert.ok(token, 'built CSS defines --elev-1');
-  assert.equal(token.split(',').length, 2, 'complete --elev-1 has two shadow components');
-  assert.match(token, /#1018280a/);
-  assert.match(token, /#1018280f/);
-  assert.doesNotMatch(token, /transparent|#(?:0{6}|0{8})\b/i);
+  assertElevation('.card,.kpis,#trend-stats', '--shadow-card', 1);
+  assertElevation('.card:hover,.kpis:hover,#trend-stats:hover', '--shadow-md', 1);
+  const token = CSS.match(/--shadow-card:([^;}]+)/)?.[1];
+  assert.ok(token, 'built CSS defines --shadow-card');
+  assert.match(token, /#2d1b3d0d/);
+  assert.match(token, /0\.05|#2d1b3d0d/);
+  assert.doesNotMatch(token, /transparent|rgba?\([^)]*,\s*0(?:\.0+)?\s*\)/i);
 });

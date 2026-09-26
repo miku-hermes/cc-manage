@@ -309,9 +309,9 @@ function gaugeAndBreakdown(shim) {
   return { gaugeText, breakdownText: breakdown, aria: shim.el('usage-gauge').getAttribute('aria-label') };
 }
 
-test('P1：产物卡片阴影引用非透明的现有 elev 令牌', () => {
-  assert.match(CSS, /box-shadow:\s*var\(--elev-1\)/);
-  assert.match(CSS, /--elev-1:0 1px 2px #1018280a/);
+test('P1：产物卡片使用粉紫柔影令牌', () => {
+  assert.match(CSS, /box-shadow:\s*var\(--shadow-card\)/);
+  assert.match(CSS, /--shadow-card:0 2px 8px #2d1b3d0d/);
 });
 
 test('B24i-3：环内呈现百分比，旁文说明用量与额度且不重复百分比', async () => {
