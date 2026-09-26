@@ -433,13 +433,23 @@
 @media (max-width: 639px) {
   .hero-actions { width: 100%; }
   .hero-actions .trend-link { flex: 1 1 auto; justify-content: flex-start; }
-  .hero-clock { font-size: 1.6rem; }
+  .hero-clock { font-size: 1.4rem; }
   .hero-balance b { font-size: 2rem; }
   /* 窄屏：标签（如「剩余额度（USD） · 含 2 个未同步账号」）挤在数字右侧会被压成竖排（实测 102px 高、
      6 行），把整行撑高。允许换行后标签独占下一行，回归 1~2 行。 */
   .hero-balance { flex-wrap: wrap; }
   /* 窄屏环缩小，数字随环径一起缩（不然「68.1%」会撑满内圈压到弧线上）。 */
   .hero-gauge-cap { font-size: .72rem; }
+  /* 窄屏：问候语与时钟要落在同一行 —— 但左列副行「网关状态 可用 3/4」在 384px 下把右列挤到
+     第二行（实测 hero-banner-top 高 137.9px = 两行，时钟 top 156.4 而问候语 87.4）。
+     压紧头像/字号并禁止换行后，两列合计约 308px < 容器 352px。
+     min-width:0 让极窄屏（320px）退化为压缩而不是溢出。 */
+  .hero-banner-top { flex-wrap: nowrap; gap: .6rem; }
+  .hero-avatar { width: 2.5rem; height: 2.5rem; }
+  .hero-avatar-svg { width: 2rem; height: 2rem; }
+  .hero-ident { gap: .6rem; }
+  .hero-greet, .hero-clock-box { min-width: 0; }
+  .hero-sub { font-size: .76rem; gap: .3rem; }
 }
 
 /* 顶栏右侧的固定尺寸控件一律不许被 flex 压缩（否则窄屏下先被压窄再用 overflow:hidden 裁内容）。 */

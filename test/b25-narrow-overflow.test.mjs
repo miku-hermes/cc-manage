@@ -273,3 +273,56 @@ test('B25-C-结构：窄屏换行机制在位，且计算模型证明「不换�
   assert.ok(NAME_CAP <= CARD_CONTENT_PX, '换行后最宽项（名称 206px）仍 ≤ 309px');
   assert.ok(PLAN_PX <= CARD_CONTENT_PX && STATUS_PX <= CARD_CONTENT_PX, '套餐/状态徽章各自也放得下');
 });
+// ── ② Hero 顶区：问候语与时钟必须同一行 ──────────────────────────────
+// 实测踩到：窄屏下左列副行「网关状态 可用 3/4」把小右列整体挤到第二行 ——
+// hero-banner-top 高 137.9px（两行）、时钟 top 156.4 而问候语 top 87.4。
+// 判据取「两者 top 之差 ≤ 12px」（约半个行高）而不是容器高度，避免受字号/行高抖动影响。
+const UTILS_JS = fs.readFileSync(new URL('../panel/public/js/utils.js', import.meta.url), 'utf8');
+
+test('B25-D：Hero 顶区问候语与时钟必须同行（不得被副行挤到第二行）', async (t) => {
+  const pwPath = findPlaywright();
+  if (!pwPath) {
+    t.skip('本机无 Playwright，跳过真实浏览器断言（结构断言见 B25-D-结构）');
+    return;
+  }
+  if (process.env.CC_TEST_HANG_GUARD_MS === '900000') return;
+  const ctx = await startTestGateway({ accounts: [account('主号', 'user_test_alpha')] });
+  t.after(() => ctx.close());
+  const mod = await import(pwPath);
+  const playwright = mod.default ?? mod;
+  const browser = await playwright.chromium.launch();
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 384, height: 900 } });
+  t.after(() => page.close());
+
+  for (const w of [414, 384, 360]) {
+    await page.setViewportSize({ width: w, height: 900 });
+    await page.goto(ctx.baseUrl + '/', { waitUntil: 'networkidle' });
+    await page.waitForTimeout(600);
+    const m = await page.evaluate(() => {
+      const R = (id) => document.getElementById(id).getBoundingClientRect().top;
+      const top = document.querySelector('.hero-banner-top');
+      return {
+        greeting: +R('greeting').toFixed(1),
+        clock: +R('clock').toFixed(1),
+        wrap: getComputedStyle(top).flexWrap,
+        sw: document.documentElement.scrollWidth,
+        iw: window.innerWidth,
+      };
+    });
+    assert.equal(m.wrap, 'nowrap', w + 'px：顶区不得换行（换行会把右列整体挤到第二行）');
+    assert.ok(Math.abs(m.greeting - m.clock) <= 12,
+      w + 'px：问候语 top=' + m.greeting + ' 与时钟 top=' + m.clock + ' 必须同一行（现差 '
+      + Math.abs(m.greeting - m.clock).toFixed(1) + 'px）');
+    assert.ok(m.sw <= m.iw, w + 'px：不得横向溢出（' + m.sw + ' > ' + m.iw + '）');
+  }
+});
+
+test('B25-D-结构：网关状态徽章 ok 状态不得再用绿色底', () => {
+  // 用户反馈「名称下面那个绿色的东西好难看」：ok 是绝大多数时间的状态，
+  // 一律 badge-success 会让徽章常年一片亮绿。现在只有 bad（真异常）保留语义色。
+  assert.match(UTILS_JS, /tone === 'bad' \? 'badge-error' : 'badge-ghost'/,
+    '网关状态徽章的类名只能是 bad→badge-error / 其余→badge-ghost');
+  assert.doesNotMatch(UTILS_JS, /tone === 'ok' \? 'badge-success'/,
+    'ok 不得映射到 badge-success（绿底徽章）');
+});

@@ -18,9 +18,10 @@ function setHealth(text, opts = {}) {
   const el = $('health');
   if (!el) return;
   if (el.textContent !== text) el.textContent = text;
-  // 状态色只表达健康度：bad → badge-error，ok → badge-success，其余中性。
+  // 状态色只表达健康度：bad → badge-error，其余中性。
+  // ok（可用）是最常见状态，用 badge-success 会让徽章一片亮绿（用户反馈"好难看"），故走 ghost。
   const tone = opts.alert ? 'bad' : (opts.tone || '');
-  const badge = tone === 'bad' ? 'badge-error' : tone === 'ok' ? 'badge-success' : 'badge-ghost';
+  const badge = tone === 'bad' ? 'badge-error' : 'badge-ghost';
   el.className = 'pill badge ' + badge + ' ' + tone;
   const role = opts.alert ? 'alert' : 'status';
   const live = opts.alert ? 'assertive' : 'polite';
