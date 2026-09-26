@@ -327,6 +327,11 @@
   .hero-deco .b1 { width: 190px; height: 190px; left: -52px; top: -74px; background: color-mix(in srgb, var(--accent) 34%, transparent); }
   .hero-deco .b2 { width: 150px; height: 150px; left: 36%; bottom: -84px; background: color-mix(in srgb, var(--success) 24%, transparent); }
   .hero-deco .b3 { width: 220px; height: 220px; right: -64px; top: -96px; background: color-mix(in srgb, var(--info) 22%, transparent); }
+  /* 看板娘：素材取自参考主题 komari-mikus 的 mikus.jpg（原图 3541x2213，已压成 webp 75.7KB）。
+     参考主题里它只是主题预览图、页面未使用，这里放到 Hero 装饰层当氛围图：
+     靠右下、左缘渐隐融入卡片、pointer-events:none 不拦点击；窄屏空间不足直接隐藏。 */
+  /* opacity/mask 实测调过：0.5 + 116% 高时视检判定『人物和数据打架』（12.1% 压脸、时钟压帽子），降到水印级并整体下沉。 */
+  .hero-deco .hero-mikus { position: absolute; right: -11%; bottom: -24%; height: 108%; width: auto; opacity: .16; pointer-events: none; -webkit-mask-image: linear-gradient(to left, #000 8%, transparent 68%); mask-image: linear-gradient(to left, #000 8%, transparent 68%); }
   .hero-banner > *:not(.hero-deco) { position: relative; z-index: 1; }
   .hero-banner-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
   .hero-ident { display: flex; align-items: center; gap: .85rem; min-width: 0; }
@@ -518,4 +523,9 @@
 .logo:hover .logo-icon { transform: rotate(-10deg) scale(1.1); }
 @media (max-width: 639px) {
   .logo-icon { width: 28px; height: 28px; }
+}
+
+/* 窄屏：Hero 空间不足，看板娘隐藏 */
+@media (max-width: 639px) {
+  .hero-deco .hero-mikus { display: none; }
 }
