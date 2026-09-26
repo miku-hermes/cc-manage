@@ -295,9 +295,13 @@ test('B25-D：Hero 顶区问候语与时钟必须同行（不得被副行挤到�
   const page = await browser.newPage({ viewport: { width: 384, height: 900 } });
   t.after(() => page.close());
 
-  for (const w of [414, 384, 375, 360]) {
+  // 后两档用放大根字号模拟真机（安卓）字体更宽的情形 —— 用户就是在真机上看到折行的，
+  // 默认字号的 430~320px 全测不出任何问题，说明「只在默认字号下验证」是不够的。
+  for (const [w, zoom] of [[414, null], [384, null], [375, null], [360, null],
+    [375, 'html { font-size: 20px !important; }'], [375, 'html { font-size: 24px !important; }']]) {
     await page.setViewportSize({ width: w, height: 900 });
     await page.goto(ctx.baseUrl + '/', { waitUntil: 'networkidle' });
+    if (zoom) await page.addStyleTag({ content: zoom });
     await page.waitForTimeout(600);
     const m = await page.evaluate(() => {
       const R = (id) => document.getElementById(id).getBoundingClientRect().top;
@@ -307,25 +311,39 @@ test('B25-D：Hero 顶区问候语与时钟必须同行（不得被副行挤到�
         clock: +R('clock').toFixed(1),
         wrap: getComputedStyle(top).flexWrap,
         subH: +document.querySelector('.hero-sub').getBoundingClientRect().height.toFixed(1),
+        // 折行判据不能写死像素高度：根字号放大后正常单行也会到 36px。
+        // 用「高度 ÷ lineHeight」得到实际行数，与字号无关。
+        labelLines: (() => {
+          const l = document.querySelector('.hero-sub-label');
+          if (!l) return null;
+          const lh = parseFloat(getComputedStyle(l).lineHeight);
+          return lh > 0 ? +(l.getBoundingClientRect().height / lh).toFixed(2) : null;
+        })(),
         subScroll: document.querySelector('.hero-sub').scrollWidth,
         subClient: document.querySelector('.hero-sub').clientWidth,
+        restShown: getComputedStyle(document.querySelector('.hero-sub-label-rest')).display !== 'none',
         sw: document.documentElement.scrollWidth,
         iw: window.innerWidth,
       };
     });
-    assert.equal(m.wrap, 'nowrap', w + 'px：顶区不得换行（换行会把右列整体挤到第二行）');
+    const tag = w + 'px' + (zoom ? '（字号放大）' : '');
+    assert.equal(m.wrap, 'nowrap', tag + '：顶区不得换行（换行会把右列整体挤到第二行）');
     assert.ok(Math.abs(m.greeting - m.clock) <= 12,
-      w + 'px：问候语 top=' + m.greeting + ' 与时钟 top=' + m.clock + ' 必须同一行（现差 '
+      tag + '：问候语 top=' + m.greeting + ' 与时钟 top=' + m.clock + ' 必须同一行（现差 '
       + Math.abs(m.greeting - m.clock).toFixed(1) + 'px）');
-    // 「网关状态 可用 3/4」必须整条同行：375/360px 曾实测 sub 高 36.5px（「网关状态」被折成
-    // 两行），单行基准是 24px（.76rem 文字 + 徽章 py-1）。
-    assert.ok(m.subH <= 30,
-      w + 'px：副行必须单行显示（实测高 ' + m.subH + 'px，> 30px 说明「网关状态」被折行了）');
+    // 「网关状态 可用 3/4」必须整条同行：375/360px 曾实测「网关状态」被折成「网关状」+「态」。
+    // 判据用行数而非像素高度 —— 根字号放大时单行也有 36px，写死阈值会把正常情况判红。
+    assert.ok(m.labelLines === null || m.labelLines <= 1.2,
+      tag + '：「网关状态」必须单行显示（实测 ' + m.labelLines + ' 行，> 1.2 说明被折行了）');
     // 不折行还不够 —— 内容必须真的放得下，否则 .hero-sub 的 overflow:hidden 会把徽章切掉一截
     // （360px 实测曾差 11px，比折行更难察觉）。
     assert.ok(m.subScroll <= m.subClient + 1,
-      w + 'px：副行不得被截断（内容 ' + m.subScroll + ' > 可见 ' + m.subClient + '，徽章会被切掉）');
-    assert.ok(m.sw <= m.iw, w + 'px：不得横向溢出（' + m.sw + ' > ' + m.iw + '）');
+      tag + '：副行不得被截断（内容 ' + m.subScroll + ' > 可见 ' + m.subClient + '，徽章会被切掉）');
+    // 真机字体比无头浏览器宽：只靠"腾够宽度"防不住折行（安卓上最后一个「态」字会单独掉到第二行），
+    // 所以窄屏把「网关状态」缩成「网关」——结构上不可能再折。
+    assert.equal(m.restShown, false,
+      tag + '：窄屏必须收掉「状态」两字（真机字体更宽，留着它会把最后一个字挤到第二行）');
+    assert.ok(m.sw <= m.iw, tag + '：不得横向溢出（' + m.sw + ' > ' + m.iw + '）');
   }
 });
 

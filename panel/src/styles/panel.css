@@ -458,9 +458,10 @@
      （min-width:max-content）且不收缩，副行整体 nowrap。极窄屏兜底用省略号，不裁到卡片外。 */
   .hero-greet { min-width: max-content; flex: 0 0 auto; }
   .hero-sub { flex-wrap: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  /* 窄屏收掉「网关状态」四个字：徽章「可用 2/4」语义自足，留着它只是把最后的字挤到第二行。
-     这是在真机上发现的（无头浏览器复现不出），所以从"腾宽度"改为"结构上不挤"。 */
-  .hero-sub-label { display: none; }
+  /* 窄屏把「网关状态」缩成「网关」：真机字体比无头浏览器宽，靠"腾够宽度"防折行不可靠
+     （安卓上实测最后一个「态」字会单独掉到第二行）。砍掉两个字后，"网关 可用 2/4" 仍通顺，
+     且结构上不可能再折。这是在真机上发现的，无头浏览器复现不出。 */
+  .hero-sub-label-rest { display: none; }
 }
 
 /* 顶栏右侧的固定尺寸控件一律不许被 flex 压缩（否则窄屏下先被压窄再用 overflow:hidden 裁内容）。 */
