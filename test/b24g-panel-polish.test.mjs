@@ -460,9 +460,13 @@ test('B24h-1：四行等高，且第 4 行底部 ≤835px、页面无需滚动�
 test('B24g-2：新鲜度文字不是最小字号，两主题对比度均 ≥4.5:1（按令牌计算）', async () => {
   const shim = dom(INDEX_HTML);
   const page = await runInlineScript(INDEX_HTML, shim);
-  page.render(status([account()]));
+  page.render(status([account({ paused: true, pausedUntil: Date.now() + 60000 })]));
   const fresh = shim.document.querySelector('#cards .card-fresh');
   assert.ok(fresh, '新鲜度行必须渲染出来');
+  assert.match(fresh.className, /\btabular-nums\b/, '运行时重建的新鲜度类名必须含 tabular-nums');
+  const resetBadge = shim.document.querySelector('#cards .tags .tag.badge');
+  assert.ok(resetBadge, '重置徽章必须渲染出来');
+  assert.match(resetBadge.className, /\btabular-nums\b/, '运行时重建的 tag badge 类名必须含 tabular-nums');
   // 防作弊：要么改回 opacity/透明度色，要么缩回最小字号，都得红。
   assert.ok(fresh.textContent.includes('额度更新于'), '文案语义不变（不回归）');
 
@@ -487,7 +491,7 @@ test('B24g-2：新鲜度文字不是最小字号，两主题对比度均 ≥4.5:
 
   // 实现锚点：模板与脚本都得用 aux-text（AA 令牌），不得再叠加 text-base-content/NN。
   assert.match(ACCOUNT_CARD_SRC, /class="card-fresh[^"]*\baux-text\b[^"]*\btext-sm\b[^"]*"/, '模板：新鲜度 = aux-text + text-sm');
-  assert.match(RENDER_CARDS_JS, /'card-fresh aux-text text-sm'/, '脚本重建的类名同样'),
+  assert.match(RENDER_CARDS_JS, /'card-fresh aux-text text-sm\b[^']*tabular-nums\b/, '脚本重建的新鲜度类名同样含 tabular-nums'),
   assert.doesNotMatch(ACCOUNT_CARD_SRC, /card-fresh[^"]*text-base-content\//, '不得再用 base-content/NN 的透明色');
 });
 

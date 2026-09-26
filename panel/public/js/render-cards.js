@@ -129,7 +129,7 @@ function fillFresh(root, q) {
   const t = Number(q.fetchedAt);
   const known = Number.isFinite(t) && t > 0;
   const f = freshness(known ? t : NaN);
-  el.className = 'card-fresh aux-text text-sm' + (f.stale ? ' is-stale' : '');
+  el.className = 'card-fresh aux-text text-sm tabular-nums' + (f.stale ? ' is-stale' : '');
   if (known) el.setAttribute('data-fetched-at', String(t));
   if (f.stale) el.setAttribute('title', staleText());
   el.textContent = f.text;
@@ -145,7 +145,7 @@ function fillTags(root, a) {
   clearChildren(host);
   const push = (cls, text) => {
     const span = document.createElement('span');
-    span.className = 'tag badge badge-sm shrink-0 ' + cls;
+    span.className = 'tag badge badge-sm shrink-0 tabular-nums ' + cls;
     span.textContent = text;
     host.appendChild(span);
   };
