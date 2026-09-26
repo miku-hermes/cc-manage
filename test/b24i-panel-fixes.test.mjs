@@ -273,7 +273,14 @@ test('B24i-2：环内数字居中机制完好（真机实测水平 0.00px / 垂�
     assert.equal(v, null, `${prop} 会把环内数字推出中心（当前 ${v}）`);
   }
   // 尺寸是正方形（--size 同时给 width/height），改 size 不会只改一边。
-  assert.ok(tokens.some((t) => /^\[--size:[\d.]+rem\]$/.test(t)), '环尺寸走 [--size:…] 任意属性类');
+  // 尺寸可写在 Tailwind 任意属性类或组件 CSS 里 —— 断言只要求「显式指定」，不绑死写法。
+  const sizeDecl = declForTokens(CSS, tokens, '--size');
+  const sizeInCss = /\.hero-gauge \.radial-progress\s*{[^}]*--size:\s*[\d.]+rem/.test(CSS);
+  assert.ok(tokens.some((t) => /^\[--size:[\d.]+rem\]$/.test(t)) || sizeInCss,
+    `环尺寸必须显式指定（任意属性类或 CSS 声明皆可），不能靠 daisyUI 默认 5rem（当前 decl=${sizeDecl}）`);
+  // 窄屏必须再缩一档：环在窄屏仍是「值+图同行」，尺寸不缩就会把余额挤到换行。
+  assert.match(CSS, /max-width[^{]*\{[\s\S]*?\.hero-gauge \.radial-progress\s*{[^}]*--size:\s*[\d.]+rem/,
+    '窄屏媒体查询里必须给出更小的环尺寸');
 });
 
 // ── ③ 百分比统一口径：环内与旁词逐字符相同 ─────────────────────────────

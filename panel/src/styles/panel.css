@@ -311,9 +311,13 @@
   }
 
   /* ── 欢迎横幅 ───────────────────────────────────────── */
+  /* 首屏预算：hero 与卡片区之间原先一路吃 gap-3/py-4，加起来把第一排挤到视口边缘。
+     这里统一收紧到 0.6rem / 0.8rem（不改信息层级，只收留白）。 */
+  .page-main { gap: .5rem; padding-top: .7rem; padding-bottom: .7rem; }
+
   .hero-banner {
     position: relative; overflow: hidden;
-    padding: 1.1rem 1.25rem 1rem;
+    padding: .9rem 1.25rem .55rem;
     border-radius: var(--radius-lg);
     background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 8%, var(--bg-card)) 0%, var(--bg-card) 58%);
     box-shadow: var(--shadow-card);
@@ -330,20 +334,29 @@
   .hero-avatar-svg { width: 2.6rem; height: 2.6rem; }
   .hero-greet { min-width: 0; }
   .greeting { font-size: 1.45rem; font-weight: 700; letter-spacing: -.01em; line-height: 1.25; }
-  .hero-sub { display: flex; align-items: center; gap: .4rem; font-size: .85rem; color: var(--text-secondary); margin-top: .2rem; }
+  .hero-sub { display: flex; align-items: center; gap: .4rem; font-size: .85rem; color: var(--text-secondary); margin-top: 0; }
   .hero-clock-box { text-align: right; margin-left: auto; }
   .hero-date { font-size: .8rem; color: var(--text-secondary); }
-  .hero-clock { font-size: 2rem; line-height: 1.15; font-weight: 700; color: var(--accent); }
+  .hero-clock { font-size: 1.7rem; line-height: 1.15; font-weight: 700; color: var(--accent); }
   .hero-tokens { font-size: .78rem; margin-top: .1rem; }
-  .hero-banner-mid { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-top: .9rem; padding-top: .85rem; border-top: 1px solid var(--border-light); }
+  .hero-banner-mid { display: flex; flex-direction: column; gap: .1rem; margin-top: .3rem; padding-top: .35rem; border-top: 1px solid var(--border-light); }
+  /* 余额与环同行：环靠右（margin-left:auto），余额过长时先压余额字号，不让整行换行。 */
+  .hero-row-main { display: flex; align-items: center; gap: .75rem; flex-wrap: nowrap; min-width: 0; }
   .hero-balance { display: flex; align-items: baseline; gap: .5rem; min-width: 0; }
-  .hero-balance b { font-size: 2.5rem; font-weight: 800; letter-spacing: -.02em; line-height: 1.05; }
+  .hero-balance b { font-size: 2.35rem; font-weight: 800; letter-spacing: -.02em; line-height: 1.05; }
   .bal-label { font-size: .85rem; }
-  .hero-gauge { display: flex; align-items: center; gap: .65rem; margin-left: auto; min-width: 0; }
+  .hero-gauge { display: flex; align-items: center; gap: .55rem; margin-left: auto; flex: none; }
+  /* daisyUI 的 radial-progress 未完成段是透明的（没有底轨），窄环读起来像一段开口弧线 ——
+     这里把缺省色换成描边色补出底轨。 */
+  .hero-gauge .radial-progress { --size: 2.75rem; font-size: .74rem; font-weight: 700; }
+  .hero-gauge .radial-progress:before {
+    background:
+      radial-gradient(farthest-side, currentColor 98%, #0000) top/var(--thickness) var(--thickness) no-repeat,
+      conic-gradient(currentColor var(--radialprogress), var(--border-color) 0);
+  }
   .hero-gauge-cap { font-size: .78rem; white-space: nowrap; }
   /* 额度构成：贴在余额下方的小字，由标题「额度构成」领起，标签归属唯一
      （不再用 `·` 与「本月已用」并列）。收在 mid 内而不是独占带边框的区块，省首屏高度。 */
-  .hero-main-col { display: flex; flex-direction: column; gap: .15rem; min-width: 0; }
   .hero-compose { display: flex; align-items: baseline; gap: .45rem; flex-wrap: wrap; }
   .hero-compose-cap { font-size: .75rem; flex: none; }
   .hero-breakdown { font-size: .85rem; }
@@ -431,5 +444,7 @@
   .hero-actions .trend-link { flex: 1 1 auto; justify-content: flex-start; }
   .hero-clock { font-size: 1.6rem; }
   .hero-balance b { font-size: 2rem; }
-  .hero-gauge { margin-left: 0; }
+  /* 窄屏环缩小，数字随环径一起缩（不然「68.1%」会撑满内圈压到弧线上）。 */
+  .hero-gauge .radial-progress { --size: 2.6rem; font-size: .7rem; }
+  .hero-gauge-cap { font-size: .72rem; }
 }

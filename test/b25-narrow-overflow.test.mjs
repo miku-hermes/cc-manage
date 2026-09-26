@@ -16,6 +16,7 @@ import path from 'node:path';
 import { startTestGateway } from './helpers.mjs';
 
 const ACCOUNT_CARD_SRC = fs.readFileSync(new URL('../panel/src/components/AccountCard.astro', import.meta.url), 'utf8');
+const PANEL_CSS_SRC = fs.readFileSync(new URL('../panel/src/styles/panel.css', import.meta.url), 'utf8');
 
 // ── ① 真实 Chromium ──────────────────────────────────────────────────
 function findPlaywright() {
@@ -119,6 +120,9 @@ test('B25-C：窄屏无横向溢出 + 卡片网格真机几何（列数/等高/�
   // 子进程计时挤成假红（实测全量下稳定复现 ETIMEDOUT，单跑却绿）。
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(ctx.baseUrl + '/', { waitUntil: 'networkidle' });
+  // 几何断言必须在字体就绪后量：字体未就绪时行高不同（实测同一页面差 ~10px），
+  // 会让「首屏第一排」这类边界断言在负载高的全量运行里随机翻车。
+  await page.evaluate(() => document.fonts.ready);
   await page.waitForFunction(
     () => document.querySelectorAll('#cards .acct-card').length === 4,
     null,
@@ -168,6 +172,32 @@ test('B25-C：窄屏无横向溢出 + 卡片网格真机几何（列数/等高/�
   assert.ok(geo.nameClipped <= 1,
     `只有刻意构造的超长名（1 张）允许截断，其余账号名必须完整显示（实际被裁 ${geo.nameClipped} 张）`);
   assert.ok(geo.clippedUsesEllipsis, '被截断的名称必须用省略号（text-overflow: ellipsis）降级，不是硬裁或撑破卡片');
+
+  // ── 窄屏 Hero：环比不得独占一行（值+图同行）────────────────────────────────
+  // 实测（安卓 384px）：环被挤到「额度构成」下面独占一行，左贴边、右侧空掉半行，
+  // 而且紧挨额度构成下方容易被读成同一组数据。改法是余额与环同行（KPI 卡通行排法）。
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.waitForTimeout(150);
+  const hero = await page.evaluate(() => {
+    const r = (id) => { const e = document.getElementById(id); return e ? e.getBoundingClientRect() : null; };
+    const b = r('balance'); const g = r('usage-gauge'); const cap = r('gauge-cap'); const bd = r('bal-breakdown');
+    return {
+      bTop: b.top, bBottom: b.bottom, bRight: b.right,
+      gTop: g.top, gBottom: g.bottom, gLeft: g.left, gW: g.width,
+      capRight: cap.right, bdTop: bd.top,
+      sw: document.documentElement.scrollWidth, iw: window.innerWidth,
+    };
+  });
+  assert.ok(hero.gBottom > hero.bTop && hero.gTop < hero.bBottom,
+    `窄屏下环必须与余额同行（余额 ${Math.round(hero.bTop)}-${Math.round(hero.bBottom)}，环 ${Math.round(hero.gTop)}-${Math.round(hero.gBottom)}）`);
+  assert.ok(hero.gLeft > hero.bRight - 4,
+    `环应在余额右侧（环 x=${Math.round(hero.gLeft)}，余额右缘 ${Math.round(hero.bRight)}）`);
+  assert.ok(hero.capRight <= hero.iw, `环旁标签不得溢出（右缘 ${Math.round(hero.capRight)} > ${hero.iw}）`);
+  assert.ok(hero.bdTop >= hero.bBottom - 2, '额度构成必须落在余额行下方，不与环抢同一行');
+  assert.ok(hero.sw <= hero.iw, `窄屏 hero 不得横向溢出（${hero.sw} > ${hero.iw}）`);
+  // daisyUI 的 radial-progress 未完成段本身是 #0000（透明）→ 窄环读起来像一段开口弧线。
+  assert.match(PANEL_CSS_SRC, /\.hero-gauge \.radial-progress:before\s*\{[^}]*var\(--border-color\)/,
+    '环必须补出底轨（daisyUI 默认未完成段透明，没有底轨）');
 });
 
 // ── ② 无浏览器的结构 + 计算模型（始终运行，变异必红）───────────────

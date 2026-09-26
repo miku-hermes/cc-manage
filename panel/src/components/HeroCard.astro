@@ -42,21 +42,22 @@ import { RefreshCw, TrendingUp, ChevronRight } from '@lucide/astro';
   </div>
 
   <div class="hero-banner-mid">
-    <div class="hero-main-col">
+    <!-- 值 + 图同行（KPI 卡的通行排法）：窄屏下环若单独占一行，右侧会空掉半行，
+         且环紧贴「额度构成」下方容易被读成同一组数据。环靠右与余额同排即可消掉这两点。 -->
+    <div class="hero-row-main">
       <div class="hero-balance">
         <b id="balance" class="tabular-nums">—</b>
         <span id="bal-label" class="bal-label aux-text">剩余额度（USD）</span>
       </div>
-      <!-- 额度构成紧贴在余额下方、由标题「额度构成」领起：以前它和「本月已用」用 `·` 并列在同一行，
-           读者会把构成金额读成「本月已用金额」（剩余额度与月度额度数值接近时更会串味）。 -->
-      <div class="hero-compose">
-        <span class="hero-compose-cap aux-text">额度构成</span>
-        <p id="bal-breakdown" class="hero-breakdown tabular-nums"></p>
+      <div class="hero-gauge">
+        <span id="usage-gauge" class="radial-progress tabular-nums text-primary" style="--value:0" role="progressbar" aria-label="本月额度已用 0.0%">0.0%</span>
+        <span id="gauge-cap" class="hero-gauge-cap aux-text">本月已用</span>
       </div>
     </div>
-    <div class="hero-gauge">
-      <span id="usage-gauge" class="radial-progress tabular-nums text-primary [--size:3.5rem]" style="--value:0" role="progressbar" aria-label="本月额度已用 0.0%">0.0%</span>
-      <span id="gauge-cap" class="hero-gauge-cap aux-text">本月已用</span>
+    <!-- 额度构成独立一行、由标题领起：以前它和「本月已用」用 `·` 并列，读者会把构成金额读成「本月已用金额」。 -->
+    <div class="hero-compose">
+      <span class="hero-compose-cap aux-text">额度构成</span>
+      <p id="bal-breakdown" class="hero-breakdown tabular-nums"></p>
     </div>
   </div>
 
