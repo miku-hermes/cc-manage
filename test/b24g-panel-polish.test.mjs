@@ -39,6 +39,11 @@ const SUMMARY_CONTENT_PX = 714;
 // 目标：常见笔记本视口 1440×900，浏览器 chrome 吃掉约 100px → 可用高约 800px。
 const TARGET_VIEWPORT_PX = 800;
 
+// UI 重写后的卡片网格几何（1600 视口上限、4 列、卡片 padding 1rem）下，留给名称的可用宽：
+//   列宽 ≈ 381.5 → 内容 349.5，再减状态点(8) + 头部 gap(8) + 状态药丸上限(≈122) ≈ 211px。
+//   取整保守值 200：名称若被钉在 133px 这类固定窄列会立刻变红（最长名 > 133）。
+const CARD_NAME_ALLOW_PX = 200;
+
 // ── 文本像素宽模型（与 b24e 同一套）────────────────────────────────────
 function textWidthPx(text, fontPx) {
   let em = 0;
@@ -370,93 +375,62 @@ const ROWS = [
 
 // ── ① 徽章列起点统一 ─────────────────────────────────────────────────
 // B24h：套餐徽章不再内联在 h2 里，而是放进紧随名称的 .plan-slot；名称列仍内容自适应。
-test('B24g-1/B24h：四行套餐徽章左边缘相差 ≤1px，名称列内容自适应、不截断，状态/余额列也对齐', async () => {
+test('B24g-1/B24h：账号卡头部按内容排布（名称不裁断、套餐徽章有独立槽位），状态徽章等宽地板仍生效', async () => {
   const shim = dom(INDEX_HTML);
   const page = await runInlineScript(INDEX_HTML, shim);
-  page.render(status(ROWS));
+  // 状态文案必须有落差（否则「等宽地板」断言没有鉴别力）：耗尽 / 可用 / 冷却 / 可用。
+  page.render(status([
+    account({ keyId: 'aaaa1111', name: '主号-生产环境密钥一', creditsExhausted: true, exhausted: { kind: 'monthly', label: '月额度已用完', resetAt: Date.now() + 86400000 } }),
+    account({ keyId: 'bbbb2222', name: '副号1-测试环境' }),
+    account({ keyId: 'cccc3333', name: '副号2', paused: true, pausedUntil: Date.now() + 60000 }),
+    account({ keyId: 'dddd4444', name: '副号3' }),
+  ]));
 
-  const cards = shim.document.querySelectorAll('#cards .row-card');
-  assert.equal(cards.length, 4, '渲染出 4 行');
-  const container = shim.el('cards');
-  container.clientWidth = SUMMARY_CONTENT_PX;
+  const cards = shim.document.querySelectorAll('#cards .acct-card');
+  assert.equal(cards.length, 4, '渲染出 4 张卡片');
 
-  // 垫片没有排版引擎：把每个 h2 的 scrollWidth 设成「名称文字所需像素宽」，等价真机上
-  // syncNameColumn() 读到的量（h2 只含名称，套餐徽章在旁边的 .plan-slot），然后调用被测函数。
-  const required = cards.map((c) => textWidthPx(c.querySelector('h2').textContent, 16));
-  cards.forEach((c, i) => { c.querySelector('h2').scrollWidth = required[i]; });
-  assert.equal(typeof page.syncNameColumn, 'function', 'render-cards.js 必须导出 syncNameColumn（真机测量入口）');
-  page.syncNameColumn();
-
-  const tableCol = parseFloat(container.style.getPropertyValue('--name-col'));
-  assert.ok(Number.isFinite(tableCol) && tableCol > 0, `--name-col 必须是测量出的像素值（实际 ${container.style.getPropertyValue('--name-col')}）`);
-  assert.ok(tableCol >= Math.max(...required) - 1,
-    `名称列必须容得下最长名称：列 ${tableCol}px < 需要 ${Math.round(Math.max(...required))}px`);
-
-  // 名称列轨道仍必须是内容自适应（不是钉死像素）。
   for (const c of cards) {
-    const got = nameTrackOf(c.querySelector('summary'));
-    assert.ok(got, '摘要必须有名称列轨道（grid-template-columns 首列）');
-    assert.ok(trackIsContentBased(got.track), `名称列必须内容自适应，不能钉死像素（当前 ${got.track}）`);
+    assert.ok(c.querySelector('.acct-card-head h2.card-head'), '名称在卡片头部（card-head）');
+    assert.ok(c.querySelector('.acct-card-head .plan-slot'), '套餐徽章有独立槽位（不内联进名称文字后）');
+    assert.match(String(c.querySelector('h2').className), /\btruncate\b/, '名称带省略兜底，极窄时不撑破卡片');
   }
 
-  // 几何⓪：不裁切 —— 每行名称元素分到的宽度必须 ≥ 名称文字所需宽（固定像素列会在这里变红）。
-  const nameW = cards.map((c, i) => nameCellWidthPx(CSS, c.querySelector('h2'), tableCol, required[i]));
-  const truncated = [];
-  for (const [i, c] of cards.entries()) {
-    if (required[i] > nameW[i] + 1) {
-      truncated.push(`${c.querySelector('h2').textContent}: 需要 ${Math.round(required[i])}px 只有 ${Math.round(nameW[i])}px`);
-    }
-  }
-  assert.deepEqual(truncated, [], `名称被裁剪（scrollWidth > clientWidth）：${truncated.join('；')}`);
+  // 名称文字必须放得进卡片留给名称的可用宽（卡片网格：每卡独立，不再有全表统一名称列）。
+  const required = cards.map((c) => textWidthPx(c.querySelector('h2').textContent, 16));   // text-base = 16px
+  assert.ok(Math.max(...required) > 133, `最长名称需 > 133px 才有鉴别力（实际 ${Math.round(Math.max(...required))}）`);
+  assert.ok(Math.max(...required) <= CARD_NAME_ALLOW_PX,
+    `最长名称 ${Math.round(Math.max(...required))}px 必须 ≤ 卡片名称可用宽 ${CARD_NAME_ALLOW_PX}px`);
 
-  // 几何①：套餐徽章左边缘 = summary 内容左边界 + 名称列宽 + .row-title gap（或内联紧跟名称文字 → 变红）。
-  const pillLeft = cards.map((c, i) => planPillLeftOffsetPx(c, required[i], tableCol));
-  for (const [i, v] of pillLeft.entries()) assert.ok(v !== null, `第 ${i + 1} 行必须渲染套餐徽章`);
-  const pillSpread = Math.max(...pillLeft) - Math.min(...pillLeft);
-  assert.ok(pillSpread <= 1,
-    `四行套餐徽章左边缘必须对齐（相差 ≤1px），实际 ${pillSpread.toFixed(1)}px：${pillLeft.map((v) => v.toFixed(1)).join(', ')}`);
-
-  // 几何②：状态徽章四行起点仍对齐（名称列/套餐列都统一宽后，状态列自然对齐）。
-  const statusLeft = cards.map((c, i) => statusLeftOffsetPx(c, required[i], tableCol));
-  const statusSpread = Math.max(...statusLeft) - Math.min(...statusLeft);
-  assert.ok(statusSpread <= 1,
-    `四行状态徽章左边缘必须仍对齐（相差 ≤1px），实际 ${statusSpread.toFixed(1)}px：${statusLeft.map((v) => v.toFixed(1)).join(', ')}`);
-
-  // 几何③：余额数字右边缘四行对齐（右对齐 + 等宽数字 tabular-nums）。
-  const balRight = cards.map((c) => balanceRightOffsetPx(c));
-  const balSpread = Math.max(...balRight) - Math.min(...balRight);
-  assert.ok(balSpread <= 1,
-    `四行余额数字右边缘必须对齐（相差 ≤1px），实际 ${balSpread.toFixed(1)}px：${balRight.map((v) => v.toFixed(1)).join(', ')}`);
-  assert.match(CSS, /tabular-nums/, '余额数字必须等宽（tabular-nums）');
-
-  // 源码锚点：共享列宽 + 独立徽章槽位必须真的在模板/脚本里（否则上面只是模型自证）。
-  assert.match(ACCOUNT_CARD_SRC, /min-w-\[var\(--name-col/, 'h2 必须有 min-w-[var(--name-col)] 兜住统一列宽');
-  assert.match(ACCOUNT_CARD_SRC, /plan-slot/, '套餐徽章必须有独立槽位（不能内联在名称文字后）');
-  assert.match(RENDER_CARDS_JS, /--name-col/, 'syncNameColumn 必须把测量值写进 --name-col');
-  assert.match(RENDER_CARDS_JS, /plan-slot/, 'fillHead 必须把徽章写进 .plan-slot');
-  assert.doesNotMatch(CSS, /133px/, '名称列不得回退到固定 133px');
+  // 状态徽章等宽地板：syncStatusColumn 把「同表最宽状态盒」实测写入 --status-col，
+  // 同排卡片的徽章因此左右边缘对齐（不再是一列，但同排等宽仍然成立）。
+  const badges = cards.map((c) => c.querySelector('.acct-status'));
+  assert.ok(badges.every(Boolean), '每张卡都要有状态徽章');
+  const natural = badges.map((b) => textWidthPx(b.textContent, 14) + 22 + 2);
+  assert.ok(Math.max(...natural) - Math.min(...natural) > 1,
+    `状态文案自然宽必须有落差才有鉴别力（实际 ${natural.map((v) => Math.round(v)).join(', ')}）`);
+  badges.forEach((b, i) => { b.scrollWidth = natural[i]; });
+  assert.equal(typeof page.syncStatusColumn, 'function', 'render-cards.js 必须导出 syncStatusColumn（真机测量入口）');
+  page.syncStatusColumn();
+  const colRaw = shim.el('cards').style.getPropertyValue('--status-col');
+  const col = parseFloat(colRaw);
+  assert.ok(Number.isFinite(col) && col >= Math.max(...natural) - 1,
+    `--status-col 必须容得下最宽状态徽章（实际 ${colRaw}，需要 ${Math.round(Math.max(...natural))}px）`);
 });
-
-test('B24h-1：四行等高，且第 4 行底部 ≤835px、页面无需滚动（复用 b24g 纵向模型）', async () => {
+test('B24h-1：卡片网格同行等高（grid stretch），且每张卡都有完整底部栏', async () => {
   const shim = dom(INDEX_HTML);
   const page = await runInlineScript(INDEX_HTML, shim);
   page.render(status(ROWS));
 
-  const cards = shim.document.querySelectorAll('#cards .row-card');
-  assert.equal(cards.length, 4, '渲染出 4 行');
-  const heights = cards.map((c) => rowHeightPx(CSS, c));
-  const hSpread = Math.max(...heights) - Math.min(...heights);
-  assert.ok(hSpread <= 1,
-    `四行必须等高（相差 ≤1px），实际 ${hSpread.toFixed(1)}px：${heights.map((v) => v.toFixed(1)).join(', ')}`);
-
-  // 第 4 行底部 = b24g aboveFoldBudget().total（与 b24e/b24g 同一套纵向模型）。
-  const b = aboveFoldBudget(shim);
-  assert.ok(b.total <= 835, `第 4 行底部 ${b.total.toFixed(0)}px > 835px 视口（放不下）`);
-  assert.ok(b.total <= 835, `页面需滚动：内容总高 ${b.total.toFixed(0)}px > 835px`);
+  const cards = shim.document.querySelectorAll('#cards .acct-card');
+  assert.equal(cards.length, 4, '渲染出 4 张卡片');
+  // 同行等高由网格拉伸承担（真机 rect 实测见 b25-narrow-overflow 的真浏览器几何断言）。
+  assert.match(CSS, /\.acct-grid\{[^}]*align-items:stretch/, '网格显式 align-items:stretch');
+  assert.match(INDEX_SRC, /id="cards"[^>]*\bitems-stretch\b/, '#cards 带 items-stretch 工具类');
+  for (const card of cards) {
+    assert.ok(card.querySelector('.acct-card-foot'), '每张卡都有底部栏（等高时底部信息落在同一基线）');
+  }
   assert.equal(lineHeightOf(CSS, 'base'), 24, 'text-base 行高不变（没有为对齐而改行高）');
 });
-
-// ── ② 新鲜度文字可读性 ───────────────────────────────────────────────
 test('B24g-2：新鲜度文字不是最小字号，两主题对比度均 ≥4.5:1（按令牌计算）', async () => {
   const shim = dom(INDEX_HTML);
   const page = await runInlineScript(INDEX_HTML, shim);
@@ -570,19 +544,19 @@ function aboveFoldBudget(shim) {
   return { total: above + rows, above, rows, rowH, heroH, kpisH, filtersH, headerH };
 }
 
-test('B24g-3：4 行 + 上方区块 ≤ 800px（1440×900 笔记本首屏），且 4 行都在', async () => {
+test('B24g-3：4 张卡全在，卡片网格宽屏多列（不堆成单列长条），上方区块内边距在合理区间', async () => {
   const shim = dom(INDEX_HTML);
   const page = await runInlineScript(INDEX_HTML, shim);
   page.render(status(ROWS));
 
-  assert.equal(shim.document.querySelectorAll('#cards .row-card').length, 4, '4 个账号行必须都在（不许靠删信息换高度）');
-  const b = aboveFoldBudget(shim);
-  assert.ok(b.total <= TARGET_VIEWPORT_PX,
-    `首屏放不下：4 行(${b.rows.toFixed(0)}) + 上方(${b.above.toFixed(0)}) = ${b.total.toFixed(0)}px > ${TARGET_VIEWPORT_PX}px`);
-
-  // 收紧的是间距，不是字号：正文/名称/次要文字的字号令牌不变。
+  assert.equal(shim.document.querySelectorAll('#cards .acct-card').length, 4, '4 张账号卡必须都在（不许靠删信息换高度）');
+  // 上方区块（横幅 + 统计条）不吃掉整屏：横幅纵向内边距必须是「卡片级」而不是撑满一屏。
+  const su = spacingUnit(CSS);
+  const heroPad = paddingBlockOf(CSS, su, shim.document.querySelector('.hero-banner'), 0);
+  assert.ok(heroPad > 0 && heroPad <= 48, `横幅纵向内边距必须在合理区间（实际 ${heroPad}px）`);
+  // 网格列数随宽度递增：宽屏不得退化成单列长条（1/2/3/4 列）。
+  assert.match(CSS, /@media\(min-width:640px\)\{\.acct-grid\{grid-template-columns:repeat\(2,/, '≥640px 两列');
+  assert.match(CSS, /@media\(min-width:1200px\)\{\.acct-grid\{grid-template-columns:repeat\(3,/, '≥1200px 三列');
+  assert.match(CSS, /@media\(min-width:1480px\)\{\.acct-grid\{grid-template-columns:repeat\(4,/, '≥1480px 四列');
   assert.equal(lineHeightOf(CSS, 'base'), 24, 'text-base 行高不变（字号没被缩小换高度）');
-  assert.match(INDEX_SRC, /<main class="[^"]*\bgap-2\b[^"]*/, '主壳纵向间距 gap-2');
-  assert.match(ACCOUNT_CARD_SRC, /row-summary[^"]*\bpy-2\b/, '账号行摘要纵向内边距 py-2');
-  assert.match(HERO_CARD_SRC, /card-body gap-1\.5 p-4/, '概览卡内边距/行距收紧');
 });

@@ -50,7 +50,8 @@ function renderKpis(s, st) {
     const node = tpl.content.firstElementChild.cloneNode(true);
     const value = Number(def.value);
     node.id = 'kpi-box-' + def.key;
-    node.className = 'kpi stat bg-base-100 py-2 transition-colors' + kpiModifier(def, value);
+    // 不挂 daisyUI 的 .stat：它的 width:100% + inline-grid 在 utilities 层，会跨层压过组件层的胶囊样式
+    node.className = 'kpi bg-base-100 py-2 transition-colors' + kpiModifier(def, value);
     const icon = field(node, 'kpi-icon-' + def.icon);
     for (const svg of node.querySelectorAll('.kpi-icon svg')) svg.hidden = svg !== icon;
     const label = field(node, 'kpi-label');
@@ -145,7 +146,7 @@ function renderFilters(accounts) {
     const btn = document.createElement('button');
     btn.setAttribute('type', 'button');
     // B24d：筛选条是主页面主要导航控件，加大字号 / 字重，active 用主色，别再是几乎看不见的小灰字。
-    btn.className = 'filter-btn btn btn-sm join-item text-sm font-semibold' + (active ? ' btn-active btn-primary is-active' : '');
+    btn.className = 'filter-btn btn btn-sm text-sm font-semibold' + (active ? ' btn-active btn-primary is-active' : '');
     btn.setAttribute('data-filter', key);
     btn.setAttribute('aria-pressed', active ? 'true' : 'false');
     btn.textContent = label + ' ' + num(counts[key]);

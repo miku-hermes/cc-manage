@@ -74,6 +74,9 @@ function tick() {
   if (date) date.textContent = now.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' });
   const greeting = $('greeting');
   if (greeting) greeting.textContent = greetingOf(now.getHours());
+  // 欢迎横幅的数码时钟（参考主题形态）：24 小时制、秒级刷新。
+  const clock = $('clock');
+  if (clock) clock.textContent = now.toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
   tickFreshness();
 }
 

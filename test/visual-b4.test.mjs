@@ -55,10 +55,8 @@ function status(accounts, extra = {}) {
 test('P0：渲染后的账号余额明确标注为剩余', async () => {
   const { page } = await boot();
   const rendered = page.card(account({ lastQuota: quota({ remaining: 6.62 }) }));
-  assert.match(rendered, /<span class=\"text-xs aux-text\">剩余<\/span><b class=\"usable-balance[^>]*>6\.62<\/b>/);
+  assert.match(rendered, /<span class="acct-bal-cap">剩余<\/span>\s*<b class="usable-balance[^>]*>6\.62<\/b>/);
 });
-
-// ── ① 构成明细聚合：两个账号的 credits 三项分别求和 ──────────────────
 test('B4-1：Hero 构成明细对两账号的月度/购买/赠送分别求和（真实 credits）', async () => {
   const { shim, page } = await boot();
   const a = account({ keyId: 'aaaa1111', lastQuota: quota({ credits: { monthlyCredits: 2, purchasedCredits: 1, freeCredits: 0.5 } }) });
@@ -294,11 +292,14 @@ test('B5-4：暂停中卡用 Lucide pause 双竖条图标', () => {
 // B24 改写：原来查 dashboard.css 的 `.kpi{flex-direction:column}` 与 `.kpi-head{display:flex;align-items:center}`。
 // 现在查：KPI 卡走 daisyUI stat（单列 inline-grid → 竖排），kpi-head 自带 flex items-center 工具类，
 // 且构建 CSS 里确实产出这两条声明。等价性：仍是「卡片竖排 + 标题行横向居中并排」。
-test('B5-5：KPI 竖排（daisyUI stat），kpi-head 横向并排（flex items-center）', () => {
+test('B5-5：KPI 胶囊横排（不挂 daisyUI .stat，避免 width:100% 跨层独占一行）', () => {
   assert.match(KPI_COMPONENT, /class="kpi-head stat-title flex items-center/, 'kpi-head 横向并排');
-  assert.match(KPI_COMPONENT, /class="kpi stat bg-base-100"/, 'KPI 卡走 daisyUI stat');
+  assert.doesNotMatch(KPI_COMPONENT, /class="kpi stat bg-base-100"/,
+    'KPI 胶囊不再挂 daisyUI .stat（utilities 层的 width:100% 会跨层压过组件层样式，实测导致胶囊竖排）');
+  assert.match(KPI_COMPONENT, /class="kpi bg-base-100"/, 'KPI 胶囊类名固定');
   const css = styleText(INDEX_HTML);
-  assert.match(css, /\.stat\{[^}]*grid-template-columns:repeat\(1,\s*1fr\)/, 'stat 单列（竖排）');
+  assert.match(css, /\.kpi-pills\{[^}]*display:flex/, '统计胶囊容器横排');
+  assert.match(css, /\.kpi-pills \.kpi\{[^}]*flex:(?:0 1 auto|0 auto)/, '单个胶囊按内容宽排布（不独占一行）');
   assert.match(css, /\.flex\{display:flex\}/, 'flex 工具类存在');
   assert.match(css, /\.items-center\{align-items:center\}/, 'items-center 工具类存在');
 });

@@ -53,7 +53,7 @@ test('首页详情：真实数据填充、模态框 inert/焦点归还与窄屏�
   await page.goto(ctx.baseUrl + '/', { waitUntil:'networkidle' });
   const trigger = page.getByRole('button', { name:'查看 详情样例 详情' });
   await trigger.waitFor();
-  actualKeyId = await page.locator('.row-card').getAttribute('data-key-id');
+  actualKeyId = await page.locator('.acct-card').getAttribute('data-key-id');
   const originalNodes = await page.locator('body *').all();
   const originalInert = await Promise.all(originalNodes.map(node => node.getAttribute('inert')));
   await trigger.press('Enter');
@@ -72,13 +72,13 @@ test('首页详情：真实数据填充、模态框 inert/焦点归还与窄屏�
   await trigger.press('Enter');
   await page.waitForFunction(() => document.getElementById('m-detail-chart-empty')?.textContent === '数据不足');
   assert.equal(await page.locator('#m-detail h3').allInnerTexts().then(lines => lines.includes('消耗与预测')), true);
-  const geometry = await page.evaluate(() => { const card=document.querySelector('.row-card'), summary=card.querySelector('.row-summary'), dialog=document.querySelector('.detail-dialog'); const status=card.querySelector('.acct-status'); const after={cardHeight:card.getBoundingClientRect().height,cardPadding:getComputedStyle(summary).paddingLeft,numberFont:getComputedStyle(document.querySelector('.usable-balance')).fontSize,lineGap:getComputedStyle(summary).rowGap,statusFont:getComputedStyle(status).fontSize,statusPadding:getComputedStyle(status).padding,dialogScrollWidth:dialog.scrollWidth,dialogClientWidth:dialog.clientWidth}; summary.style.paddingBlock='8px'; summary.style.paddingLeft='16px'; status.style.fontSize='12px'; status.style.padding='2px 8px'; const button=card.querySelector('.detail-trigger'); button.style.display='none'; const before={cardHeight:card.getBoundingClientRect().height,cardPadding:getComputedStyle(summary).paddingLeft,numberFont:after.numberFont,lineGap:getComputedStyle(summary).rowGap,statusFont:getComputedStyle(status).fontSize,statusPadding:getComputedStyle(status).padding}; summary.style.paddingBlock=''; summary.style.paddingLeft=''; status.style.fontSize=''; status.style.padding=''; button.style.display=''; return {before,after}; });
-  assert.notEqual(geometry.after.cardPadding, geometry.before.cardPadding);
+  const geometry = await page.evaluate(() => { const card=document.querySelector('.acct-card'), head=card.querySelector('.acct-card-head'), dialog=document.querySelector('.detail-dialog'); const status=card.querySelector('.acct-status'); const after={cardHeight:card.getBoundingClientRect().height,headPad:getComputedStyle(head).paddingLeft,numberFont:getComputedStyle(document.querySelector('.usable-balance')).fontSize,headGap:getComputedStyle(head).gap,statusFont:getComputedStyle(status).fontSize,statusPadding:getComputedStyle(status).padding,dialogScrollWidth:dialog.scrollWidth,dialogClientWidth:dialog.clientWidth}; head.style.paddingLeft='24px'; status.style.fontSize='12px'; status.style.padding='2px 8px'; const button=card.querySelector('.detail-trigger'); button.style.display='none'; const before={cardHeight:card.getBoundingClientRect().height,headPad:getComputedStyle(head).paddingLeft,numberFont:after.numberFont,headGap:getComputedStyle(head).gap,statusFont:getComputedStyle(status).fontSize,statusPadding:getComputedStyle(status).padding}; head.style.paddingLeft=''; status.style.fontSize=''; status.style.padding=''; button.style.display=''; return {before,after}; });
+  assert.notEqual(geometry.after.headPad, geometry.before.headPad);
   assert.ok(parseFloat(geometry.after.statusFont) > parseFloat(geometry.before.statusFont));
   assert.ok(geometry.after.dialogScrollWidth <= geometry.after.dialogClientWidth, `详情横向溢出 ${geometry.after.dialogScrollWidth} > ${geometry.after.dialogClientWidth}`);
   console.log('首页账号卡尺寸（375px）', JSON.stringify(geometry));
   await page.evaluate(() => window.renderCards());
-  const currentTrigger = page.locator(`.row-card[data-key-id="${actualKeyId}"] .detail-trigger`);
+  const currentTrigger = page.locator(`.acct-card[data-key-id="${actualKeyId}"] .detail-trigger`);
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => !document.getElementById('m-detail').classList.contains('open'));
   assert.equal(await page.locator('main').first().getAttribute('inert'), null);

@@ -4,6 +4,7 @@
    - 预绘制主题脚本在首次绘制前套用 data-theme，避免浅色→深色闪一下。
    - color-scheme 分派留在内联 <style> 里（原生控件配色），用 set:html 原样输出。 */
 import '../styles/panel.css';
+import Sakura from '../components/Sakura.astro';
 
 const { title, description } = Astro.props;
 const schemeStyle = `<style>
@@ -36,6 +37,9 @@ try {
 </script>
 </head>
 <body class="min-h-screen bg-base-200 text-base-content antialiased">
+<Sakura />
+<div class="page-shell">
 <slot />
+</div>
 </body>
 </html>

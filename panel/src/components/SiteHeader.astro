@@ -1,10 +1,10 @@
 ---
-/* 站点头部：daisyUI navbar + Lucide 图标。search=false 时（趋势页）不渲染搜索框。 */
-import { Search, Moon, Sun, Lock, Activity } from '@lucide/astro';
-const { search = true } = Astro.props;
+/* 站点头部：品牌 + 搜索 + 视图切换（网格/列表）+ 主题 + 后台入口。
+   search=false 时（趋势页）不渲染搜索框；viewSwitch=false 时（趋势/后台页）不渲染视图切换。 */
+import { Search, Moon, Sun, Lock, Activity, LayoutGrid, List } from '@lucide/astro';
+const { search = true, viewSwitch = false, view = 'grid' } = Astro.props;
 ---
-<header class="header navbar sticky top-0 z-30 min-h-12 border-b border-base-300 bg-base-100/95 backdrop-blur-md shadow-sm p-0">
-  <!-- A6：顶栏内容与 main 共用同一 max-w + px-4 容器，logo 左边界 == 内容列左边界。 -->
+<header class="header navbar sticky top-0 z-30 min-h-14 border-b border-base-300 bg-base-100/95 backdrop-blur-md shadow-sm p-0">
   <div class="navbar-row mx-auto flex w-full max-w-6xl items-center px-4 2xl:max-w-[1600px]">
   <div class="navbar-start gap-2 px-0">
     <span class="logo text-primary" aria-hidden="true"><Activity size={22} /></span>
@@ -16,6 +16,16 @@ const { search = true } = Astro.props;
         <Search size={15} aria-hidden="true" class="shrink-0" />
         <input id="search" type="search" class="min-w-0 grow bg-transparent text-sm" placeholder="搜索账号" aria-label="搜索账号" autocomplete="off">
       </label>
+    )}
+    {viewSwitch && (
+      <div class="view-switch join" role="group" aria-label="视图切换">
+        <button id="view-grid" class="view-btn btn btn-sm join-item{view === 'grid' ? ' is-active' : ''}" type="button" data-view="grid" title="网格视图" aria-label="网格视图" aria-pressed={view === 'grid' ? 'true' : 'false'}>
+          <LayoutGrid size={16} />
+        </button>
+        <button id="view-list" class="view-btn btn btn-sm join-item{view === 'list' ? ' is-active' : ''}" type="button" data-view="list" title="列表视图" aria-label="列表视图" aria-pressed={view === 'list' ? 'true' : 'false'}>
+          <List size={16} />
+        </button>
+      </div>
     )}
     <button id="theme" class="icon-btn btn btn-ghost btn-circle btn-sm tooltip tooltip-bottom" type="button" data-tip="切换主题" title="切换主题" aria-label="切换主题">
       <Moon class="ico-moon dark:hidden" size={18} />

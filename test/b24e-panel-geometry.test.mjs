@@ -25,6 +25,12 @@ const CSS = styleText(INDEX_HTML);
 // 真机实测 `#cards .tags` 宽 = 714，与推导逐像素吻合。
 const SUMMARY_CONTENT_PX = 714;
 
+// UI 重写后的卡片网格几何（1600 视口上限，4 列）：
+//   main = min(1920,1600) = 1600，px-4 → 1568；#cards gap .875rem(14) × 3 = 42 → 列宽 = (1568-42)/4 ≈ 381.5；
+//   卡片 padding 1rem×2 = 32 → 内容 349.5；再减状态点(8) + 头部 gap(8) + 状态药丸实测上限(≈122) ≈ 211。
+//   取整保守值 200px：名称若被钉在 133px 这类固定窄列会立刻变红（最长名 > 133）。
+const CARD_NAME_ALLOW_PX = 200;
+
 // ── 可计算的排版几何模型 ──────────────────────────────────────────────
 // 字号 → 文本像素宽的确定性估算：CJK/全角 ≈ 1em，ASCII 常规 ≈ 0.6em，窄字符 ≈ 0.32em。
 // 不做字体度量（无外部依赖），只用于「列够不够宽」的相对判断；真机数字见交付说明。
@@ -163,8 +169,8 @@ test('B24e-1：渲染后每一行名称列宽 >= 名称文本所需宽（没有 
     accounts: ROWS,
   });
 
-  const cards = shim.document.querySelectorAll('#cards .row-card');
-  assert.equal(cards.length, 4, '渲染出 4 行');
+  const cards = shim.document.querySelectorAll('#cards .acct-card');
+  assert.equal(cards.length, 4, '渲染出 4 张卡片');
   const requiredOf = (c) => textWidthPx(c.querySelector('h2').textContent, 16);   // text-base = 16px
   // 鉴别力前提：最长的一个名字必须比旧的固定 133px 列更宽，否则「够不够宽」的断言区分不出来。
   const maxRequired = Math.max(...cards.map(requiredOf));
@@ -172,24 +178,21 @@ test('B24e-1：渲染后每一行名称列宽 >= 名称文本所需宽（没有 
 
   for (const c of cards) {
     const h2 = c.querySelector('h2');
-    const got = nameTrackOf(c.querySelector('summary'));
-    assert.ok(got, '摘要必须有内容自适应的名称列轨道（grid-template-columns 首列）');
-
+    // 新结构：账号排成卡片网格，名称不再有「列轨道」——卡片自身宽度就是它的可用宽。
+    // 可用宽 = 卡片内容宽 - 状态点 - 状态药丸（含量说明见 CARD_NAME_ALLOW_PX 推导）。
     const required = requiredOf(c);
-    const alloc = firstColumnWidth(got.track, required, SUMMARY_CONTENT_PX);
-    assert.ok(alloc.contentBased,
-      `名称列必须是内容自适应轨道，不能用固定像素（当前 ${got.track}）`);
-    // 等价于 scrollWidth <= clientWidth：名称文本需要的宽度必须 <= 名称列分到的宽度。
-    assert.ok(required <= alloc.width,
-      `名称被裁剪：需要 ${Math.round(required)}px，列只分到 ${Math.round(alloc.width)}px（name=${h2.textContent}）`);
+    assert.ok(required <= CARD_NAME_ALLOW_PX,
+      `名称被裁剪：需要 ${Math.round(required)}px，卡片只给名称 ${CARD_NAME_ALLOW_PX}px（name=${h2.textContent}）`);
+    // 极窄兜底仍在位：名称容器必须允许收缩 + 溢出省略，否则长名会把卡片撑破。
+    assert.match(String(h2.className), /\btruncate\b/, '名称元素带 truncate 兜底');
   }
 });
 
-test('B24e-1b：名称列轨道来自真构建产物（不是测试自造的类名）', () => {
-  // ACCOUNT_CARD 的 summary 里写死了 name 列在前，产物里能解析出 max-content 首列。
-  assert.match(ACCOUNT_CARD_SRC, /row-summary[\s\S]*?grid-cols-\[\s*minmax\(0,\s*max-content\)/,
-    'AccountCard 的 summary 首列是内容自适应');
-  assert.doesNotMatch(ACCOUNT_CARD_SRC, /row-summary[\s\S]{0,200}?grid-cols-\[\s*\d+px/, '首列不得是固定像素');
+test('B24e-1b：名称容器的约束来自真构建产物（内容自适应 + 可收缩，不钉像素宽）', () => {
+  // UI 重写：名称在卡片头部按内容排布，靠 min-width:0 允许收缩 + truncate 省略，不用固定列宽。
+  assert.match(ACCOUNT_CARD_SRC, /<h2 class="card-head[^"]*\btruncate\b/, 'AccountCard 的名称元素按内容排布并可省略');
+  assert.match(ACCOUNT_CARD_SRC, /class="acct-card-head[^"]*\bmin-w-0\b/, '卡片头部允许收缩（min-w-0），长名不撑破卡片');
+  assert.doesNotMatch(ACCOUNT_CARD_SRC, /min-w-\[var\(--name-col,[^\]]*\)\]/, '不再钉全表统一名称列宽');
 });
 
 // ── BUG-2 的伴生症状：状态徽章被 daisyUI .status 撞名 → 8px 方点 + 文字换行溢出 ──
@@ -202,7 +205,7 @@ test('B24e-2：状态徽章是内容自适应盒（不撞 daisyUI .status 的固
     stats: { total: 0, errors: 0, clientErrors: 0, totalTokens: 0 },
     accounts: [account({ name: '主号', available: false, creditsExhausted: true, exhausted: { kind: 'monthly', label: '月额度已用完', resetAt: Date.now() + 86400000 } })],
   });
-  const st = shim.document.querySelector('#cards .row-card .acct-status');
+  const st = shim.document.querySelector('#cards .acct-card .acct-status');
   assert.ok(st, '状态徽章必须用不撞 daisyUI 的 acct-status 类');
 
   const tokens = clsTokens(st);

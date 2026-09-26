@@ -75,6 +75,6 @@ function openAccountDetail(account, trigger) {
 document.addEventListener('click', e => {
   const button=e.target?.closest?.('.detail-trigger'); if(!button)return;
   e.preventDefault(); e.stopPropagation();
-  const card=button.closest('.row-card'); const key=card?.getAttribute('data-key-id');
+  const card=button.closest('[data-key-id]'); const key=card?.getAttribute('data-key-id');
   const account=state.data?.accounts?.find(a=>String(a.keyId)===String(key)); if(account)openAccountDetail(account,button);
 });

@@ -465,7 +465,7 @@ test('B2-21：垫片最小选择器匹配可用，getElementById 不再现造节
 // 新交互是把卡片做成 daisyUI collapse（原生 <details>）：默认摘要、点行展开明细。
 // 原生 <details> 只暴露 open 状态，读屏用户需要 aria-expanded；模板初始 false，展开/收起由
 // index.astro 的 document 级 toggle 监听同步。这条守护保证该 a11y 契约不丢。
-test('B24-1：账号行 <details> 展开/收起同步 summary 的 aria-expanded', async () => {
+test('B24-1：账号卡提供详情触发按钮（弹出对话框），带含账号名的无障碍名字', async () => {
   const shim = dom(INDEX_HTML);
   const page = await runInlineScript(INDEX_HTML, shim);
   page.render({
@@ -474,18 +474,13 @@ test('B24-1：账号行 <details> 展开/收起同步 summary 的 aria-expanded'
     stats: { total: 0, errors: 0, clientErrors: 0, totalTokens: 0 },
     accounts: [account()],
   });
-  const details = shim.el('cards').querySelector('details');
-  assert.ok(details, '账号行是 <details> 折叠（默认摘要 + 点开明细）');
-  const summary = details.querySelector('summary');
-  assert.ok(summary, '<details> 有 <summary>');
-  assert.equal(summary.getAttribute('aria-expanded'), 'false', '默认收起：aria-expanded=false');
+  const cards = shim.el('cards');
+  assert.equal(cards.querySelectorAll('.acct-card').length, 1, '渲染出 1 张账号卡');
+  assert.doesNotMatch(cards.innerHTML, /<details/, '账号卡不再是 <details> 折叠行（UI 重写：卡片 + 弹窗）');
 
-  // 浏览器展开 <details> 会置 open 并派发 toggle；这里模拟同一路径。
-  details.setAttribute('open', '');
-  shim.document.dispatchEvent({ type: 'toggle', target: details });
-  assert.equal(summary.getAttribute('aria-expanded'), 'true', '展开后 aria-expanded=true');
-
-  details.removeAttribute('open');
-  shim.document.dispatchEvent({ type: 'toggle', target: details });
-  assert.equal(summary.getAttribute('aria-expanded'), 'false', '收起后回到 false');
+  const trigger = cards.querySelector('.detail-trigger');
+  assert.ok(trigger, '每张卡都有详情触发按钮');
+  assert.equal(trigger.getAttribute('aria-haspopup'), 'dialog', '触发按钮声明 aria-haspopup=dialog');
+  assert.match(trigger.getAttribute('aria-label') || '', /^查看 .+ 详情$/, '触发按钮带含账号名的无障碍名字');
+  assert.ok(shim.el('m-detail'), '详情弹窗存在于文档中（触发按钮的弹出目标）');
 });

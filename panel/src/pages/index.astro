@@ -1,28 +1,34 @@
 ---
+/* 首页：欢迎横幅 → 统计条（读数 + 筛选）→ 账号卡片网格 / 列表两种视图。
+   视图切换只改排布，不改数据口径；两种视图共用同一份 render 结果。 */
 import Layout from '../layouts/Layout.astro';
 import SiteHeader from '../components/SiteHeader.astro';
 import HeroCard from '../components/HeroCard.astro';
+import StatsBar from '../components/StatsBar.astro';
 import KpiCard from '../components/KpiCard.astro';
 import AccountCard from '../components/AccountCard.astro';
+import AccountRow from '../components/AccountRow.astro';
+import AccountTable from '../components/AccountTable.astro';
 import AccountDetailModal from '../components/AccountDetailModal.astro';
+import SiteFooter from '../components/SiteFooter.astro';
 ---
 <Layout title="cc-manage · 额度面板" description="cc-manage 额度面板：Command Code 多账号反代网关的账号额度、可用性与请求 KPI 概览。">
-<SiteHeader />
+<SiteHeader viewSwitch={true} />
 
-<main class="mx-auto flex w-full max-w-6xl flex-col gap-2 px-4 py-2 2xl:max-w-[1600px]">
+<main class="page-main mx-auto flex w-full max-w-6xl flex-col gap-3 px-4 py-4 2xl:max-w-[1600px]">
   <HeroCard />
+  <StatsBar />
 
-  <!-- KPI 行：唯一模板在这里，render-hero.js 克隆它并按需隐藏零值卡 -->
-  <section id="kpis" class="kpis grid w-full grid-cols-1 gap-3 lg:grid-cols-2"></section>
-
-  <section id="filters" role="group" aria-label="状态筛选" class="filters join w-full"></section>
-
-  <section id="cards" class="@container accounts grid grid-cols-1 gap-2 2xl:grid-cols-2 items-stretch [&.is-reflow>*]:animate-pulse"></section>
+  <section id="cards" class="accounts acct-grid items-stretch [&.is-reflow>*]:animate-pulse" aria-label="账号卡片"></section>
+  <AccountTable />
 </main>
 
-<!-- 账号行 / KPI 卡的唯一模板：render-cards.js、render-hero.js 克隆它们并用 [data-f] 填值 -->
+<SiteFooter />
+
+<!-- 账号卡 / KPI 胶囊 / 表格行的唯一模板：render-cards.js、render-hero.js 克隆它们并用 [data-f] 填值 -->
 <template id="tpl-account"><AccountCard /></template>
 <template id="tpl-kpi"><KpiCard /></template>
+<template id="tpl-account-row"><AccountRow /></template>
 
 <AccountDetailModal />
 
@@ -47,6 +53,34 @@ function syncTagMasks() {
     el.classList.toggle('at-end', scrollable && (el.scrollLeft || 0) >= max - 1);
   }
 }
+/* 视图切换（网格 / 列表）：只切排布，持久化到 localStorage。
+   列表行由 render-cards.js 的 renderTable 克隆模板生成，与网格共用同一份筛选结果。 */
+var VIEW_KEY = 'cc-manage-view';
+function currentView() {
+  try { return localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'grid'; } catch (e) { return 'grid'; }
+}
+function applyView(view, persist) {
+  var v = view === 'list' ? 'list' : 'grid';
+  var grid = document.getElementById('cards');
+  var table = document.getElementById('tableView');
+  if (grid) grid.hidden = v === 'list';
+  if (table) table.hidden = v !== 'list';
+  for (const btn of document.querySelectorAll('.view-btn')) {
+    const on = btn.getAttribute('data-view') === v;
+    btn.classList.toggle('is-active', on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+  if (persist) { try { localStorage.setItem(VIEW_KEY, v); } catch (e) { /* 忽略 */ } }
+}
+function initViewSwitch() {
+  applyView(currentView(), false);
+  for (const btn of document.querySelectorAll('.view-btn')) {
+    btn.addEventListener('click', function () {
+      applyView(this.getAttribute('data-view'), true);
+      if (typeof renderCards === 'function') renderCards();
+    });
+  }
+}
 /* 折叠行展开：把原生 <details> 的展开态同步到 aria-expanded（新增交互的可访问性契约）。 */
 document.addEventListener('toggle', (e) => {
   const t = e.target;
@@ -57,9 +91,8 @@ document.addEventListener('toggle', (e) => {
   }
 }, true);
 $('cards').addEventListener('scroll', syncTagMasks, true);
-/* 名称列 / 状态列统一宽度（syncNameColumn、syncStatusColumn 在 render-cards.js）：
-   窗口尺寸 / 字体加载会改变文本像素宽，重算一次才能保持徽章起点与状态列左右边缘对齐。
-   防抖，避免拖动窗口时反复重排。 */
+/* 状态列统一宽度（syncStatusColumn 在 render-cards.js）：卡片网格里状态药丸按内容宽自适应，
+   窗口尺寸 / 字体加载会改变文本像素宽，重算一次保持同排卡片视觉节奏。防抖，避免拖动窗口时反复重排。 */
 let nameColTimer = null;
 function scheduleNameColumn() {
   if (nameColTimer) clearTimeout(nameColTimer);
@@ -74,6 +107,8 @@ window.scheduleNameColumn = scheduleNameColumn;
 window.state = state;
 window.renderCards = renderCards;
 window.syncTagMasks = syncTagMasks;
+window.applyView = applyView;
+initViewSwitch();
 boot();
 </script>
 </Layout>

@@ -186,30 +186,26 @@ const ROWS = [
 ];
 
 // ── ① 状态列统一宽度：同一列内左右边缘极差 ≤1px，且文案不裁 ──────────────
-test('B24i-1：四行状态徽章同一列内左右边缘极差 ≤1px（按真 CSS 的 min-width 地板算）', async () => {
+test('B24i-1：状态徽章等宽地板按真 CSS 的 min-width 计算（同排卡片徽章等宽）', async () => {
   const { shim, page } = await boot();
-  page.render(status(ROWS));
+  // 状态文案有落差才有鉴别力：耗尽（6 字） / 可用（2 字） / 冷却中（3 字） / 可用。
+  page.render(status([
+    account({ keyId: 'aaaa1111', name: '主号', creditsExhausted: true, exhausted: { kind: 'monthly', label: '月额度已用完', resetAt: Date.now() + 86400000 } }),
+    account({ keyId: 'bbbb2222', name: '副号1' }),
+    account({ keyId: 'cccc3333', name: '副号2', paused: true, pausedUntil: Date.now() + 60000 }),
+    account({ keyId: 'dddd4444', name: '副号3' }),
+  ]));
 
-  const cards = shim.document.querySelectorAll('#cards .row-card');
-  assert.equal(cards.length, 4, '渲染出 4 行');
+  const cards = shim.document.querySelectorAll('#cards .acct-card');
+  assert.equal(cards.length, 4, '渲染出 4 张卡片');
   const container = shim.el('cards');
-  container.clientWidth = SUMMARY_CONTENT_PX;
-
-  // 垫片没有排版引擎：把 h2 的 scrollWidth 设成名称文字所需宽（真机 syncNameColumn 读的量）。
-  const nameRequired = cards.map((c) => textWidthPx(c.querySelector('h2').textContent, 16));
-  cards.forEach((c, i) => { c.querySelector('h2').scrollWidth = nameRequired[i]; });
-  assert.equal(typeof page.syncNameColumn, 'function', 'render-cards.js 必须导出 syncNameColumn');
-  page.syncNameColumn();
-  const nameCol = parseFloat(container.style.getPropertyValue('--name-col'));
-  assert.ok(Number.isFinite(nameCol) && nameCol > 0, `--name-col 必须是实测像素值（实际 ${container.style.getPropertyValue('--name-col')}）`);
 
   // 状态徽章的自然（内容自适应）border-box 宽 —— 等价真机 getBoundingClientRect().width。
   const badges = cards.map((c) => c.querySelector('.acct-status'));
-  badges.forEach((b) => { assert.ok(b, '每行都要有状态徽章'); });
+  badges.forEach((b) => { assert.ok(b, '每张卡都要有状态徽章'); });
   const natural = badges.map((b) => badgeNaturalWidthPx(b.textContent));
-  // 鉴别力前提：最长/最短状态文案的自然宽必须差 >1px，否则「对齐」断言区分不出来。
   assert.ok(spread(natural) > 1,
-    `状态文案自然宽必须有落差才有鉴别力（实际 ${natural.join(', ')}）`);
+    `状态文案自然宽必须有落差才有鉴别力（实际 ${natural.map((v) => Math.round(v)).join(', ')}）`);
   badges.forEach((b, i) => { b.scrollWidth = natural[i]; });
 
   assert.equal(typeof page.syncStatusColumn, 'function', 'render-cards.js 必须导出 syncStatusColumn（真机测量入口）');
@@ -221,26 +217,11 @@ test('B24i-1：四行状态徽章同一列内左右边缘极差 ≤1px（按真 
   assert.ok(tableCol >= Math.max(...natural) - 1,
     `状态列必须容得下最长状态文案：列 ${tableCol}px < 需要 ${Math.max(...natural)}px`);
 
-  // 每行最终盒宽 + 左边缘（名称列 → 套餐徽章 → 状态徽章，依次排列）。
-  const gap = rowTitleGapPx(cards[0].querySelector('summary'));
-  const pillW = textWidthPx(cards[0].querySelector('.plan-pill').textContent, BADGE_FONT_PX);
-  const left = cards.map((c, i) => nameCol + gap + pillW + gap);
+  // 每张卡的最终盒宽 = max(内容宽, 地板宽) —— 四张卡等宽（含最窄文案「可用」那张）。
   const finalW = badges.map((b, i) => badgeFinalWidthPx(b, tableCol, natural[i]));
-  const right = finalW.map((w, i) => left[i] + w);
-
-  // 同一列内比较（两列布局：列 1 = 第 1/3 行，列 2 = 第 2/4 行）。
-  for (const [name, col] of [['列 1', [0, 2]], ['列 2', [1, 3]]]) {
-    const L = col.map((i) => left[i]); const R = col.map((i) => right[i]);
-    assert.ok(spread(L) <= 1, `${name} 状态徽章左边缘极差 ${spread(L).toFixed(1)}px > 1px：${L.map((v) => v.toFixed(1)).join(', ')}`);
-    assert.ok(spread(R) <= 1, `${name} 状态徽章右边缘极差 ${spread(R).toFixed(1)}px > 1px：${R.map((v) => v.toFixed(1)).join(', ')}`);
-  }
-
-  // 鉴别力 / 变异验证：同一模型下，去掉统一列宽（= 内容自适应）→ 右边缘必然参差。
-  const revertedRight = natural.map((w, i) => left[i] + w);
-  assert.ok(spread(revertedRight) > 1,
-    `鉴别力：改回内容自适应后右边缘必须参差（实际极差 ${spread(revertedRight).toFixed(1)}px）`);
+  assert.ok(spread(finalW) <= 1,
+    `四张卡的徽章最终盒宽必须一致（极差 ≤1px），实际 ${finalW.map((v) => v.toFixed(1)).join(', ')}`);
 });
-
 test('B24i-1b：等宽机制是「min-width 地板 + 居中」，不是钉死像素或裁字', async () => {
   const { shim, page } = await boot();
   page.render(status(ROWS));

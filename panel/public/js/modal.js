@@ -12,6 +12,12 @@ function modalBackgrounds() {
   const push = (el) => {
     if (!el || el.nodeType !== 1) return;
     if (el.classList && el.classList.contains('modal')) return;
+    // 容器里若装着弹窗（页壳 .page-shell / 后台抽屉 .drawer-content 都是），不能整块 inert：
+    // inert 是可继承的，整块加下去会把弹窗一起冻住（焦点也进不去）。展开成子元素，弹窗自身仍被跳过。
+    if (el.querySelector && el.querySelector('.modal')) {
+      for (const inner of el.children) push(inner);
+      return;
+    }
     if (!out.includes(el)) out.push(el);
   };
   for (const child of body.children) push(child);
@@ -63,12 +69,18 @@ function openModal(id) {
   // 打开前记下焦点，关闭时归还 —— 键盘 / 屏幕阅读器用户不会丢上下文。
   modalFocusReturn = document.activeElement && document.activeElement.focus ? document.activeElement : null;
   modalFocusReturnKey = modalFocusReturn && modalFocusReturn.getAttribute ? modalFocusReturn.getAttribute('data-focus-return') : null;
-  setBackgroundInert(true);
   const modal = $(id);
   modal.classList.add('open', 'modal-open');
   // aria-modal="true" 不能只是声明：把焦点移进弹窗（caller 可再聚焦到具体字段）。
-  const focusables = focusableIn(dialogOf(modal));
+  //
+  // 顺序很关键：必须「先把焦点移进弹窗，再给背景加 inert」。
+  // 反过来的话，浏览器发现 activeElement 落进了刚变 inert 的背景子树，会把它踢出去（回到 body），
+  // 而这一步发生在我们 focus() 之后 → 正好盖掉弹窗内的焦点（实测 activeElement 停在 BODY）。
+  // 先 focus 的话，加 inert 时 activeElement 已在弹窗里（弹窗不在背景区），不会被踢。
+  const dialog = dialogOf(modal);
+  const focusables = focusableIn(dialog);
   if (focusables.length && !(modal.contains && modal.contains(document.activeElement))) focusables[0].focus();
+  setBackgroundInert(true);
 }
 
 function closeModal(id) {

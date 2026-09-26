@@ -57,7 +57,7 @@ function status(accounts, extra = {}) {
 /** 读 KPI：label → 大数字文本。经 DOM 垫片渲染后真实读元素，不做源码存在性断言。 */
 function readKpis(shim) {
   const out = {};
-  for (const box of shim.document.querySelectorAll('#kpis .stat')) {
+  for (const box of shim.document.querySelectorAll('#kpis .kpi')) {
     const label = box.querySelector('.kpi-label');
     const value = box.querySelector('.stat-value');
     out[label ? label.textContent : '?'] = value ? value.textContent : null;
@@ -96,29 +96,27 @@ test('B24d-1b：异步 load() 数据到达后，KPI 数字落进正确元素', a
 });
 
 // ── BUG-2：名称列按内容自适应，不得再是固定窄列 ──────────────────────
-test('B24d-2：名称列自适应内容（minmax(0,max-content) + 1fr），产物里无固定 133px 列宽', () => {
+test('B24d-2：账号名称按内容自适应（不钉列宽、不裁断），账号区是卡片网格', () => {
   const css = styleText(INDEX_HTML);
   assert.doesNotMatch(css, /133px/, '不得把名称列钉成 133px（变异检查点）');
-  assert.match(css, /grid-template-columns:\s*minmax\(0,\s*max-content\)\s+minmax\(0,\s*1fr\)/,
-    '名称列按内容自适应，剩余宽度交给右侧列');
-  assert.match(ACCOUNT_CARD, /class="collapse-title row-summary grid grid-cols-\[minmax\(0,max-content\)_minmax\(0,1fr\)\]/,
-    '模板 summary 必须用内容自适应网格（名称列在前）');
+  // UI 重写：账号从「折叠行」改为「卡片网格」——列宽由 CSS 定义并随容器自适应，不存在全表统一名称列。
+  assert.match(css, /\.acct-grid\{[^}]*grid-template-columns:minmax\(0,1fr\)/, '账号区是卡片网格（列宽自适应容器）');
+  assert.match(css, /@media\(min-width:640px\)\{\.acct-grid\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/, '≥640px 两列');
+  assert.match(ACCOUNT_CARD, /class="card-head[^"]*\btruncate\b/, '名称按内容排布，只有极窄时才省略（truncate）');
+  assert.doesNotMatch(ACCOUNT_CARD, /min-w-\[var\(--name-col/, '不再用全表统一名称列宽（卡片网格里每卡独立）');
 });
 
 // ── BUG-3：行高一致 + 概览卡内部左对齐 ───────────────────────────────
-test('B24d-3：标签条收进 summary 且固定行高；hero 不再撞 daisyUI .hero 组件类', () => {
-  const details = /<details[\s\S]*<\/details>/.exec(ACCOUNT_CARD);
-  assert.ok(details, '能找到 AccountCard 的 details');
-  const summary = /<summary[\s\S]*?<\/summary>/.exec(details[0]);
-  assert.ok(summary, '能找到 summary');
-  assert.match(summary[0], /data-f="tags"/, '补充标签条必须挂在 summary 内（不能当 .collapse 网格的第 3 行跑到行外）');
-  assert.doesNotMatch(details[0].slice(details[0].indexOf('</summary>')), /data-f="tags"/,
-    '标签条不得再挂在 details 尾部（跑出行外会撑高不一致）');
-  assert.match(summary[0], /class="tags[^"]*\bmin-h-6\b/, '标签条固定高度 → 有/无徽章的行等高');
+test('B24d-3：标签条固定在卡片底部栏内；hero 不撞 daisyUI .hero 组件类', () => {
+  const footIdx = ACCOUNT_CARD.indexOf('acct-card-foot');
+  const tagsIdx = ACCOUNT_CARD.indexOf('data-f="tags"');
+  assert.ok(footIdx > 0 && tagsIdx > footIdx, '补充标签条挂在卡片底部栏 .acct-card-foot 内（不会跑到卡片外）');
+  assert.equal((ACCOUNT_CARD.match(/data-f="tags"/g) || []).length, 1, '标签条结构唯一');
+  assert.match(ACCOUNT_CARD, /class="tags[^"]*\bmin-h-6\b/, '标签条固定高度 → 有/无徽章不影响卡片高度节奏');
 
   // 类名冲突：daisyUI 自带 .hero（grid + place-items:center）会把概览卡内容挤成居中缩水块。
-  assert.doesNotMatch(HERO_CARD, /class="hero\s/, 'hero 类名不得与 daisyUI .hero 组件冲突（应改名为 hero-card）');
-  assert.match(HERO_CARD, /class="hero-card overview card/, '概览卡用不冲突的 hero-card 类名');
+  assert.doesNotMatch(HERO_CARD, /class="hero\s/, 'hero 类名不得与 daisyUI .hero 组件冲突');
+  assert.match(HERO_CARD, /class="hero-banner/, '概览卡用不冲突的 hero-banner 类名');
 });
 
 // ── BUG-4：筛选条视觉权重提升 ────────────────────────────────────────
@@ -136,9 +134,10 @@ test('B24d-4：筛选标签加大字号/字重（主要导航控件）', async (
 // ── BUG-5：宽屏利用空间（更宽页壳 + 卡片多列，而非超长单行）──────────
 test('B24d-5：宽屏页壳放宽到 1600px，卡片在超宽屏两列', () => {
   assert.match(INDEX_SRC, /<main class="[^"]*2xl:max-w-\[1600px\]/, '宽屏主内容放宽（>1152）');
-  assert.match(INDEX_SRC, /id="cards"[^>]*class="[^"]*2xl:grid-cols-2/, '超宽屏卡片两列，避免超长单行');
+  assert.match(INDEX_SRC, /id="cards"[^>]*class="[^"]*acct-grid/, '账号区用卡片网格（列数随宽度递增，不是超长单行）');
   const css = styleText(INDEX_HTML);
   assert.match(css, /@media\(min-width:96rem\)/, '2xl 断点存在（96rem）');
   assert.match(css, /max-width:1600px/, '放宽值编译进产物');
-  assert.match(RENDER_HERO_JS, /filter-btn btn btn-sm join-item text-sm font-semibold/, '筛选条类名来源固定');
+  assert.match(css, /@media\(min-width:1480px\)\{\.acct-grid\{grid-template-columns:repeat\(4,minmax\(0,1fr\)\)/, '超宽屏四列卡片，避免超长单行');
+  assert.match(RENDER_HERO_JS, /filter-btn btn btn-sm text-sm font-semibold/, '筛选条类名来源固定');
 });

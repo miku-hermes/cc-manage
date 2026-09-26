@@ -61,7 +61,7 @@ test('B23-2：关键结构标记在源码里只出现一次（结构唯一化）
     '账号卡结构 class="card-head': ['class="card-head', /^panel\/src\/components\/AccountCard\.astro$/],
     '账号卡模板钩子 data-f="account-head"': ['data-f="account-head"', /^panel\/src\/components\/AccountCard\.astro$/],
     '额度条结构 class="credits-bar': ['class="credits-bar', /^panel\/src\/components\/CreditsBar\.astro$/],
-    'Hero 结构 class="hero-main': ['class="hero-main', /^panel\/src\/components\/HeroCard\.astro$/],
+    'Hero 结构 class="hero-banner': ['class="hero-banner', /^panel\/src\/components\/HeroCard\.astro$/],
     '头部结构 class="brand-name': ['class="brand-name', /^panel\/src\/components\/SiteHeader\.astro$/],
     '空态卡结构 class="card empty"': ['class="card empty"', /^panel\/public\/js\/utils\.js$/],
   };

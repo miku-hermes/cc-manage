@@ -200,8 +200,8 @@ function card(a, wideLast = false, index = 0) {
   const st = statusText(a);
   const ex = a.exhausted || null;
   const q = a.lastQuota;
-  node.className = 'card row-card collapse collapse-arrow border border-base-300 bg-base-100 is-' + st.tone
-    + (st.tone === 'bad' ? ' is-crit' : '') + (wideLast ? ' card-wide' : '');
+  node.className = 'card acct-card border border-base-300 bg-base-100 is-' + st.tone
+    + (st.tone === 'bad' ? ' is-crit' : '');
   node.setAttribute('style', '--i:' + index);
   node.setAttribute('data-key-id', String(a.keyId ?? ''));
   const detailButton = field(node, 'detail-trigger');
@@ -238,7 +238,7 @@ function card(a, wideLast = false, index = 0) {
 function syncNameColumn() {
   const host = $('cards');
   if (!host || !host.style || typeof host.style.setProperty !== 'function') return;
-  const heads = host.querySelectorAll('.row-card h2');
+  const heads = host.querySelectorAll('.acct-card .card-head');
   if (!heads.length) { host.style.setProperty('--name-col', '0px'); return; }
   host.style.setProperty('--name-col', '0px');       // 先归零：数据变短后名称列要能缩回去
   let max = 0;
@@ -264,7 +264,7 @@ window.syncNameColumn = syncNameColumn;
 function syncStatusColumn() {
   const host = $('cards');
   if (!host || !host.style || typeof host.style.setProperty !== 'function') return;
-  const badges = host.querySelectorAll('.row-card .acct-status');
+  const badges = host.querySelectorAll('.acct-card .acct-status');
   if (!badges.length) { host.style.setProperty('--status-col', '0px'); return; }
   host.style.setProperty('--status-col', '0px');     // 先归零：状态变短后列要能缩回去
   let max = 0;
@@ -281,9 +281,8 @@ function renderCards() {
   if (!state.data) return;
   if (document.querySelector && document.querySelector('#m-detail.open')) return;
   const all = state.data.accounts;
-  const f = state.filter.trim().toLowerCase();
-  const byView = all.filter(inViewFilter);
-  const list = f ? byView.filter((a) => String(a.name ?? '').toLowerCase().includes(f)) : byView;
+  const list = filteredAccounts();
+  renderTable();
   if (!list.length) {
     const msg = all.length
       ? (state.filter.trim() ? '没有匹配「' + esc(state.filter) + '」的账号。' : '该筛选下没有账号。')
@@ -307,3 +306,63 @@ function renderCards() {
   }
   syncTagMasks();
 }
+
+/** 筛选后的账号列表（分组视图与表格视图共用同一份结果，保证两种排布说的是同一件事）。 */
+function filteredAccounts() {
+  const byView = state.data.accounts.filter(inViewFilter);
+  const f = state.filter.trim().toLowerCase();
+  return f ? byView.filter((a) => String(a.name ?? '').toLowerCase().includes(f)) : byView;
+}
+
+/* ── 列表（表格）视图：与网格共用筛选结果，克隆 <template id="tpl-account-row"> ──────────────
+   结构零拼接：所有文本走 textContent，所有节点来自模板克隆。 */
+function tablePct(w, spent) {
+  if (spent) return 100;
+  if (!w || typeof w !== 'object') return null;
+  return typeof w.percent === 'number' ? w.percent : null;
+}
+
+function tableRow(a, index) {
+  const node = cloneTemplate('tpl-account-row');
+  if (!node) return null;
+  const st = statusText(a);
+  const q = a.lastQuota;
+  const ex = a.exhausted || null;
+  node.className = 'acct-row is-' + st.tone;
+  node.setAttribute('data-key-id', String(a.keyId ?? ''));
+  fillText(node, 'row-head', a.name || a.keyPrefix || shortId(a.keyId) || '未命名账号');
+  fillText(node, 'row-status', st.t);
+  fillText(node, 'row-balance', money(usableRemaining(a)));
+  fillText(node, 'row-5h', pctText(tablePct(q && q.fiveHour, ex && ex.kind === 'window' && ex.window === 'fiveHour')));
+  fillText(node, 'row-week', pctText(tablePct(q && q.weekly, ex && ex.kind === 'window' && ex.window === 'weekly')));
+  fillText(node, 'row-month', pctText(tablePct(q && q.monthly, ex && ex.kind === 'monthly')));
+  fillText(node, 'row-plan', q && q.plan ? (planLabel(q.plan.planId) || '—') : '—');
+  const btn = field(node, 'row-detail');
+  if (btn) {
+    btn.setAttribute('aria-label', '查看 ' + (a.name || a.keyPrefix || shortId(a.keyId) || '未命名账号') + ' 详情');
+    btn.setAttribute('data-focus-return', String(index));
+  }
+  for (const el of node.querySelectorAll('[data-f]')) el.removeAttribute('data-f');
+  return node;
+}
+
+/** 表格视图渲染：弹窗打开期间与网格一样暂停重绘，避免触发按钮被替换后焦点归还失效。 */
+function renderTable() {
+  const body = $('acctTableBody');
+  if (!body || !state.data) return;
+  if (document.querySelector && document.querySelector('#m-detail.open')) return;
+  const list = filteredAccounts();
+  clearChildren(body);
+  if (!list.length) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.setAttribute('colspan', '8');
+    td.className = 'aux-text';
+    td.textContent = '该筛选下没有账号。';
+    tr.appendChild(td);
+    body.appendChild(tr);
+    return;
+  }
+  list.forEach(function (a, i) { const tr = tableRow(a, i); if (tr) body.appendChild(tr); });
+}
+window.renderTable = renderTable;

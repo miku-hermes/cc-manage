@@ -1,34 +1,62 @@
 ---
-/* Hero：daisyUI card + radial-progress。余额是主角（大数字 = 剩余额度），
-   构成明细一行说清口径；趋势入口是一个极简按钮（不引 ECharts）。 */
+/* 欢迎横幅（参考主题的 hero 区）：左侧看板娘 + 问候 + 网关状态；右侧日期 + 数码时钟 + 累计 token；
+   中段是余额主角（大数字 + 本月额度环形进度 + 构成明细）；底部是元信息与操作。
+   所有 id 沿用旧契约（greeting/date/balance/bal-label/bal-breakdown/usage-gauge/health/upstream/
+   updated/cadence/tokens/refresh-quota），render-hero.js 无需改填充逻辑。 */
 import StatusPill from './StatusPill.astro';
 import { RefreshCw, TrendingUp, ChevronRight } from '@lucide/astro';
 ---
-<section class="hero-card overview card overflow-hidden border border-base-300 bg-base-100 transition-[box-shadow,transform,background-color]">
-  <!-- B24d：类名从 hero 改为 hero-card —— daisyUI 自带 .hero 组件（display:grid;
-       place-items:center），一个纯装饰类名把整张卡的内容挤成居中缩水块，
-       圆环与「网关状态」行因此失去左对齐。 -->
-  <div class="hero-main card-body gap-1.5 p-4">
-    <div class="flex flex-wrap items-start justify-between gap-3">
-      <h1 id="greeting" class="greeting text-xl font-semibold">下午好</h1>
-      <div id="date" class="hero-date badge badge-ghost"></div>
+<section class="hero-banner card overflow-hidden border border-base-300 bg-base-100 transition-[box-shadow,transform,background-color]">
+  <div class="hero-deco" aria-hidden="true"><span class="blob b1"></span><span class="blob b2"></span><span class="blob b3"></span></div>
+
+  <div class="hero-banner-top">
+    <div class="hero-ident">
+      <span class="hero-avatar" aria-hidden="true">
+        <svg viewBox="0 0 64 64" class="hero-avatar-svg">
+          <defs>
+            <linearGradient id="av-g" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#e8668a"></stop>
+              <stop offset="1" stop-color="#a78bfa"></stop>
+            </linearGradient>
+          </defs>
+          <path d="M15 24 L12 7 L27 16 Z" fill="url(#av-g)"></path>
+          <path d="M49 24 L52 7 L37 16 Z" fill="url(#av-g)"></path>
+          <circle cx="32" cy="35" r="19" fill="url(#av-g)" opacity="0.92"></circle>
+          <circle cx="25" cy="33" r="2.7" fill="#fff"></circle>
+          <circle cx="39" cy="33" r="2.7" fill="#fff"></circle>
+          <path d="M28 43 q4 3.6 8 0" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round"></path>
+          <path d="M13 37 H4 M13 43 H7 M51 37 H60 M51 43 H57" stroke="url(#av-g)" stroke-width="2" stroke-linecap="round" opacity="0.65"></path>
+        </svg>
+      </span>
+      <div class="hero-greet">
+        <h1 id="greeting" class="greeting">下午好</h1>
+        <p class="hero-sub">网关状态 <StatusPill variant="health" id="health" /></p>
+      </div>
     </div>
-    <div class="hero-balance flex flex-wrap items-baseline gap-x-3 gap-y-1">
-      <b id="balance" class="text-4xl font-extrabold tracking-tight tabular-nums">—</b>
-      <span id="bal-label" class="bal-label text-sm aux-text">剩余额度（USD）</span>
+
+    <div class="hero-clock-box">
+      <div id="date" class="hero-date"></div>
+      <div id="clock" class="hero-clock tabular-nums">--:--:--</div>
+      <div class="hero-tokens aux-text">累计 token <b id="tokens" class="tabular-nums">0</b></div>
     </div>
-    <div class="hero-usage flex items-center gap-3">
-      <!-- B24i：环内读数与左侧旁词共用 render-hero.js 的 heroPctText 同一个字符串（占位值
-           也按同一口径写成一位小数），不再一个取整、一个一位小数。 -->
-      <span id="usage-gauge" class="radial-progress tabular-nums text-primary [--size:3.25rem]" style="--value:0" role="progressbar" aria-label="本月额度已用 0.0%">0.0%</span>
-      <p id="bal-breakdown" class="hero-breakdown tabular-nums aux-text text-sm"></p>
+  </div>
+
+  <div class="hero-banner-mid">
+    <div class="hero-balance">
+      <b id="balance" class="tabular-nums">—</b>
+      <span id="bal-label" class="bal-label aux-text">剩余额度（USD）</span>
     </div>
-    <p class="hero-sub text-sm">网关状态 <StatusPill variant="health" id="health" /></p>
-    <p class="hero-meta aux-text flex flex-wrap gap-x-4 gap-y-1 text-xs">
+    <div class="hero-gauge">
+      <span id="usage-gauge" class="radial-progress tabular-nums text-primary [--size:3.5rem]" style="--value:0" role="progressbar" aria-label="本月额度已用 0.0%">0.0%</span>
+      <p id="bal-breakdown" class="hero-breakdown tabular-nums aux-text"></p>
+    </div>
+  </div>
+
+  <div class="hero-banner-foot">
+    <p class="hero-meta aux-text">
       <span id="upstream"></span><span id="updated" class="tabular-nums"></span><span id="cadence" class="hero-cadence"></span>
     </p>
-    <div class="hero-aside flex flex-wrap items-center gap-2 border-t border-base-300 pt-2">
-      <span class="hero-tokens text-sm aux-text">累计 token <b id="tokens" class="text-base-content tabular-nums">0</b></span>
+    <div class="hero-actions flex-wrap">
       <button id="refresh-quota" class="btn btn-primary btn-sm gap-1" type="button"><RefreshCw size={15} />刷新额度</button>
       <a class="trend-link btn btn-ghost btn-sm gap-1" href="/trend" aria-label="查看近 24 小时趋势">
         <TrendingUp size={15} />近 24 小时趋势<ChevronRight size={14} />

@@ -1,0 +1,22 @@
+---
+/* 列表（表格）视图容器：表头固定，行由 render-cards.js 克隆 <template id="tpl-account-row">。
+   与网格视图互斥显示（同一份数据，两种排布）。 */
+---
+<section class="acct-table-wrap card border border-base-300 bg-base-100" id="tableView" hidden>
+  <table class="acct-table">
+    <caption class="sr-only">账号列表视图</caption>
+    <thead>
+      <tr>
+        <th scope="col">账号</th>
+        <th scope="col">状态</th>
+        <th scope="col">剩余额度</th>
+        <th scope="col">5 小时</th>
+        <th scope="col">本周</th>
+        <th scope="col">本月</th>
+        <th scope="col">套餐</th>
+        <th scope="col">操作</th>
+      </tr>
+    </thead>
+    <tbody id="acctTableBody"></tbody>
+  </table>
+</section>

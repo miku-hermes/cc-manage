@@ -1,0 +1,13 @@
+---
+/* 账号表格行（列表视图）：结构只在这里出现一次，render-cards.js 克隆 <template id="tpl-account-row">。 */
+---
+<tr class="acct-row">
+  <td class="cell-account"><span class="acct-dot" aria-hidden="true"></span><span class="cell-name truncate" data-f="row-head"></span></td>
+  <td class="cell-status" data-f="row-status"></td>
+  <td class="cell-balance tabular-nums" data-f="row-balance"></td>
+  <td class="cell-pct tabular-nums" data-f="row-5h"></td>
+  <td class="cell-pct tabular-nums" data-f="row-week"></td>
+  <td class="cell-pct tabular-nums" data-f="row-month"></td>
+  <td class="cell-plan aux-text" data-f="row-plan"></td>
+  <td class="cell-action"><button class="detail-trigger btn btn-ghost btn-sm" type="button" data-f="row-detail" aria-haspopup="dialog">详情</button></td>
+</tr>

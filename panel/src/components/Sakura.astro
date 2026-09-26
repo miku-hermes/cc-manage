@@ -1,0 +1,13 @@
+---
+/* 樱花飘落背景层：纯 CSS 动画花瓣（无外部资源、无 JS、受 prefers-reduced-motion 约束）。
+   z-index:0 + pointer-events:none —— 只做氛围，不参与交互、不拦截点击。 */
+const PETALS = Array.from({ length: 20 }, (_, i) => i);
+---
+<div class="sakura-layer" aria-hidden="true">
+  {PETALS.map((i) => (
+    <i
+      class="petal"
+      style={`--x:${(i * 41 + 5) % 97}%;--fall:${(11 + (i % 6) * 1.7).toFixed(1)}s;--delay:-${(i * 1.35).toFixed(2)}s;--size:${14 + (i % 5) * 5}px;--drift:${(i % 2 ? 1 : -1) * (18 + (i % 4) * 34)}px;--spin:${240 + (i % 3) * 150}deg;`}
+    ></i>
+  ))}
+</div>

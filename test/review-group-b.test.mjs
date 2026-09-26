@@ -205,23 +205,22 @@ test('视觉#9：额度/更新时间/内核辅助文字统一 aux-text，小字�
 });
 
 // ── UI 10：3 张卡最后一张跨整行，4 张恢复 2×2 ──
-test('视觉#10：三卡时最后一张 card-wide 跨整行，四卡时恢复两列', async () => {
+test('视觉#10：账号区是卡片网格（列数随宽度递增），不再需要 card-wide 跨行钩子', async () => {
   const shim = dom(INDEX_HTML);
   const page = await runInlineScript(INDEX_HTML, shim);
   const make = (n) => ({ summary: { accounts: n, available: n, paused: 0, concurrency: 0 }, stats: { total: 0, errors: 0, totalTokens: 0 }, now: Date.now(), quotaPoll: {}, accounts: Array.from({ length: n }, (_, i) => account({ name: '账号' + i, keyId: String(i).padStart(8, '0') })) });
   page.render(make(3));
-  assert.equal((shim.el('cards').innerHTML.match(/class="card[^\"]*card-wide/g) || []).length, 1);
+  assert.equal(shim.el('cards').querySelectorAll('.acct-card').length, 3, '3 个账号 → 3 张卡');
   page.render(make(4));
-  assert.equal((shim.el('cards').innerHTML.match(/class="card[^\"]*card-wide/g) || []).length, 0);
-  // B24/B24d：账号区是容器查询网格 —— 窄屏单列（每行跨满整宽，等价于旧的整行式列表），
-  // 超宽屏（2xl）两列，避免 1600px 页壳下出现超长单行。card-wide 仍由 render-cards.js 作为
-  // 奇数尾行钩子输出。@container 让行内明细按容器宽度自适应（而非视口断点）。
-  assert.match(INDEX_HTML, /class="@container accounts grid grid-cols-1 gap-2 2xl:grid-cols-2[^"]*"/,
-    '账号区是容器查询网格（窄屏单列 / 超宽两列）');
-  assert.match(styleText(INDEX_HTML), /container-type:\s*inline-size/, '@container 产出容器查询上下文');
-});
+  assert.equal(shim.el('cards').querySelectorAll('.acct-card').length, 4, '4 个账号 → 4 张卡');
 
-// ── UI 11：key 前缀明确遮蔽，keyId 仍完整 ──
+  // 卡片网格：列数由 CSS 断点决定（1/2/3/4 列），不需要「奇数尾行跨整行」的钩子。
+  assert.match(INDEX_HTML, /id="cards"[^>]*class="[^"]*acct-grid/, '账号区是卡片网格');
+  assert.doesNotMatch(shim.el('cards').innerHTML, /card-wide/, 'render-cards.js 不再输出 card-wide 钩子');
+  const css = styleText(INDEX_HTML);
+  assert.match(css, /\.acct-grid\{[^}]*display:grid/, '网格布局由 CSS 定义');
+  assert.match(css, /@media\(min-width:1480px\)\{\.acct-grid\{grid-template-columns:repeat\(4,/, '≥1480px 四列（避免超长单行）');
+});
 test('视觉#11：keyPrefix 改为可读前缀 + 明确 •••• 遮蔽尾巴，keyId 不截断', async () => {
   const shim = dom(ADMIN_HTML);
   const page = await runInlineScript(ADMIN_HTML, shim);
