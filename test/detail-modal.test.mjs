@@ -78,14 +78,15 @@ test('首页详情：真实数据填充、模态框 inert/焦点归还与窄屏�
   assert.ok(geometry.after.dialogScrollWidth <= geometry.after.dialogClientWidth, `详情横向溢出 ${geometry.after.dialogScrollWidth} > ${geometry.after.dialogClientWidth}`);
   console.log('首页账号卡尺寸（375px）', JSON.stringify(geometry));
   await page.evaluate(() => window.renderCards());
+  const currentTrigger = page.locator(`.row-card[data-key-id="${actualKeyId}"] .detail-trigger`);
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => !document.getElementById('m-detail').classList.contains('open'));
   assert.equal(await page.locator('main').first().getAttribute('inert'), null);
-  assert.equal(await trigger.evaluate(el => el === document.activeElement), true);
+  assert.equal(await currentTrigger.evaluate(el => el === document.activeElement), true);
   assert.deepEqual(await Promise.all(originalNodes.map(node => node.getAttribute('inert'))), originalInert);
-  await trigger.click();
+  await currentTrigger.click();
   await page.waitForSelector('#m-detail.open');
   await page.locator('#m-detail .modal-backdrop').dispatchEvent('click');
   await page.waitForFunction(() => !document.getElementById('m-detail').classList.contains('open'));
-  assert.equal(await trigger.evaluate(el => el === document.activeElement), true);
+  assert.equal(await currentTrigger.evaluate(el => el === document.activeElement), true);
 });

@@ -142,6 +142,11 @@ const ALLOWED_SKIPS = [
     why: 'deploy.test.mjs：需要本机装了 docker compose；CI 的 smoke job 覆盖这条路径。',
   },
   {
+    reason: '本机无 Playwright（趋势浏览器几何/样式实测）',
+    max: 1,
+    why: 'b25-trend-browser.test.mjs 的趋势几何、令牌颜色与 computed style 需 Playwright/Chromium；CI 或开发机提供 Playwright 时必须执行。',
+  },
+  {
     reason: '本机无 Playwright（首页详情）',
     max: 1,
     why: 'detail-modal.test.mjs 的真实弹窗与窄屏几何断言需要 Playwright + Chromium；'

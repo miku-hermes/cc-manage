@@ -169,6 +169,8 @@ function accountRow(a) {
     if (errored) errored.textContent = a.lastError ? '额度未同步：' + a.lastError : '尚未获取额度快照';
   }
 
+  const btnDetail = field(node, 'btn-detail');
+  if (btnDetail) { btnDetail.setAttribute('data-focus-return', 'account-detail-' + id); btnDetail.setAttribute('data-id', id); btnDetail.setAttribute('aria-label', '查看 ' + (a.name || a.keyPrefix || '未命名账号') + ' 详情'); }
   const btnTest = field(node, 'btn-test');
   if (btnTest) btnTest.setAttribute('data-id', id);
   const btnToggle = field(node, 'btn-toggle');

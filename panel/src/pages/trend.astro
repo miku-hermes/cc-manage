@@ -7,7 +7,7 @@ import { ChevronLeft, RefreshCw } from '@lucide/astro';
 <Layout title="cc-manage · 近 24 小时趋势" description="cc-manage 近 24 小时趋势：请求数 / 错误数 / 可用余额的 ECharts 折线图。">
 <SiteHeader search={false} />
 
-<main class="mx-auto flex min-h-[calc(100dvh-3rem)] w-full max-w-6xl flex-col gap-3 px-4 py-4 2xl:max-w-[1600px]">
+<main class="mx-auto flex min-h-[calc(100dvh-3rem)] w-full max-w-6xl flex-col gap-4 px-4 py-5 2xl:max-w-[1600px]">
   <!-- A6：面包屑 + 标题，明确「当前在趋势页」；左边界与顶栏 logo 对齐（同一 max-w + px-4）。 -->
   <nav class="breadcrumbs text-sm" aria-label="面包屑">
     <ul>
@@ -17,14 +17,14 @@ import { ChevronLeft, RefreshCw } from '@lucide/astro';
   </nav>
 
   <!-- A6：4 张统计卡，数值全部由 render-trend.js 从 /api/history + /api/status 客户端算出 -->
-  <section id="trend-stats" class="stats stats-vertical w-full overflow-hidden rounded-box border border-base-300 bg-base-100 sm:stats-horizontal" aria-label="趋势统计"></section>
+  <section id="trend-stats" class="grid w-full grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="趋势统计"></section>
 
   <div class="flex flex-wrap items-center justify-between gap-2">
-    <div class="tabs tabs-box tabs-sm" role="tablist" aria-label="时间范围" id="trend-range">
-      <button class="tab" type="button" role="tab" aria-selected="false" data-range="1h">近 1 小时</button>
-      <button class="tab tab-active" type="button" role="tab" aria-selected="true" data-range="24h">近 24 小时</button>
+    <div class="tabs tabs-box tabs-sm border border-base-300 bg-base-200/60" role="tablist" aria-label="时间范围" id="trend-range">
+      <button class="tab text-base-content/70 hover:text-primary aria-selected:bg-base-100 aria-selected:text-primary" type="button" role="tab" aria-selected="false" data-range="1h">近 1 小时</button>
+      <button class="tab tab-active text-primary" type="button" role="tab" aria-selected="true" data-range="24h">近 24 小时</button>
     </div>
-    <button id="trend-refresh" class="btn btn-ghost btn-sm gap-1" type="button">
+    <button id="trend-refresh" class="btn btn-outline btn-primary btn-sm gap-1" type="button">
       <RefreshCw size={15} aria-hidden="true" />刷新
     </button>
   </div>

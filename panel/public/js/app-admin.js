@@ -8,7 +8,7 @@ async function loadAccounts() {
     if (!prev || prev.at <= t.checkedAt) testResults.set(t.keyId, { ok: !!t.ok, result: t, at: t.checkedAt });
   }
   state.readonlyReason = '凭据以只读方式挂载，无法修改；请改用 config/ 目录挂载';
-  renderAccounts();
+  if (!document.getElementById("m-detail")?.classList.contains("modal-open")) renderAccounts();
   applyWritable(data.writable !== false, state.readonlyReason);
 }
 
@@ -86,6 +86,27 @@ $('accounts').addEventListener('click', (e) => {
   const account = state.accounts.find((a) => String(a.keyId) === String(id));
   if (!account) return;
   const act = btn.getAttribute('data-act');
+
+  if (act === 'detail') {
+    const title = account.name || account.keyPrefix || '账号详情';
+    fillAccountDetailBase(account);
+    $('m-detail-test-result').textContent = '';
+    $('m-detail-events').replaceChildren();
+    openModal('m-detail', btn);
+    apiJSON('/api/admin/events?limit=200').then((data) => {
+      const matches = (data.events || []).filter((event) => String(event.message || '').includes(title) || String(event.message || '').includes(id));
+      const list = $('m-detail-events');
+      if (!matches.length) { const item = document.createElement('li'); item.textContent = '暂无相关日志'; list.appendChild(item); return; }
+      for (const event of matches) { const item = document.createElement('li'); item.textContent = event.at + ' · ' + event.level + ' · ' + event.message; list.appendChild(item); }
+    }).catch((error) => { $('m-detail-events').textContent = error.message; });
+    $('m-detail-test').onclick = async (event) => {
+      const button = event.currentTarget; button.disabled = true; button.textContent = '测试中…'; $('m-detail-test-result').textContent = '测试中…';
+      try { const result = await apiJSON('/api/admin/accounts/test', { method:'POST', body:{ keyId:id } }); $('m-detail-test-result').textContent = result.result?.ok ? '连通性正常' : (result.result?.error || '测试失败'); }
+      catch (error) { $('m-detail-test-result').textContent = error.message; }
+      finally { button.disabled = false; button.textContent = '测试连通性'; }
+    };
+    return;
+  }
 
   if (act === 'test') {
     return guard(async () => {

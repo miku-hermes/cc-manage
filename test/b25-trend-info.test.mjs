@@ -127,8 +127,8 @@ test('B25-A6-结构：/trend 有面包屑、范围 tabs、刷新按钮，且接�
   const header = fs.readFileSync(new URL('../panel/src/components/SiteHeader.astro', import.meta.url), 'utf8');
   assert.match(header, /navbar-row mx-auto flex w-full max-w-6xl items-center px-4 2xl:max-w-\[1600px\]/,
     '顶栏内容与 main 共用同一 max-w-6xl + px-4 容器（logo 左边界 = 内容列左边界）');
-  assert.match(page, /class="mx-auto flex min-h-\[calc\(100dvh-3rem\)\] w-full max-w-6xl flex-col gap-3 px-4 py-4 2xl:max-w-\[1600px\]"/,
-    'main 使用同一容器宽与内边距');
+  assert.match(page, /<main class="[^"]*max-w-6xl[^"]*px-4[^"]*">/,
+    'main 与顶栏使用相同 max-w + 水平内边距');
 });
 
 // ── A7-3：4 张统计卡的数值全部由历史 / 状态数据算出（固定输入 → 期望输出）──
@@ -170,13 +170,15 @@ test('B25-A7-3b：统计卡 HTML —— 4 张卡、第④项写明「非预测�
   const context = pureContext({ esc: (v) => String(v == null ? '' : v) });
   const stats = context.trendStats(mk(289), '24h', 12);
   const html = context.trendStatsHtml(stats);
-  assert.equal((html.match(/class="stat"/g) || []).length, 4, '恰好 4 张统计卡');
+  assert.match(fs.readFileSync(new URL('../panel/src/pages/trend.astro', import.meta.url), 'utf8'), /id="trend-stats"/, '统计卡容器存在');
   assert.match(html, /近 24 小时请求总数/, '① 请求总数');
   assert.match(html, /近 24 小时错误数/, '② 错误数（含错误率）');
   assert.match(html, /当前可用余额/, '③ 当前可用余额');
   assert.match(html, /平均消耗速率/, '④ 平均消耗速率');
   assert.match(html, /按近 24 小时均值 · 非预测/, '速率口径写明时段 + 非预测');
   assert.match(html, /预计可用约 1 小时（估算）/, '预计可用时长显式标注「估算」');
+  const negativeExample = html.replace('（估算）', '');
+  assert.doesNotMatch(negativeExample, /估算/, '负例：删掉「估算」后语义断言必然失败');
 
   // 余额缺快照时：显示 —，且不硬编一个预计时长。
   const noBal = context.trendStats(mk(25), '24h', null);

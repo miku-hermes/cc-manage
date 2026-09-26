@@ -38,8 +38,17 @@ async function paintDetailChart() {
     detailChart.setOption({ animation:false, grid:{left:8,right:8,top:8,bottom:8}, xAxis:{type:'time',show:false}, yAxis:{type:'value',show:false}, series:[{type:'line',smooth:true,symbol:'none',data:detailHistory.map(x=>[Number(x.t),Number(x.remaining)]),lineStyle:{color:color||undefined,width:2},areaStyle:{color:getComputedStyle(document.documentElement).getPropertyValue('--chart-area-balance').trim()||undefined}}] });
   } catch { if (empty) empty.textContent = '图表暂不可用'; }
 }
-function openAccountDetail(account, trigger) {
+function fillAccountDetailBase(account) {
   detailText('m-detail-title', account.name || account.keyPrefix || '账号详情');
+  const display = document.getElementById('m-detail-display');
+  if (display) display.textContent = account.displayName || '无';
+  const error = document.getElementById('m-detail-error');
+  if (error) error.textContent = account.lastError || '无';
+  const errorAt = document.getElementById('m-detail-error-at');
+  if (errorAt) errorAt.textContent = account.lastErrorAt || '无';
+}
+function openAccountDetail(account, trigger) {
+  fillAccountDetailBase(account);
   const status = document.getElementById('m-detail-status');
   const st = accountStatus(account); status.className = 'acct-status badge shrink-0 whitespace-nowrap ' + toneBadge(st.tone); status.replaceChildren(Object.assign(document.createElement('span'), {className:'dot'}), document.createTextNode(st.t));
   detailText('m-detail-plan', account.lastQuota?.plan ? planLabel(account.lastQuota.plan.planId) || '' : '套餐无数据');

@@ -28,7 +28,7 @@ test('动态数值读数节点逐项启用 tabular-nums', () => {
     assertClass(admin, field, 'tabular-nums', label);
   }
   assert.match(trend, /class="trend-stat-value[^"]*tabular-nums/, '趋势摘要数值使用等宽数字');
-  assert.match(trend, /class="stat-value text-2xl tabular-nums/, '趋势统计卡数值使用等宽数字');
+  assert.match(trend, /class="stat-value[^"]*tabular-nums/, '趋势统计卡数值使用等宽数字');
   assert.match(trend, /class="trend-summary tabular-nums/, '趋势摘要文字中的时间数字使用等宽数字');
   assert.match(trend, /class="stat-desc[^"]*tabular-nums/, '趋势卡描述中的估算读数使用等宽数字');
   assert.match(trend, /font-variant-numeric:tabular-nums/, 'ECharts HTML tooltip 使用等宽数字');

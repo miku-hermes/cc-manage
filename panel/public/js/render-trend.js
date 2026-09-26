@@ -1079,12 +1079,12 @@ function trendStatsHtml(stats) {
     ? ''
     : '按此速率预计可用约 ' + trendHoursText(st.estimateHours) + '（估算）';
   const card = (title, value, unit, desc) =>
-    '<div class="stat">'
-    + '<div class="stat-title text-xs text-base-content/60">' + esc(title) + '</div>'
-    + '<div class="stat-value text-2xl tabular-nums">' + esc(value)
+    '<div class="stat min-w-0 max-w-full overflow-hidden rounded-[var(--radius-md)] border border-base-300 bg-base-100 shadow-[var(--shadow-card)] transition-shadow hover:shadow-[var(--shadow-md)]">'
+    + '<div class="stat-title min-w-0 break-words text-xs text-base-content/60">' + esc(title) + '</div>'
+    + '<div class="stat-value min-w-0 break-words text-2xl tabular-nums">' + esc(value)
     + (unit ? ' <span class="text-sm font-normal text-base-content/60">' + esc(unit) + '</span>' : '')
     + '</div>'
-    + '<div class="stat-desc text-xs text-base-content/60 tabular-nums">' + esc(desc) + '</div>'
+    + '<div class="stat-desc min-w-0 break-words text-xs text-base-content/60 tabular-nums">' + esc(desc) + '</div>'
     + '</div>';
   return card(rl + '请求总数', trendInt(st.requests), '次', rl + '内累计')
     + card(rl + '错误数', trendInt(st.errors), '次', errDesc)

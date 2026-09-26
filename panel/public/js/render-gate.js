@@ -13,6 +13,8 @@ const SENSITIVE_VALUE_IDS = [
    备注名 + keyId 片段（#r-sub）、管理员名（#p-sub）、一次性明文 key、报错原文。 */
 const SENSITIVE_TEXT_IDS = [
   'r-sub', 'p-sub',
+  'm-detail-title', 'm-detail-display', 'm-detail-error', 'm-detail-error-at',
+  'm-detail-test-result', 'm-detail-events',
   'a-err', 'r-err', 'u-err', 'p-err', 'k-err', 'k-warn', 'k-plain',
 ];
 

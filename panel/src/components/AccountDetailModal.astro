@@ -1,0 +1,14 @@
+---
+import { X } from '@lucide/astro';
+const { admin = false } = Astro.props;
+---
+<div class="modal" id="m-detail">
+  <div class="modal-box detail-dialog dialog pop-in w-11/12 max-w-2xl" role="dialog" aria-modal="true" aria-labelledby="m-detail-title">
+    <div class="flex items-start justify-between gap-3"><div class="min-w-0"><h2 id="m-detail-title" class="truncate text-xl font-bold"></h2><div class="mt-2 flex flex-wrap items-center gap-2"><span id="m-detail-status" class="acct-status badge"><span class="dot" aria-hidden="true"></span></span><span id="m-detail-plan" class="badge badge-ghost"></span></div></div><button class="btn btn-ghost btn-sm btn-square shrink-0" type="button" data-close="m-detail" aria-label="关闭详情"><X size={18} /></button></div>
+    <section class="mt-5 space-y-2"><h3 class="text-sm font-semibold">额度构成</h3><div id="m-detail-credits" class="detail-credits-bar join h-2 w-full overflow-hidden rounded-full bg-base-300"></div><p id="m-detail-credit-label" class="aux-text text-xs"></p></section>
+    <section class="mt-5 space-y-2"><h3 class="text-sm font-semibold">窗口明细</h3><div id="m-detail-windows" class="grid min-w-0 gap-2 sm:grid-cols-3"></div></section>
+    <section class="mt-5"><h3 class="text-sm font-semibold">余额变化</h3><div id="m-detail-chart" class="mt-2 h-36 min-w-0" role="img" aria-label="账号余额变化趋势"></div><p id="m-detail-chart-empty" class="aux-text text-sm"></p></section>
+    <section class="mt-5"><h3 class="text-sm font-semibold">消耗与预测</h3><p id="m-detail-burn" class="mt-2 text-sm tabular-nums"></p></section><p id="m-detail-updated" class="mt-2 aux-text text-xs"></p>
+  {admin && <section class="mt-5 space-y-2"><p>上游显示名：<span id="m-detail-display"></span></p><p>最近一次错误：<span id="m-detail-error"></span></p><p>错误时间：<span id="m-detail-error-at"></span></p><button id="m-detail-test" class="btn btn-outline btn-sm" type="button">测试连通性</button><p id="m-detail-test-result" role="status"></p><h3 class="font-semibold">相关日志（按内容匹配）</h3><ul id="m-detail-events" class="max-h-60 overflow-auto"></ul></section>}
+  </div><div class="modal-backdrop" data-close="m-detail"></div>
+</div>
