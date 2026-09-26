@@ -102,11 +102,21 @@
   --glass-blur: 16px;
   --glass-border: rgba(230, 234, 242, .9);
   --scrim: rgba(23, 35, 59, .38);
-  --dur-150: 150ms;
-  --dur-250: 250ms;
-  --ease-out: cubic-bezier(.22, .61, .36, 1);
+  --dur-fast: 120ms;
+  --dur-normal: 240ms;
+  --dur-slow: 400ms;
+  --ease-enter: cubic-bezier(.22, .61, .36, 1);
+  --ease-exit: cubic-bezier(.4, 0, 1, 1);
+  --ease-standard: cubic-bezier(.4, 0, .2, 1);
+  --animate-enter: enter var(--dur-normal) var(--ease-enter) both;
+  --animate-exit: exit var(--dur-fast) var(--ease-exit) both;
+  --animate-shift: shift var(--dur-normal) var(--ease-standard) both;
+  @keyframes enter { from { opacity: 0; translate: 0 6px; } to { opacity: 1; translate: 0 0; } }
+  @keyframes exit { from { opacity: 1; } to { opacity: 0; } }
+  @keyframes shift { from { translate: 0 4px; } to { translate: 0 0; } }
   --elev-1: 0 1px 2px rgba(16, 24, 40, .04), 0 4px 16px rgba(16, 24, 40, .06);
   --elev-2: 0 2px 4px rgba(16, 24, 40, .05), 0 12px 30px rgba(16, 24, 40, .12);
+  --elev-3: 0 8px 24px rgba(16, 24, 40, .16), 0 24px 48px rgba(16, 24, 40, .18);
 }
 
 @layer base {
@@ -179,18 +189,30 @@
   @view-transition {
     navigation: auto;
   }
+  :root { view-transition-name: theme-root; }
+  ::view-transition-old(theme-root),
+  ::view-transition-new(theme-root) { animation-duration: var(--dur-fast); }
+  @media (prefers-reduced-motion: reduce) {
+    ::view-transition-old(theme-root),
+    ::view-transition-new(theme-root) { animation-duration: 0ms; }
+  }
 
   /* 现代 CSS：入场用 @starting-style（弹窗 / toast / 卡片明细），而不是 keyframes。 */
   .pop-in {
     opacity: 1;
     translate: 0 0;
-    transition: opacity var(--dur-250) var(--ease-out), translate var(--dur-250) var(--ease-out);
+    transition: opacity var(--dur-normal) var(--ease-enter), translate var(--dur-normal) var(--ease-enter);
   }
   @starting-style {
     .pop-in {
       opacity: 0;
       translate: 0 6px;
     }
+  }
+
+  @media (hover: hover) {
+    .card:hover { box-shadow: var(--elev-2); translate: 0 -2px; }
+    .btn:active { scale: .98; }
   }
 
   /* 列表里存在 crit 行时，总览区自动出现警示描边（:has() 驱动，无需脚本）。 */
@@ -242,8 +264,8 @@
   *,
   *::before,
   *::after {
-    transition-duration: .01ms !important;
-    animation-duration: .01ms !important;
+    transition-duration: 0ms !important;
+    animation-duration: 0ms !important;
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
   }

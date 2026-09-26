@@ -265,14 +265,14 @@ test('B21-9：aria-label 说明区间与最新值，空态也明说数据不足'
 });
 
 // ── 15（21c）：视觉主次：余额主角 / 请求退到背景 / 错误细红虚线 ──────
-test('B21-15：视觉主次 —— 余额 2px 主角、请求 1px·0.7 淡出、错误 1px 语义红虚线', () => {
+test('B21-15：视觉主次 —— 余额 2px 主角、请求 1px 不淡出、错误 1px 语义红虚线', () => {
   const context = pureContext();
   const opt = optionFor(context, samplesOf(12));
   const byName = Object.fromEntries(opt.series.map((s) => [s.name, s]));
   assert.equal(byName['可用余额'].lineStyle.width, 2, '余额 2px 主角');
   assert.ok(byName['可用余额'].areaStyle, '余额带渐变面积');
   assert.equal(byName['请求数'].lineStyle.width, 1, '请求 1px');
-  assert.equal(byName['请求数'].lineStyle.opacity, 0.7, '请求 0.7 透明度');
+  assert.equal(byName['请求数'].lineStyle.opacity, undefined, '请求折线本体不淡出');
   // 面积透明度编码进渐变 stop（同色相 → alpha 0），不再叠 areaStyle.opacity：
   // 旧写法 (序列色 → transparent) 会在非预乘空间插值出暗褐，再乘 opacity 就发脏（批次 21f 第 4 条）。
   assert.equal(byName['请求数'].areaStyle.opacity, undefined, '面积不再整体 opacity');

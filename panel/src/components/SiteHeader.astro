@@ -12,7 +12,7 @@ const { search = true } = Astro.props;
   </div>
   <div class="navbar-end tools flex items-center gap-1 px-2">
     {search && (
-      <label class="search-box input input-sm flex w-9 items-center gap-2 overflow-hidden px-2 transition-[width] duration-200 [&.expanded]:w-44 focus-within:w-44 max-sm:w-8 max-[340px]:[&.expanded]:w-28 max-[340px]:focus-within:w-28">
+      <label class="search-box input input-sm flex w-9 items-center gap-2 overflow-hidden px-2 transition-[width] duration-(--dur-fast) [&.expanded]:w-44 focus-within:w-44 max-sm:w-8 max-[340px]:[&.expanded]:w-28 max-[340px]:focus-within:w-28">
         <Search size={15} aria-hidden="true" class="shrink-0" />
         <input id="search" type="search" class="min-w-0 grow bg-transparent text-sm" placeholder="搜索账号" aria-label="搜索账号" autocomplete="off">
       </label>

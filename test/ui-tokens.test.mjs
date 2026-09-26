@@ -50,13 +50,13 @@ function rules(css) {
 }
 
 // ── 1：tokens.css 含玻璃与动效令牌，且为浅色单一主题 ──────────────
-test('令牌#1：tokens.css 定义 --glass-bg / --glass-blur 与 --dur-250 / --ease-out', () => {
+test('令牌#1：tokens.css 定义 --glass-bg / --glass-blur 与 --dur-normal / --ease-enter', () => {
   assert.match(TOKENS_CSS, /--glass-bg:\s*rgba\(255,\s*255,\s*255,\s*\.?\d*7\)/, '玻璃底色 rgba(255,255,255,.7) 量级');
   assert.match(TOKENS_CSS, /--glass-blur:\s*16px/, '玻璃模糊 16px');
   assert.match(TOKENS_CSS, /--glass-border:/, '玻璃描边令牌');
-  assert.match(TOKENS_CSS, /--dur-250:\s*250ms/, '弹框动效时长 250ms');
-  assert.match(TOKENS_CSS, /--dur-150:\s*150ms/, '交互动效时长 150ms');
-  assert.match(TOKENS_CSS, /--ease-out:\s*cubic-bezier\(\.22,\s*\.61,\s*\.36,\s*1\)/, '统一缓出曲线');
+  assert.match(TOKENS_CSS, /--dur-normal:\s*240ms/, '弹框动效时长 250ms');
+  assert.match(TOKENS_CSS, /--dur-fast:\s*120ms/, '交互动效时长 150ms');
+  assert.match(TOKENS_CSS, /--ease-enter:\s*cubic-bezier\(\.22,\s*\.61,\s*\.36,\s*1\)/, '统一缓出曲线');
   assert.match(TOKENS_CSS, /--elev-1:/, '柔和分层阴影 1');
   assert.match(TOKENS_CSS, /--elev-2:/, '柔和分层阴影 2');
 });
@@ -83,6 +83,6 @@ test('令牌#3：panel.css 含 prefers-reduced-motion 全局降级块', () => {
   const blocks = mediaBlocks(BASE_CSS.replace(/\/\*[\s\S]*?\*\//g, ''), 'prefers-reduced-motion: reduce');
   assert.ok(blocks.length > 0, 'panel.css 要有 @media (prefers-reduced-motion: reduce) 块');
   const body = blocks.join('\n');
-  assert.match(body, /transition-duration:\s*0?\.01ms\s*!important/, '过渡时长为 0.01ms 且 !important');
-  assert.match(body, /animation-duration:\s*0?\.01ms\s*!important/, '动画时长为 0.01ms 且 !important');
+  assert.match(body, /transition-duration:\s*0ms\s*!important/, '过渡时长为 0.01ms 且 !important');
+  assert.match(body, /animation-duration:\s*0ms\s*!important/, '动画时长为 0.01ms 且 !important');
 });

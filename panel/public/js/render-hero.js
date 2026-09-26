@@ -1,16 +1,16 @@
-/* 数字滚动（批次 10）：记录上一次的值，首次 700ms 从 0 滚上来，之后只在
+/* 数字滚动（批次 10）：记录上一次的值，首次同步显示，之后只在
    格式化结果真的变化时用 320ms 滚过去；不能动画时 setNumber 同步写终值。 */
 let lastBalance = null;    // 上次余额数值；null = 尚未渲染过。无快照时为 NaN（money→—）
 let lastTokens = null;     // 上次 token 数值；null = 尚未渲染过
 const lastKpiValues = {};  // KPI 数字 id → 上次的值
 
-/** 一个数字格：首次从 0 滚上来，之后格式化结果变了才用 320ms 滚过去。
+/** 一个数字格：首次同步显示，之后格式化结果变了才用 320ms 滚过去。
     关键：renderKpis 每轮都从 <template> 克隆**全新**节点，所以每次都必须把值写进
     当前节点；不能因为「上次的值没变」就跳过（B24 回归：5s 轮询重建后数字变空白）。 */
 function paintKpiNumber(el, key, value) {
   if (!el) return;
   const prev = key in lastKpiValues ? lastKpiValues[key] : null;
-  if (prev === null) setNumber(el, 0, value, num, 700);
+  if (prev === null) el.textContent = num(value);
   else if (num(prev) !== num(value)) setNumber(el, prev, value, num, 320);
   else el.textContent = num(value);   // 值没变：仍要同步写终值到新节点
   lastKpiValues[key] = value;
@@ -166,7 +166,7 @@ function render(d) {
   // 公开面板不下发也不渲染内网上游地址（host/port 对匿名访客无用，只泄露拓扑）
   $('upstream').textContent = '内网上游' + (d.allowPassthrough ? ' · 已开启直连透传' : '');
   const tokensValue = st.totalTokens;
-  if (lastTokens === null) setNumber($('tokens'), 0, tokensValue, num, 700);
+  if (lastTokens === null) $('tokens').textContent = num(tokensValue);
   else if (num(lastTokens) !== num(tokensValue)) setNumber($('tokens'), lastTokens, tokensValue, num, 320);
   lastTokens = tokensValue;
 
@@ -176,7 +176,7 @@ function render(d) {
   const unsynced = accounts.length - synced.length;
   const remaining = synced.reduce((sum, a) => sum + usableRemaining(a), 0);
   const balanceValue = synced.length ? remaining : NaN;   // 无快照 → NaN，money(NaN)='—'
-  if (lastBalance === null) setNumber($('balance'), 0, balanceValue, money, 700);
+  if (lastBalance === null) $('balance').textContent = money(balanceValue);
   else if (money(lastBalance) !== money(balanceValue)) setNumber($('balance'), lastBalance, balanceValue, money, 320);
   lastBalance = balanceValue;
   $('bal-label').textContent = '剩余额度（USD）' + (unsynced ? ' · 含 ' + unsynced + ' 个未同步账号' : '');

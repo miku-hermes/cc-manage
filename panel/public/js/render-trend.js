@@ -25,9 +25,9 @@ const TREND_SYMBOL_SIZE = 3;                // 错误数非零点的小圆点直
 
 // 视觉主次（批次 21c）：余额是主角、请求退到背景、错误只在有事时出现。
 const TREND_REQUEST_LINE_WIDTH = 1;
+const TREND_REQUEST_LINE_OPACITY = 0.7;
 const TREND_ERROR_LINE_WIDTH = 1;
 const TREND_BALANCE_LINE_WIDTH = 2;
-const TREND_REQUEST_LINE_OPACITY = 0.7;
 const TREND_REQUEST_AREA_OPACITY = 0.08;   // 请求数面积顶部透明度：极淡，几乎只作背景温度
 const TREND_BALANCE_AREA_OPACITY = 0.20;   // 余额面积顶部透明度：主角，落在 18%~22% 档
 const TREND_AXIS_SPLIT = 4;                // 量程目标等分数：上限≈峰值×1.15 再取整，不留大片死区
@@ -628,8 +628,8 @@ function buildTrendOption({ samples, capacity, theme, reducedMotion } = {}) {
     yAxisIndex: 0,
     data: reqData,
     smooth: 0.25,
-    lineStyle: { width: TREND_REQUEST_LINE_WIDTH, color: palette.request, opacity: TREND_REQUEST_LINE_OPACITY },
-    itemStyle: { color: palette.request, opacity: TREND_REQUEST_LINE_OPACITY },
+    lineStyle: { width: TREND_REQUEST_LINE_WIDTH, color: palette.request },
+    itemStyle: { color: palette.request },
     emphasis: { focus: 'series', lineStyle: { width: 2, opacity: 1 } },
     ...reqPoints,
     ...(reqZero ? {} : { areaStyle: trendAreaStyle(palette.request, TREND_REQUEST_AREA_OPACITY, palette.areaRequest) }),
@@ -1145,7 +1145,6 @@ function renderTrend(data) {
   // 新 DOM 默认图表可见；显式对齐一次，即使容器节点跨渲染复用也能纠正残留的 hidden。
   setTrendChartVisible(host, true);
   if (typeof globalThis !== 'undefined' && globalThis.echarts) {
-    // 成功 → 再对齐一次（幂等）；失败 → 隐藏图表、亮出说明。
     setTrendChartVisible(host, mountTrendChart(el, option));
     return;
   }

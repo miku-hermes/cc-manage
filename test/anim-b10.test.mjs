@@ -172,12 +172,12 @@ test('B10-4：app.js 的 playIntro 只跑一次，加/移除 body.is-intro', () 
 });
 
 // ── 5：数字滚动挂载点 ───────────────────────────────────────────────
-test('B10-5：render-hero.js 用 setNumber；首次 from 0，之后格式化结果变了才动', () => {
-  assert.match(RENDER_HERO_JS, /setNumber\(\$\('balance'\), 0,/, '首次余额从 0 滚上来');
-  assert.match(RENDER_HERO_JS, /setNumber\(\$\('tokens'\), 0,/, '首次 token 从 0 滚上来');
+test('B10-5：首屏数字同步显示，后续格式化结果变化才滚动', () => {
+  assert.match(RENDER_HERO_JS, /if \(lastBalance === null\) \$\('balance'\)\.textContent = money\(balanceValue\)/, '首屏余额直接显示终值');
+  assert.match(RENDER_HERO_JS, /if \(lastTokens === null\) \$\('tokens'\)\.textContent = num\(tokensValue\)/, '首屏 token 直接显示终值');
   assert.match(RENDER_HERO_JS, /money\(lastBalance\)\s*!==\s*money\(/, '余额格式化结果变了才动');
   assert.match(RENDER_HERO_JS, /num\(lastTokens\)\s*!==\s*num\(/, 'token 变了才动');
-  assert.match(RENDER_HERO_JS, /setNumber\(el, 0, value, num, 700\)/, '6 个 KPI 数字同走 setNumber');
+  assert.match(RENDER_HERO_JS, /prev === null\) el\.textContent = num\(value\)/, 'KPI 首次同步显示终值');
   assert.match(RENDER_HERO_JS, /let lastBalance = null/, '记录上次余额');
   assert.match(RENDER_HERO_JS, /let lastTokens = null/, '记录上次 token');
   assert.match(RENDER_HERO_JS, /, 320\)/, '后续变化用 320ms');
@@ -207,8 +207,8 @@ test('B10-6：至少 3 个主要面带 background-color 过渡（Tailwind transi
 test('B10-7：panel.css 全局 reduced-motion 块同时降级 transition 与 animation', () => {
   const block = mediaBlocks(strip(PANEL_CSS), 'prefers-reduced-motion: reduce').join('\n');
   assert.ok(block, '存在 reduced-motion 块');
-  assert.match(block, /transition-duration:\s*0?\.01ms\s*!important/, '全局过渡降级仍在');
-  assert.match(block, /animation-duration:\s*0?\.01ms\s*!important/, '全局动画降级仍在');
+  assert.match(block, /transition-duration:\s*0ms\s*!important/, '全局过渡降级仍在');
+  assert.match(block, /animation-duration:\s*0ms\s*!important/, '全局动画降级仍在');
   assert.match(block, /\.pop-in|\*/, '降级作用于全部元素（含 .pop-in 入场）');
 });
 

@@ -142,11 +142,12 @@ test('B13-16（B23 改写）：趋势轮询移到 /trend 页；主面板 app.js 
 test('B13-17：入场用 @starting-style，reduced-motion 全局降级', () => {
   assert.match(PANEL_CSS, /@starting-style\s*\{[\s\S]*?\.pop-in/, '入场用 @starting-style(.pop-in)');
 
-  const at = PANEL_CSS.indexOf('@media (prefers-reduced-motion: reduce)');
-  assert.ok(at >= 0, '必须有 reduced-motion 块');
-  const block = braceBlock(PANEL_CSS, at);
-  assert.match(block, /transition-duration:\s*0?\.01ms\s*!important/, 'reduced-motion 降级过渡');
-  assert.match(block, /animation-duration:\s*0?\.01ms\s*!important/, 'reduced-motion 降级动画');
+  const blocks = [...PANEL_CSS.matchAll(/@media \(prefers-reduced-motion: reduce\)/g)];
+  const fallbackAt = blocks.map(match => match.index).find(at => /\*::before/.test(braceBlock(PANEL_CSS, at)));
+  assert.ok(fallbackAt !== undefined, '必须有覆盖伪元素的全局 reduced-motion 兜底块');
+  const block = braceBlock(PANEL_CSS, fallbackAt);
+  assert.match(block, /transition-duration:\s*0ms\s*!important/, 'reduced-motion 全局兜底降级过渡');
+  assert.match(block, /animation-duration:\s*0ms\s*!important/, 'reduced-motion 全局兜底降级动画');
 });
 
 /** 取 marker 之后第一个成对 {…} 块的块内文本（.selector / function name 都适用）。 */

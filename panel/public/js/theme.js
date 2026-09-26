@@ -8,7 +8,10 @@ function prefersDark() { return !!(window.matchMedia && window.matchMedia('(pref
 function currentTheme() { return document.documentElement.getAttribute('data-theme') || (prefersDark() ? 'dark' : 'light'); }
 /** 手动切换：写 data-theme 并记住选择。 */
 function setTheme(t) {
-  document.documentElement.setAttribute('data-theme', t);
+  const apply = () => document.documentElement.setAttribute('data-theme', t);
+  const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!reduced && typeof document.startViewTransition === 'function') document.startViewTransition(apply);
+  else apply();
   try { localStorage.setItem(THEME_STORE, t); } catch { /* 忽略 */ }
 }
 
