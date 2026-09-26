@@ -295,7 +295,7 @@ test('B25-D：Hero 顶区问候语与时钟必须同行（不得被副行挤到�
   const page = await browser.newPage({ viewport: { width: 384, height: 900 } });
   t.after(() => page.close());
 
-  for (const w of [414, 384, 360]) {
+  for (const w of [414, 384, 375, 360]) {
     await page.setViewportSize({ width: w, height: 900 });
     await page.goto(ctx.baseUrl + '/', { waitUntil: 'networkidle' });
     await page.waitForTimeout(600);
@@ -306,6 +306,9 @@ test('B25-D：Hero 顶区问候语与时钟必须同行（不得被副行挤到�
         greeting: +R('greeting').toFixed(1),
         clock: +R('clock').toFixed(1),
         wrap: getComputedStyle(top).flexWrap,
+        subH: +document.querySelector('.hero-sub').getBoundingClientRect().height.toFixed(1),
+        subScroll: document.querySelector('.hero-sub').scrollWidth,
+        subClient: document.querySelector('.hero-sub').clientWidth,
         sw: document.documentElement.scrollWidth,
         iw: window.innerWidth,
       };
@@ -314,6 +317,14 @@ test('B25-D：Hero 顶区问候语与时钟必须同行（不得被副行挤到�
     assert.ok(Math.abs(m.greeting - m.clock) <= 12,
       w + 'px：问候语 top=' + m.greeting + ' 与时钟 top=' + m.clock + ' 必须同一行（现差 '
       + Math.abs(m.greeting - m.clock).toFixed(1) + 'px）');
+    // 「网关状态 可用 3/4」必须整条同行：375/360px 曾实测 sub 高 36.5px（「网关状态」被折成
+    // 两行），单行基准是 24px（.76rem 文字 + 徽章 py-1）。
+    assert.ok(m.subH <= 30,
+      w + 'px：副行必须单行显示（实测高 ' + m.subH + 'px，> 30px 说明「网关状态」被折行了）');
+    // 不折行还不够 —— 内容必须真的放得下，否则 .hero-sub 的 overflow:hidden 会把徽章切掉一截
+    // （360px 实测曾差 11px，比折行更难察觉）。
+    assert.ok(m.subScroll <= m.subClient + 1,
+      w + 'px：副行不得被截断（内容 ' + m.subScroll + ' > 可见 ' + m.subClient + '，徽章会被切掉）');
     assert.ok(m.sw <= m.iw, w + 'px：不得横向溢出（' + m.sw + ' > ' + m.iw + '）');
   }
 });

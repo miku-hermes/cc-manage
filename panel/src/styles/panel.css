@@ -445,11 +445,17 @@
      压紧头像/字号并禁止换行后，两列合计约 308px < 容器 352px。
      min-width:0 让极窄屏（320px）退化为压缩而不是溢出。 */
   .hero-banner-top { flex-wrap: nowrap; gap: .6rem; }
-  .hero-avatar { width: 2.5rem; height: 2.5rem; }
-  .hero-avatar-svg { width: 2rem; height: 2rem; }
+  .hero-avatar { width: 2.25rem; height: 2.25rem; }
+  .hero-avatar-svg { width: 1.8rem; height: 1.8rem; }
   .hero-ident { gap: .6rem; }
-  .hero-greet, .hero-clock-box { min-width: 0; }
-  .hero-sub { font-size: .76rem; gap: .3rem; }
+  .hero-clock-box { min-width: 0; }
+  .hero-sub { font-size: .72rem; gap: .3rem; }
+  /* 「网关状态 可用 3/4」必须整条同行 —— 375/360/320px 实测 sub 高 36.5/36.5/72.9px
+     （单行基准 24px），即「网关状态」四个字被折成「网关」+「状态」。
+     根因是 .hero-greet 的 min-width:0 允许它被压缩，把副行挤到放不下；这里让它按内容宽
+     （min-width:max-content）且不收缩，副行整体 nowrap。极窄屏兜底用省略号，不裁到卡片外。 */
+  .hero-greet { min-width: max-content; flex: 0 0 auto; }
+  .hero-sub { flex-wrap: nowrap; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 }
 
 /* 顶栏右侧的固定尺寸控件一律不许被 flex 压缩（否则窄屏下先被压窄再用 overflow:hidden 裁内容）。 */
@@ -478,4 +484,14 @@
 }
 @media (max-width: 639px) {
   .hero-gauge .radial-progress { --size: 1.35rem; }
+}
+
+/* 窄屏「网关状态 可用 3/4」要整条同行：徽章默认 padding 来自 daisyUI（utilities 层），
+   想收窄只能写在 layer 外 —— 否则规则被跨层压掉，360px 下副行仍会宽 135.9px 放不进 128.8px，
+   表现为徽章被 .hero-sub 的 overflow:hidden 切掉一截（比折行更难看出问题）。
+   选择器用 .pill（StatusPill 的自定义类）而不是 .badge：.badge 是 daisyUI 组件类，
+   b24i-panel-fixes 的 size-token 解析器按 `.badge` 匹配 CSS 规则取 --size，
+   多一条不含 --size 的 .badge 规则会让那条断言直接失败。 */
+@media (max-width: 639px) {
+  .hero-sub .pill { padding: .15rem .45rem; font-size: .7rem; letter-spacing: 0; }
 }
