@@ -198,6 +198,28 @@ test('B25-C：窄屏无横向溢出 + 卡片网格真机几何（列数/等高/�
   // daisyUI 的 radial-progress 未完成段本身是 #0000（透明）→ 窄环读起来像一段开口弧线。
   assert.match(PANEL_CSS_SRC, /\.hero-gauge \.radial-progress:before\s*\{[^}]*var\(--border-color\)/,
     '环必须补出底轨（daisyUI 默认未完成段透明，没有底轨）');
+
+  // ── 窄屏顶栏：固定尺寸控件不得被 flex 压缩 ────────────────────────────────
+  // 实测（安卓 384px）：.navbar-end 是 flex，切换器被从 81px 压到 53px（少了整整一个按钮），
+  // 再叠加 .view-switch 的 overflow:hidden，右边的列表图标被整个裁掉 —— 看起来像「只有一个图标」。
+  await page.setViewportSize({ width: 384, height: 832 });
+  await page.waitForTimeout(150);
+  const bar = await page.evaluate(() => {
+    const vs = document.querySelector('.view-switch'); const sw = vs.getBoundingClientRect();
+    const l = document.getElementById('view-list');
+    const lr = l.getBoundingClientRect(); const ls = l.querySelector('svg').getBoundingClientRect();
+    const sb = document.querySelector('.search-box').getBoundingClientRect();
+    return { vsW: sw.width, vsRight: sw.right, listRight: lr.right, listIconRight: ls.right,
+      searchW: sb.width, docSw: document.documentElement.scrollWidth, iw: window.innerWidth };
+  });
+  assert.ok(bar.listRight <= bar.vsRight + 0.5,
+    `窄屏下切换器的第二个按钮不得被裁（按钮右缘 ${bar.listRight.toFixed(1)} > 容器右缘 ${bar.vsRight.toFixed(1)}）`);
+  assert.ok(bar.listIconRight <= bar.vsRight + 0.5,
+    `列表图标不得被裁（图标右缘 ${bar.listIconRight.toFixed(1)} > 容器右缘 ${bar.vsRight.toFixed(1)}）`);
+  assert.ok(bar.vsW >= 80,
+    `切换器在窄屏不得被 flex 压缩（实测 ${bar.vsW.toFixed(1)}px，桌面为 81px；变异：去掉 flex:none 即红）`);
+  assert.ok(bar.searchW >= 30, `搜索框不得被压窄到装不下图标（实测 ${bar.searchW.toFixed(1)}px）`);
+  assert.ok(bar.docSw <= bar.iw, `窄屏顶栏不得横向溢出（${bar.docSw} > ${bar.iw}）`);
 });
 
 // ── ② 无浏览器的结构 + 计算模型（始终运行，变异必红）───────────────
