@@ -154,12 +154,14 @@ const ALLOWED_SKIPS = [
   },
   {
     reason: '本机无 Playwright',
-    max: 1,
-    why: 'b25-narrow-overflow.test.mjs 的真机断言需要 Playwright + Chromium，CI runner 未安装，故必须跳过。'
-      + '这不构成静默降级：无浏览器的结构 + 计算模型断言（B25-C-结构）在任何环境都真跑；它断言 max-sm:flex-wrap 在位，'
-      + '并用文本宽模型证明不换行最小所需 282px > 可用 277px，对换行机制被去掉具有变异敏感性。'
-      + '本机有 Playwright 时该断言真跑：node --test test/b25-narrow-overflow.test.mjs 实测 2 tests / 2 pass / 0 skipped，'
-      + '真实 Chromium 在 375/414px 逐路由断言通过。',
+    max: 2,
+    why: 'b25-narrow-overflow.test.mjs 的两条真机断言（B25-C 卡片网格几何、B25-D Hero 顶区问候语与时钟同行）'
+      + '需要 Playwright + Chromium，CI runner 未安装，故必须跳过。'
+      + '这不构成静默降级：无浏览器的结构 + 计算模型断言在任何环境都真跑 —— '
+      + 'B25-C-结构 断言 max-sm:flex-wrap 在位，并用文本宽模型证明不换行最小所需 282px > 可用 277px；'
+      + 'B25-D-结构 断言网关状态徽章的映射只能是 bad→badge-error / 其余→badge-ghost（ok 不得再映射到绿底 badge-success）。'
+      + '本机有 Playwright 时两条真跑：node --test test/b25-narrow-overflow.test.mjs 实测 4 tests / 4 pass / 0 skipped，'
+      + '真实 Chromium 在 375/414/384/360px 断言通过。',
   },
   {
     reason: '真 vendor 内核在本环境无法启动',
