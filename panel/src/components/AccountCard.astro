@@ -13,12 +13,12 @@ import StatusPill from './StatusPill.astro';
        B24h：套餐徽章移出 h2，放进紧随名称的 .plan-slot —— 徽章左边缘 = 统一名称列宽 + gap，
        四行锁死同一起点（之前徽章内联在名称文字后，跟着名字长度走，短名那行左移 8-9px）。 -->
   <summary class="collapse-title row-summary grid grid-cols-[minmax(0,max-content)_minmax(0,1fr)] items-center gap-x-3 gap-y-1 py-2 max-sm:grid-cols-1" aria-expanded="false">
-    <span class="row-title flex min-w-0 items-center gap-2">
+    <span class="row-title flex min-w-0 items-center gap-2 max-sm:flex-wrap">
       <h2 class="card-head truncate text-base font-semibold min-w-[var(--name-col,0px)]" data-f="account-head"></h2>
       <span class="plan-slot shrink-0" data-f="plan-slot"></span>
       <StatusPill />
     </span>
-    <span class="row-meters flex items-center justify-end gap-3 max-sm:justify-start">
+    <span class="row-meters flex items-center justify-end gap-3 max-sm:flex-wrap max-sm:justify-start">
       <span class="card-fresh aux-text text-sm" data-f="card-fresh"></span>
       <b class="usable-balance text-lg font-bold tabular-nums" data-f="usable-balance"></b>
     </span>

@@ -4,7 +4,9 @@ import { Search, Moon, Sun, Lock, Activity } from '@lucide/astro';
 const { search = true } = Astro.props;
 ---
 <header class="header navbar sticky top-0 z-30 min-h-12 border-b border-base-300 bg-base-100/85 backdrop-blur-md">
-  <div class="navbar-start gap-2 px-2">
+  <!-- A6：顶栏内容与 main 共用同一 max-w + px-4 容器，logo 左边界 == 内容列左边界。 -->
+  <div class="navbar-row mx-auto flex w-full max-w-6xl items-center px-4 2xl:max-w-[1600px]">
+  <div class="navbar-start gap-2 px-0">
     <span class="logo text-primary" aria-hidden="true"><Activity size={22} /></span>
     <span class="brand-name text-lg font-bold tracking-tight">cc-manage</span>
   </div>
@@ -23,5 +25,6 @@ const { search = true } = Astro.props;
       <Lock size={18} />
     </a>
     <span id="keyhint" class="hint text-xs text-base-content/60"></span>
+  </div>
   </div>
 </header>

@@ -53,6 +53,9 @@ function quotaTone(pct) {
   if (pct !== null && pct >= 70) return 'warn progress-warning';
   return 'progress-success';
 }
+/* 窗口槽位 → 可访问名里的窗口说法（B25 D：读屏要能知道是哪个账号的哪个窗口）。 */
+const QUOTA_WINDOW_LABEL = { 'bar-5h': '5 小时窗口', 'bar-week': '本周窗口', 'bar-month': '本月周期' };
+
 function fillQuotaBar(root, slot, w, opts) {
   const bar = field(root, slot);
   if (!bar) return;
@@ -62,7 +65,16 @@ function fillQuotaBar(root, slot, w, opts) {
   if (track) {
     track.className = 'progress qbar-track h-1.5 ' + quotaTone(pct);
     // 垫片/真实 DOM 都要求用 setAttribute 同步 value（属性序列化才看得到）。
-    track.setAttribute('value', String(Math.max(0, Math.min(100, pct === null ? 0 : pct))));
+    // D：value 取到 1 位小数，产物里不再出现 64.98198366666666 这类裸浮点。
+    const clamped = Math.max(0, Math.min(100, pct === null ? 0 : Number(pct)));
+    const rounded = Math.round(clamped * 10) / 10;
+    track.setAttribute('value', String(rounded));
+    // D：可访问名（哪个账号的哪个窗口）+ 格式化后的 aria-valuetext（与可视百分比逐字符一致）。
+    const nameEl = field(root, 'name');
+    const who = nameEl && nameEl.textContent ? nameEl.textContent : '该账号';
+    const windowLabel = QUOTA_WINDOW_LABEL[slot] || '额度窗口';
+    track.setAttribute('aria-label', who + ' · ' + windowLabel + '额度使用');
+    track.setAttribute('aria-valuetext', pctText(pct));
   }
   fillText(bar, slot + '-pct', pctText(pct));
   // resetAt 是秒：补一句「重置 M/D HH:MM」，光有百分比看不出窗口什么时候回来。

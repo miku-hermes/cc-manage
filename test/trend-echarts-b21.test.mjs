@@ -351,17 +351,22 @@ test('B21-18：DOM —— 副标题、摘要色点、0 错误正向徽章（不�
   context.renderTrend({ bucketMs: 5 * 60 * 1000, samples: zero });
   assert.match(host.innerHTML, /class="trend-sub[^"]*"/, '区间文案进副标题（不再是靠右的纯灰小字）');
   assert.match(host.innerHTML, /class="trend-pill trend-pill-ok[^"]*">0 错误/, '错误全 0 → 正向「0 错误」徽章');
-  assert.equal((host.innerHTML.match(/class="trend-dot /g) || []).length, 3, '摘要三条读数各带一枚色点');
-  assert.match(host.innerHTML, /trend-dot-request/, '请求色点');
-  assert.match(host.innerHTML, /trend-dot-balance/, '余额色点');
-  assert.match(host.innerHTML, /trend-dot-error is-zero/, '错误为 0 时色点弱化，不抢视觉');
-  assert.match(host.innerHTML, /最新样本/, '脚注写明余额是「最新样本」口径');
+  // B25 A4：底部摘要不再重复顶部图例的色点（图例唯一来源 = 顶部 ECharts 图例）。
+  assert.equal((host.innerHTML.match(/class="trend-dot /g) || []).length, 0, '摘要不再重复画图例色点');
+  assert.equal((host.innerHTML.match(/class="trend-stat /g) || []).length, 3, '摘要三项读数');
+  // B25 A1：每项都带时间口径/时间戳。
+  assert.match(host.innerHTML, /近 24 小时请求/, '请求项带「近 24 小时」口径');
+  assert.match(host.innerHTML, /近 24 小时错误/, '错误项带「近 24 小时」口径');
+  assert.match(host.innerHTML, /最新样本 \d\d:\d\d/, '余额项带 HH:mm 时间戳');
+  // B25 A2：错误全 0 → 摘要明说「本时段无错误」（= 图例隐藏 + 文字说明，不留幽灵序列）。
+  assert.match(host.innerHTML, /本时段无错误/, '错误全 0 时摘要解释「本时段无错误」');
 
   host.innerHTML = '';
   const withErr = zero.map((s, i) => ({ ...s, e: i === 3 ? 2 : 0 }));
   context.renderTrend({ bucketMs: 5 * 60 * 1000, samples: withErr });
   assert.ok(!/trend-pill-ok/.test(host.innerHTML), '有错误时不出现「0 错误」徽章');
-  assert.match(host.innerHTML, /trend-dot-error\b[^"]*"/, '有错误时色点用语义红');
+  assert.ok(!/本时段无错误/.test(host.innerHTML), '有错误时不出现「本时段无错误」');
+  assert.match(host.innerHTML, /错误率/, '有错误时给出错误率');
 });
 
 // ── 10：懒加载（假 document + 假 echarts）───────────────────────────
@@ -984,8 +989,11 @@ test('B21-38：充值点有实心圆点、竖直短引线、带 HH:mm 的低调 
   assert.ok(!Array.isArray(el), 'renderItem 必须返回单个图元（返回数组会炸掉整张图）');
   assert.equal(el.type, 'line', '引线是一个线段图元');
   assert.equal(el.shape.x1, el.shape.x2, '引线竖直');
-  assert.ok(el.shape.y2 < el.shape.y1, '引线从阶跃点向上');
-  assert.equal(el.shape.y1 - el.shape.y2, 12, '引线是「短」引线（12px）');
+  assert.ok(el.shape.y2 < el.shape.y1, '引线从阶跃点向上（点在轴上限 85% 以下）');
+  // B25 A5：引线长度 = 圆点半径(3.5) + chip 间距(10) = 13.5px，末端正好顶到 chip 边缘。
+  assert.ok(Math.abs((el.shape.y1 - el.shape.y2) - 13.5) < 1e-9,
+    '引线长度 = 圆点半径 + chip 间距（末端顶到 chip，不再留缝），实际 ' + (el.shape.y1 - el.shape.y2));
+  assert.equal(bal.markPoint.label.align, 'center', 'chip 水平居中 → 与引线严格同 x');
 
   // 真实 ECharts：整张图仍能渲染，引线路径真的落在阶跃点的 x 上。
   const echarts = loadVendoredECharts();

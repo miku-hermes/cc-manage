@@ -42,8 +42,12 @@ const TREND_LEGEND_GAP = 20;               // 图例项间距
 const TREND_UNIT_COUNT = '次';             // 左轴（请求数 / 错误数）单位
 const TREND_UNIT_AMOUNT = 'USD';           // 右轴（可用余额）单位
 const TREND_TOPUP_MIN_USD = 0.01;          // 余额单步上升超过这个数才算一次充值
-const TREND_TOPUP_LEADER_PX = 12;          // 充值引线长度（像素空间，竖直指向阶跃点）
-const TREND_TOPUP_LABEL_DISTANCE = 10;     // 充值 chip 底部与阶跃点的间距（px）
+const TREND_TOPUP_DOT_RADIUS = 3.5;        // 充值圆点半径（symbolSize 7）
+const TREND_TOPUP_LABEL_DISTANCE = 10;     // chip 边缘与圆点的间距（px）
+// B25：引线长度 = 圆点半径 + chip 间距，使引线末端正好顶到 chip 边缘（旧值固定 12px，
+// 与「圆点半径 + 间距」差 1.5px，视觉上引线和气泡之间留了条缝、对不齐）。
+const TREND_TOPUP_LEADER_PX = TREND_TOPUP_DOT_RADIUS + TREND_TOPUP_LABEL_DISTANCE;
+const TREND_TOPUP_BELOW_RATIO = 0.85;      // 充值点高于轴上限 85% 时 chip 改放点下方（避开图例）
 const TREND_TOPUP_CHIP_RADIUS = 6;         // 充值 chip 圆角半径（px）
 const TREND_GAP_MIN_BUCKETS = 6;           // 未覆盖区间 >= 6 个桶（约 30 分钟）才画「无数据」带
 const TREND_GAP_OPACITY = 0.20;            // 「无数据」带不透明度（适当降低，不与底色糊在一起）
@@ -54,6 +58,8 @@ const TREND_TOKEN_KEYS = Object.freeze({
   request: '--chart-series-request',
   error: '--chart-series-error',
   balance: '--chart-series-balance',
+  areaRequest: '--chart-area-request',
+  areaBalance: '--chart-area-balance',
   grid: '--chart-grid',
   gridH: '--chart-grid-h',
   now: '--chart-now',
@@ -207,6 +213,18 @@ function trendTopupText(topup) {
   return trendClock(topup.t) + ' 充值 +' + trendUsdText(topup.amount) + ' USD';
 }
 
+/**
+ * 充值 chip 放点的上方还是下方（B25 A5）。
+ * 点太靠近轴上限时，放上方会把 chip 顶进图例区（实测「气泡贴在图表顶端」），
+ * 这时改放点下方；两种情况 chip 与引线都在同一个 x 上，严格对齐。
+ */
+function trendTopupBelow(topup, scale) {
+  if (!topup) return false;
+  const max = Number(scale && scale.max);
+  if (!(max > 0)) return false;
+  return trendNum(topup.value) >= max * TREND_TOPUP_BELOW_RATIO;
+}
+
 // ── 主题：从 CSS 令牌解析图表色 ──────────────────────────────────────
 
 /**
@@ -280,14 +298,17 @@ function trendAlpha(color, alpha) {
  * 关键：两个 stop 保持同色相、只降 alpha —— 不能写成 (序列色 → transparent)：
  * ECharts 在非预乘空间会把颜色插值成暗褐，再乘整体 opacity 就「发脏」（批次 21f 第 4 条）。
  */
-function trendAreaStyle(color, opacity = TREND_BALANCE_AREA_OPACITY) {
+function trendAreaStyle(color, opacity = TREND_BALANCE_AREA_OPACITY, topColor) {
+  // B25：填充色改为按主题取值（--chart-area-request / --chart-area-balance，alpha 已烘进令牌）。
+  // 没有对应令牌（测试垫片 / 旧主题）时退回「序列色 × 常量透明度」，行为不变。
+  const top = typeof topColor === 'string' && topColor.trim() ? topColor.trim() : trendAlpha(color, opacity);
   return {
     color: {
       type: 'linear',
       x: 0, y: 0, x2: 0, y2: 1,
       colorStops: [
-        { offset: 0, color: trendAlpha(color, opacity) },
-        { offset: 1, color: trendAlpha(color, 0) },
+        { offset: 0, color: top },
+        { offset: 1, color: trendAlpha(top, 0) },
       ],
     },
   };
@@ -424,9 +445,14 @@ function trendTopupLeaderSeries(topup, palette) {
     data: [[topup.t, topup.value]],
     renderItem: (params, api) => {
       const xy = api.coord([api.value(0), api.value(1)]);
+      // 同一根 x：引线永远从圆点中心竖直出发（chip 水平居中靠 align:center 保证对齐）。
+      const dir = topup.below ? 1 : -1;
       return {
         type: 'line',
-        shape: { x1: xy[0], y1: xy[1], x2: xy[0], y2: xy[1] - TREND_TOPUP_LEADER_PX },
+        shape: {
+          x1: xy[0], y1: xy[1] + dir * TREND_TOPUP_DOT_RADIUS,
+          x2: xy[0], y2: xy[1] + dir * (TREND_TOPUP_DOT_RADIUS + TREND_TOPUP_LEADER_PX),
+        },
         style: { stroke: palette.balance, lineWidth: 1, lineDash: [2, 2] },
       };
     },
@@ -528,8 +554,8 @@ function buildTrendOption({ samples, capacity, theme, reducedMotion } = {}) {
     axisTick: { show: false },
     axisLabel: { ...trendAxisLabel(palette.label), formatter: (v) => trendInt(v) },
     // 横向网格：用更淡一档的 --chart-grid-h 补上「只有竖线」的半成品感；
-    // 颜色由令牌给定最终值，不叠 opacity。
-    splitLine: { show: true, lineStyle: { color: palette.gridH || palette.grid, width: 1 } },
+    // 颜色由令牌给定最终值，不叠 opacity。A4：与纵向统一成虚线（旧实现横实纵虚，没有理由）。
+    splitLine: { show: true, lineStyle: { color: palette.gridH || palette.grid, width: 1, type: 'dashed' } },
   };
 
   // 右轴 = 金额（USD）：单独一根，绝不和「次」共轴。右轴不画横向网格，避免双份网格线。
@@ -582,6 +608,8 @@ function buildTrendOption({ samples, capacity, theme, reducedMotion } = {}) {
   const reqZero = isAllZero(reqData.map((p) => p[1]));   // 全 0 → 不画面积（零值最轻）
   const balZero = isAllZero(balData.map((p) => p[1]));
   const topup = trendTopup(list);
+  // A5：先按右轴量程决定 chip 放上/放下，markPoint 与引线共用同一个判定。
+  if (topup) topup.below = trendTopupBelow(topup, amountScale);
   const showGap = !!(coverage && coverage.gapMs >= TREND_GAP_MIN_BUCKETS * coverage.bucket);
   const lastT = coverage ? coverage.lastT : trendXOf(list[list.length - 1], list.length - 1);
 
@@ -604,7 +632,7 @@ function buildTrendOption({ samples, capacity, theme, reducedMotion } = {}) {
     itemStyle: { color: palette.request, opacity: TREND_REQUEST_LINE_OPACITY },
     emphasis: { focus: 'series', lineStyle: { width: 2, opacity: 1 } },
     ...reqPoints,
-    ...(reqZero ? {} : { areaStyle: trendAreaStyle(palette.request, TREND_REQUEST_AREA_OPACITY) }),
+    ...(reqZero ? {} : { areaStyle: trendAreaStyle(palette.request, TREND_REQUEST_AREA_OPACITY, palette.areaRequest) }),
     z: 1,
   };
   series.push(reqSeries);
@@ -638,7 +666,7 @@ function buildTrendOption({ samples, capacity, theme, reducedMotion } = {}) {
     itemStyle: { color: palette.balance },
     emphasis: { focus: 'series' },
     ...balPoints,
-    ...(balZero ? {} : { areaStyle: trendAreaStyle(palette.balance, TREND_BALANCE_AREA_OPACITY) }),
+    ...(balZero ? {} : { areaStyle: trendAreaStyle(palette.balance, TREND_BALANCE_AREA_OPACITY, palette.areaBalance) }),
     // 「现在」终止标记：数据末端一条安静虚线，给时间轴一个锚点。
     // 亮度降到网格级（--chart-now，不再用偏亮的 --chart-cursor）；标签强制横排（rotate: 0，
     // 否则 markLine 会沿竖线把文字转 90°），字号与图例一致，位置贴绘图区顶部内侧。
@@ -659,10 +687,12 @@ function buildTrendOption({ samples, capacity, theme, reducedMotion } = {}) {
     // chip 用卡片一致的底色，避免文字直接压在洋红曲线上读不清；不做高亮胶囊，不抢数据线。
     ...(topup ? { markPoint: {
       symbol: 'circle',
-      symbolSize: 7,
+      symbolSize: TREND_TOPUP_DOT_RADIUS * 2,
       itemStyle: { color: palette.balance, borderColor: palette.tooltipBg, borderWidth: 2 },
       label: {
-        show: true, position: 'top', distance: TREND_TOPUP_LABEL_DISTANCE,
+        // B25 A5：显式水平居中（align:center）→ chip 与引线同 x；点太高时改放下方避开图例。
+        show: true, position: topup.below ? 'bottom' : 'top', distance: TREND_TOPUP_LABEL_DISTANCE,
+        align: 'center', verticalAlign: topup.below ? 'top' : 'bottom',
         color: palette.balance, fontSize: 11, fontWeight: 600,
         backgroundColor: palette.tooltipBg,
         borderColor: palette.tooltipBorder,
@@ -735,6 +765,45 @@ let trendChart = null;            // 当前 ECharts 实例（拿不到库时为 
 let trendEChartsPromise = null;   // 懒加载去重
 let trendSnapshot = null;         // 最近一次数据（主题切换时重刷 option）
 let trendListenersBound = false;
+let trendRange = '24h';           // A6：当前时间范围（客户端子集，不发新请求）
+let trendHistoryData = null;      // 最近一次 /api/history 原文（供范围切换重渲染）
+let trendStatusData = null;       // 最近一次 /api/status（供「当前可用余额」）
+
+/** 账号可用余额：与前台卡片同口径（月额度/余额已用完记 0，无快照返回 null）。 */
+function trendAccountRemaining(a) {
+  const q = a && a.lastQuota;
+  if (!q || !Number.isFinite(q.remaining)) return null;
+  const k = a.exhausted && a.exhausted.kind;
+  if (k === 'monthly' || k === 'balance') return 0;
+  return q.remaining;
+}
+
+/** 当前可用余额 = 所有有快照账号的可用余额之和；一个快照都没有 → null（显示 —）。 */
+function trendBalanceFromStatus(status) {
+  const accounts = Array.isArray(status && status.accounts) ? status.accounts : [];
+  const vals = accounts.map(trendAccountRemaining).filter((v) => Number.isFinite(v));
+  return vals.length ? vals.reduce((a, b) => a + b, 0) : null;
+}
+
+/** 范围按钮的选中态（aria-selected / tab-active），与 trendRange 单一来源对齐。 */
+function updateRangeButtons() {
+  if (typeof document === 'undefined' || typeof document.querySelectorAll !== 'function') return;
+  for (const btn of document.querySelectorAll('#trend-range [data-range]')) {
+    const active = trendRangeKey(btn.getAttribute && btn.getAttribute('data-range')) === trendRange;
+    btn.classList.toggle('tab-active', active);
+    btn.setAttribute('aria-selected', active ? 'true' : 'false');
+  }
+}
+
+/** 切换时间范围：只重渲染，不重新请求（A6 明确不新增后端接口）。 */
+function setTrendRange(key) {
+  trendRange = trendRangeKey(key);
+  if (trendHistoryData) renderTrend(trendHistoryData);
+  else updateRangeButtons();
+}
+
+/** 「刷新」按钮：复用现有 loadTrend。 */
+function refreshTrend() { return loadTrend(); }
 
 /**
  * 懒加载 vendor 里的 ECharts：只在趋势第一次真正渲染时插入 <script>。
@@ -882,32 +951,145 @@ function trendHeadHtml(samples, capacity, range) {
     + '</div>';
 }
 
-function trendStatHtml(label, value, unit, dotClass) {
+function trendStatHtml(label, value, unit, dotClass, note) {
+  // dotClass 仍受支持（图例色点唯一来源已是顶部 ECharts 图例，摘要不再重复画点）。
   return '<span class="trend-stat flex items-baseline gap-1.5">'
     + (dotClass ? '<span class="trend-dot inline-block h-2.5 w-2.5 shrink-0 rounded-full ' + dotClass + '" aria-hidden="true"></span>' : '')
     + '<span class="trend-stat-label text-xs text-base-content/60">' + esc(label) + '</span>'
     + '<b class="trend-stat-value text-lg font-semibold tabular-nums">' + esc(value) + '</b>'
     + '<span class="trend-stat-unit text-xs text-base-content/60">' + esc(unit) + '</span>'
+    + (note ? '<span class="trend-stat-note text-xs text-base-content/60">' + esc(note) + '</span>' : '')
     + '</span>';
 }
 
-/**
- * 文本摘要（图表之外的等价信息；拿不到库时就是唯一载体，绝不为空）。
- * 每个读数前带一枚与线色一致的小色点（不再是无颜色脚注）；余额口径写明是
- * 「最新样本」，避免和顶部卡片「剩余额度」看起来互相矛盾（批次 21c 第 7 条）。
- */
-function trendSummaryHtml(samples) {
+// ── 时间范围（A6）：客户端对同一份 24h 数据取子集，绝不新增后端接口 ──────
+const TREND_RANGE_MS = Object.freeze({ '1h': 60 * 60 * 1000, '24h': 24 * 60 * 60 * 1000 });
+
+function trendRangeKey(v) { return v === '1h' ? '1h' : '24h'; }
+function trendRangeMs(key) { return TREND_RANGE_MS[trendRangeKey(key)]; }
+function trendRangeLabel(key) { return trendRangeKey(key) === '1h' ? '近 1 小时' : '近 24 小时'; }
+
+/** 取时间范围内子集：锚在最后一个样本的时间（确定性，不受测试机时钟影响）。 */
+function trendSubset(samples, rangeKey) {
   const list = Array.isArray(samples) ? samples : [];
-  const last = list.length ? list[list.length - 1] : null;
-  const r = last ? trendInt(trendNum(last.r)) : '—';
-  const e = last ? trendInt(trendNum(last.e)) : '—';
-  const m = last ? trendUsdText(trendNum(last.m)) : '—';
-  const errZero = list.length >= 2 && isAllZero(list.map((s) => trendNum(s?.e)));
+  if (list.length < 2) return list.slice();
+  const ms = trendRangeMs(rangeKey);
+  const end = trendXOf(list[list.length - 1], list.length - 1);
+  return list.filter((s, i) => trendXOf(s, i) >= end - ms);
+}
+
+/**
+ * 统计卡数值（A6）：全部由现有 /api/history + /api/status 算出，纯函数、可单测。
+ * @returns 近 <range> 的请求/错误/错误率、覆盖时长、平均消耗速率（USD/小时）、
+ *          最新桶（5 分钟）读数、以及可选的「预计可用时长（估算）」。
+ * 消耗口径：余额相邻样本的**下降量之和**（充值导致的上升不计入消耗，也不被当成负消耗）。
+ */
+function trendStats(samples, rangeKey, balance) {
+  const key = trendRangeKey(rangeKey);
+  const list = trendSubset(samples, key);
+  const n = list.length;
+  let requests = 0; let errors = 0; let consumed = 0;
+  for (let i = 0; i < n; i += 1) {
+    requests += trendNum(list[i]?.r);
+    errors += trendNum(list[i]?.e);
+    if (i > 0) {
+      const drop = trendNum(list[i - 1]?.m) - trendNum(list[i]?.m);
+      if (drop > 0) consumed += drop;
+    }
+  }
+  const firstT = n ? trendXOf(list[0], 0) : NaN;
+  const lastT = n ? trendXOf(list[n - 1], n - 1) : NaN;
+  const coveredMs = n >= 2 ? Math.max(0, lastT - firstT) : 0;
+  const coveredHours = coveredMs / 3600000;
+  const rate = n >= 2 && coveredHours > 0 ? consumed / coveredHours : null;
+  // 余额缺快照（null/undefined/''）必须显示 —，不能 Number(null)=0 伪装成「余额 0.00」。
+  const balanceValue = balance === null || balance === undefined || balance === ''
+    ? null
+    : (Number.isFinite(Number(balance)) ? Number(balance) : null);
+  const estimateHours = rate > 0 && balanceValue !== null ? balanceValue / rate : null;
+  const errZero = n >= 2 && isAllZero(list.map((x) => trendNum(x?.e)));
+  const last = n ? list[n - 1] : null;
+  return {
+    rangeKey: key,
+    rangeLabel: trendRangeLabel(key),
+    samples: list,
+    count: n,
+    requests,
+    errors,
+    errorRate: requests > 0 ? (errors / requests) * 100 : null,
+    errZero,
+    coveredHours,
+    consumed,
+    ratePerHour: rate,
+    balance: balanceValue,
+    estimateHours,
+    latestBucket: last
+      ? { t: trendXOf(last, n - 1), r: trendNum(last.r), e: trendNum(last.e), m: trendNum(last.m) }
+      : null,
+  };
+}
+
+/** 速率口径文案：数据覆盖满所选时段才说「按近 X 均值」，否则如实说覆盖了多少。 */
+function trendRateLabel(stats) {
+  const st = stats || {};
+  const full = trendRangeMs(st.rangeKey) / 3600000;
+  if (!(st.coveredHours > 0)) return '样本不足，暂不可算';
+  if (st.coveredHours >= full * 0.95) return '按' + st.rangeLabel + '均值 · 非预测';
+  return '按已覆盖 ' + trendHoursText(st.coveredHours) + '均值 · 非预测';
+}
+
+function trendHoursText(h) {
+  const n = Number(h);
+  if (!(n > 0)) return '0 小时';
+  return (Number.isInteger(n) ? n : n.toFixed(1)) + ' 小时';
+}
+
+/**
+ * 底部文本摘要（A1）：每一项都带**明确时间口径 + 时间戳**，绝不再出现
+ * 「请求数 0 次」这种会被误读成 24h 总量的裸读数（旧实现取最后一个 5 分钟桶，
+ * 却和上方密集的请求曲线看上去自相矛盾）。图例色点只保留顶部 ECharts 图例一处（A4）。
+ */
+function trendSummaryHtml(samples, rangeKey) {
+  const key = trendRangeKey(rangeKey);
+  const st = trendStats(samples, key, null);
+  const lastClock = st.latestBucket ? trendClock(st.latestBucket.t) : '—';
+  const rangeLabel = st.rangeLabel;
+  const errNote = st.errZero
+    ? '本时段无错误'
+    : (st.errorRate === null ? '' : '错误率 ' + st.errorRate.toFixed(1) + '%');
   return '<div class="trend-summary mt-3 flex flex-wrap gap-4 border-t border-base-300 pt-3">'
-    + trendStatHtml('请求数', r, '次', 'trend-dot-request bg-[var(--chart-series-request)]')
-    + trendStatHtml('错误数', e, '次', (errZero ? 'trend-dot-error is-zero opacity-40' : 'trend-dot-error') + ' bg-[var(--chart-series-error)]')
-    + trendStatHtml('最新样本', m, 'USD', 'trend-dot-balance bg-[var(--chart-series-balance)]')
+    + trendStatHtml(rangeLabel + '请求', trendInt(st.requests), '次', '', '（' + rangeLabel + '合计）')
+    + trendStatHtml(rangeLabel + '错误', trendInt(st.errors), '次', '', errNote)
+    + trendStatHtml('最新样本 ' + lastClock + ' · 余额', trendUsdText(st.latestBucket ? st.latestBucket.m : NaN), 'USD', '', '（' + lastClock + ' 定稿的 5 分钟桶）')
     + '</div>';
+}
+
+/**
+ * 4 张统计卡（A6）：全部由 /api/history + /api/status 客户端算出。
+ * 第④项写明「按…均值 · 非预测」；预计可用时长显式标注「估算」。
+ */
+function trendStatsHtml(stats) {
+  const st = stats || {};
+  const rl = st.rangeLabel || trendRangeLabel(st.rangeKey);
+  const errDesc = st.errZero ? '本时段无错误'
+    : (st.errorRate === null ? '错误率 —' : '错误率 ' + st.errorRate.toFixed(1) + '%');
+  const rateText = st.ratePerHour === null ? '—' : st.ratePerHour.toFixed(2);
+  const balanceText = st.balance === null ? '—' : st.balance.toFixed(2);
+  const estimate = st.estimateHours === null || !(st.estimateHours > 0)
+    ? ''
+    : '按此速率预计可用约 ' + trendHoursText(st.estimateHours) + '（估算）';
+  const card = (title, value, unit, desc) =>
+    '<div class="stat">'
+    + '<div class="stat-title text-xs text-base-content/60">' + esc(title) + '</div>'
+    + '<div class="stat-value text-2xl tabular-nums">' + esc(value)
+    + (unit ? ' <span class="text-sm font-normal text-base-content/60">' + esc(unit) + '</span>' : '')
+    + '</div>'
+    + '<div class="stat-desc text-xs text-base-content/60">' + esc(desc) + '</div>'
+    + '</div>';
+  return card(rl + '请求总数', trendInt(st.requests), '次', rl + '内累计')
+    + card(rl + '错误数', trendInt(st.errors), '次', errDesc)
+    + card('当前可用余额', balanceText, 'USD', '来自 /api/status 最新额度快照')
+    + card('平均消耗速率', rateText, 'USD/小时', trendRateLabel(st) + (estimate ? ' · ' + estimate : ''));
 }
 
 /**
@@ -920,8 +1102,14 @@ function trendSummaryHtml(samples) {
 function renderTrend(data) {
   const host = $('trend');
   if (!host) return;
-  const samples = Array.isArray(data?.samples) ? data.samples : [];
-  const capacity = trendCapacity(data);
+  const all = Array.isArray(data?.samples) ? data.samples : [];
+  const rangeKey = trendRangeKey(trendRange);
+  const samples = trendSubset(all, rangeKey);
+  const balance = trendBalanceFromStatus(data && data.status ? data.status : trendStatusData);
+  const stats = trendStats(all, rangeKey, balance);
+  // 1h 视图下「满窗样本数」也按 1/24 算，否则 1h 数据永远显示「数据收集中 n/288」。
+  const fullCapacity = trendCapacity(data);
+  const capacity = rangeKey === '1h' ? Math.max(1, Math.round(fullCapacity / 24)) : fullCapacity;
   const range = trendRangeText(samples, data);
   const ariaLabel = trendAriaLabel(samples, capacity, range);
   const option = buildTrendOption({
@@ -935,17 +1123,21 @@ function renderTrend(data) {
     try { trendChart.dispose(); } catch { /* 忽略 */ }
   }
   trendChart = null;
-  trendSnapshot = { samples, capacity };
+  trendSnapshot = { samples, capacity, rangeKey };
 
   // 样本 < 2：不建图容器、也不为一张空图去拉库，只给中性「数据不足」态（绝不画假线）
   const insufficient = samples.length < 2;
   const plot = insufficient
-    ? '<div class="trend-empty flex h-64 items-center justify-center text-base-content/50" role="img" aria-label="' + esc(ariaLabel) + '">数据不足，等待更多样本</div>'
-    : '<div class="trend-chart h-64 w-full" role="img" aria-label="' + esc(ariaLabel) + '"></div>';
+    ? '<div class="trend-empty flex h-64 min-h-64 items-center justify-center text-base-content/50" role="img" aria-label="' + esc(ariaLabel) + '">数据不足，等待更多样本</div>'
+    : '<div class="trend-chart h-64 w-full flex-1 min-h-64" role="img" aria-label="' + esc(ariaLabel) + '"></div>';
   host.innerHTML = trendHeadHtml(samples, capacity, range)
     + plot
     + '<p class="trend-fallback text-sm text-warning" hidden>图表库加载失败，已改用文本摘要。</p>'
-    + trendSummaryHtml(samples);
+    + trendSummaryHtml(samples, rangeKey);
+
+  const statsHost = $('trend-stats');
+  if (statsHost) statsHost.innerHTML = trendStatsHtml(stats);
+  updateRangeButtons();
 
   if (insufficient) return;
 
@@ -971,13 +1163,21 @@ function renderTrend(data) {
     });
 }
 
-/** 拉取 + 渲染。失败静默降级：保留上一次内容，不打日志，绝不影响主面板。 */
+/** 拉取 + 渲染。失败静默降级：保留上一次内容，不打日志，绝不影响主面板。
+    /api/status 只用于「当前可用余额」；它失败不影响历史图（余额显示 —）。 */
 async function loadTrend() {
   try {
-    const r = await apiFetch('/api/history');
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    const data = await r.json();
-    renderTrend(data);
+    const [h, s] = await Promise.all([
+      apiFetch('/api/history'),
+      apiFetch('/api/status').catch(() => null),
+    ]);
+    if (!h.ok) throw new Error('HTTP ' + h.status);
+    const history = await h.json();
+    let status = null;
+    if (s && s.ok) { try { status = await s.json(); } catch { status = null; } }
+    trendHistoryData = history;
+    trendStatusData = status;
+    renderTrend(Object.assign({}, history, { status }));
   } catch (e) {
     /* 趋势面板不是关键路径：失败就保持现状，不打扰主面板，也不刷控制台 */
   }

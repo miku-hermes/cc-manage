@@ -2,13 +2,33 @@
 import Layout from '../layouts/Layout.astro';
 import SiteHeader from '../components/SiteHeader.astro';
 import TrendCard from '../components/TrendCard.astro';
-import { ChevronLeft } from '@lucide/astro';
+import { ChevronLeft, RefreshCw } from '@lucide/astro';
 ---
 <Layout title="cc-manage · 近 24 小时趋势" description="cc-manage 近 24 小时趋势：请求数 / 错误数 / 可用余额的 ECharts 折线图。">
 <SiteHeader search={false} />
 
-<main class="mx-auto flex w-full max-w-6xl flex-col gap-3 px-4 py-4 2xl:max-w-[1600px]">
-  <p class="trend-back"><a class="btn btn-ghost btn-sm gap-1" href="/"><ChevronLeft size={15} />返回面板</a></p>
+<main class="mx-auto flex min-h-[calc(100dvh-3rem)] w-full max-w-6xl flex-col gap-3 px-4 py-4 2xl:max-w-[1600px]">
+  <!-- A6：面包屑 + 标题，明确「当前在趋势页」；左边界与顶栏 logo 对齐（同一 max-w + px-4）。 -->
+  <nav class="breadcrumbs text-sm" aria-label="面包屑">
+    <ul>
+      <li><a class="inline-flex items-center gap-1" href="/"><ChevronLeft size={14} />面板</a></li>
+      <li><span class="font-semibold" aria-current="page">近 24 小时趋势</span></li>
+    </ul>
+  </nav>
+
+  <!-- A6：4 张统计卡，数值全部由 render-trend.js 从 /api/history + /api/status 客户端算出 -->
+  <section id="trend-stats" class="stats stats-vertical w-full overflow-hidden rounded-box border border-base-300 bg-base-100 shadow-sm sm:stats-horizontal" aria-label="趋势统计"></section>
+
+  <div class="flex flex-wrap items-center justify-between gap-2">
+    <div class="tabs tabs-box tabs-sm" role="tablist" aria-label="时间范围" id="trend-range">
+      <button class="tab" type="button" role="tab" aria-selected="false" data-range="1h">近 1 小时</button>
+      <button class="tab tab-active" type="button" role="tab" aria-selected="true" data-range="24h">近 24 小时</button>
+    </div>
+    <button id="trend-refresh" class="btn btn-ghost btn-sm gap-1" type="button">
+      <RefreshCw size={15} aria-hidden="true" />刷新
+    </button>
+  </div>
+
   <TrendCard />
 </main>
 
@@ -21,7 +41,11 @@ import { ChevronLeft } from '@lucide/astro';
    vendor/echarts.min.js 由 render-trend.js 在首次真正渲染时懒加载。 */
 document.addEventListener('click', (e) => {
   const t = e.target;
-  if (t && t.closest && t.closest('#theme')) { setTheme(currentTheme() === 'dark' ? 'light' : 'dark'); return; }
+  if (!t || !t.closest) return;
+  if (t.closest('#theme')) { setTheme(currentTheme() === 'dark' ? 'light' : 'dark'); return; }
+  if (t.closest('#trend-refresh')) { refreshTrend(); return; }
+  const rangeBtn = t.closest('#trend-range [data-range]');
+  if (rangeBtn) setTrendRange(rangeBtn.getAttribute('data-range'));
 });
 function bootTrendPage() {
   loadTrend();
