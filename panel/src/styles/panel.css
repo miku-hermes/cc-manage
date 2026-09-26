@@ -270,3 +270,16 @@
     scroll-behavior: auto !important;
   }
 }
+
+
+@media (max-width: 639px) {
+  .hero-aside .trend-link {
+    flex-basis: 100%;
+    justify-content: flex-start;
+  }
+
+  body {
+    padding-bottom: 1rem;
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  }
+}
