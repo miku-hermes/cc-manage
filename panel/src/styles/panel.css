@@ -339,7 +339,13 @@
   .hero-balance { display: flex; align-items: baseline; gap: .5rem; min-width: 0; }
   .hero-balance b { font-size: 2.5rem; font-weight: 800; letter-spacing: -.02em; line-height: 1.05; }
   .bal-label { font-size: .85rem; }
-  .hero-gauge { display: flex; align-items: center; gap: .75rem; margin-left: auto; min-width: 0; }
+  .hero-gauge { display: flex; align-items: center; gap: .65rem; margin-left: auto; min-width: 0; }
+  .hero-gauge-cap { font-size: .78rem; white-space: nowrap; }
+  /* 额度构成：贴在余额下方的小字，由标题「额度构成」领起，标签归属唯一
+     （不再用 `·` 与「本月已用」并列）。收在 mid 内而不是独占带边框的区块，省首屏高度。 */
+  .hero-main-col { display: flex; flex-direction: column; gap: .15rem; min-width: 0; }
+  .hero-compose { display: flex; align-items: baseline; gap: .45rem; flex-wrap: wrap; }
+  .hero-compose-cap { font-size: .75rem; flex: none; }
   .hero-breakdown { font-size: .85rem; }
   .hero-banner-foot { display: flex; align-items: center; justify-content: space-between; gap: .75rem; flex-wrap: wrap; margin-top: .85rem; padding-top: .75rem; border-top: 1px solid var(--border-light); }
   .hero-meta { display: flex; flex-wrap: wrap; align-items: center; font-size: .75rem; }

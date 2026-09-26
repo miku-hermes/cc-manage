@@ -114,14 +114,14 @@ function heroPctText(p) {
 function breakdownText(accounts) {
   const t = creditsTotals(accounts);
   if (!t.count) return '尚未获取额度快照';
-  // 环承担百分比语义；此行说明用量口径与额度构成，避免重复报数。
-  const used = t.cap > 0 ? '本月已用' : '本月用量待同步';
-  // 恒为 0 的额度构成不占位（购买 0 / 赠送 0 直接不出现）。
+  // 只讲「额度构成」：百分比语义归环（环旁标签由 #gauge-cap 承担），这里不重复报数。
+  // 也不再用 `·` 把「本月已用」和构成并列 —— 那个写法会让读者把构成金额读成「本月已用金额」。
+  // 恒为 0 的构成不占位（购买 0 / 赠送 0 直接不出现）。
   const parts = [];
   if (t.monthly > 0) parts.push('月度 $' + money(t.monthly));
   if (t.purchased > 0) parts.push('购买 $' + money(t.purchased));
   if (t.free > 0) parts.push('赠送 $' + money(t.free));
-  return used + (parts.length ? ' · ' + parts.join(' · ') : '');
+  return parts.length ? parts.join(' · ') : '暂无可统计构成';
 }
 
 /* 状态筛选条：全部 / 可用 / 冷却 / 耗尽。
@@ -182,11 +182,12 @@ function render(d) {
   lastBalance = balanceValue;
   $('bal-label').textContent = '剩余额度（USD）' + (unsynced ? ' · 含 ' + unsynced + ' 个未同步账号' : '');
   // 余额下方的构成明细（聚合口径见 breakdownText）。
-  $('bal-breakdown').textContent = breakdownText(accounts);
+  $('bal-breakdown').textContent = breakdownText(accounts);   // 只放额度构成（标签归属唯一）
   // daisyUI radial-progress：本月额度已用的单一图形表达（读数与 breakdown 文字共用
   // heroPctText 的同一个字符串，不再一个取整、一个一位小数）。
   const totals = creditsTotals(accounts);
   const gauge = $('usage-gauge');
+  const gaugeCap = $('gauge-cap');
   if (gauge) {
     if (totals.cap > 0 && Number.isFinite(totals.percent)) {
       const pct = Math.max(0, Math.min(100, Math.round(totals.percent)));
@@ -194,10 +195,12 @@ function render(d) {
       gauge.setAttribute('style', '--value:' + pct);
       gauge.textContent = pctLabel;
       gauge.setAttribute('aria-label', '本月额度已用 ' + pctLabel);
+      if (gaugeCap) gaugeCap.textContent = '本月已用';
     } else {
       gauge.setAttribute('style', '--value:0');
       gauge.textContent = '—';
       gauge.setAttribute('aria-label', '本月额度用量待同步');
+      if (gaugeCap) gaugeCap.textContent = '本月用量待同步';
     }
   }
 

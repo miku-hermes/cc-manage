@@ -83,16 +83,24 @@ function openModal(id) {
   setBackgroundInert(true);
 }
 
+/* 关闭弹窗后把焦点还回去：原节点还在就直接用；被轮询重建换掉了，就按 data-focus-return
+   找替补 —— 同一标识在卡片视图与表格视图各有一份，只有一个是可见的，优先还给可见的那个
+   （否则焦点会落到 display:none 的节点上，等于没还）。 */
+function focusReturnTarget() {
+  if (modalFocusReturn && modalFocusReturn.focus && modalFocusReturn.isConnected !== false) return modalFocusReturn;
+  if (!modalFocusReturnKey) return null;
+  const all = Array.from(document.querySelectorAll('[data-focus-return]'))
+    .filter((el) => el.getAttribute('data-focus-return') === modalFocusReturnKey);
+  return all.filter((el) => el.offsetParent !== null)[0] || all[0] || null;
+}
+
 function closeModal(id) {
   const modal = $(id);
   if (modal) modal.classList.remove('open', 'modal-open');
   if (document.querySelectorAll('.modal.open').length) return;   // 还有别的弹窗开着
   setBackgroundInert(false);
-  if (modalFocusReturn && modalFocusReturn.focus && modalFocusReturn.isConnected !== false) modalFocusReturn.focus();
-  else if (modalFocusReturnKey) {
-    const replacement = Array.from(document.querySelectorAll('[data-focus-return]')).find((el) => el.getAttribute('data-focus-return') === modalFocusReturnKey);
-    if (replacement && replacement.focus) replacement.focus();
-  }
+  const back = focusReturnTarget();
+  if (back && back.focus) back.focus();
   modalFocusReturn = null;
   modalFocusReturnKey = null;
 }
@@ -112,11 +120,8 @@ document.addEventListener('keydown', (e) => {
   if (!open.length) return;
   for (const m of open) m.classList.remove('open', 'modal-open');
   setBackgroundInert(false);
-  if (modalFocusReturn && modalFocusReturn.focus && modalFocusReturn.isConnected !== false) modalFocusReturn.focus();
-  else if (modalFocusReturnKey) {
-    const replacement = Array.from(document.querySelectorAll('[data-focus-return]')).find((el) => el.getAttribute('data-focus-return') === modalFocusReturnKey);
-    if (replacement && replacement.focus) replacement.focus();
-  }
+  const back = focusReturnTarget();
+  if (back && back.focus) back.focus();
   modalFocusReturn = null;
   modalFocusReturnKey = null;
 });

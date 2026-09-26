@@ -207,7 +207,7 @@ function card(a, wideLast = false, index = 0) {
   const detailButton = field(node, 'detail-trigger');
   if (detailButton) {
     detailButton.setAttribute('aria-label', '查看 ' + (a.name || a.keyPrefix || shortId(a.keyId) || '未命名账号') + ' 详情');
-    detailButton.setAttribute('data-focus-return', String(index));
+    detailButton.setAttribute('data-focus-return', 'card:' + String(index));
   }
 
   fillHead(node, a);
@@ -277,11 +277,42 @@ function syncStatusColumn() {
 }
 window.syncStatusColumn = syncStatusColumn;
 
+/* 轮询重建会整体替换卡片/表格行节点：正在焦点上的节点被删掉后 activeElement 会掉回 body，
+   键盘用户正在操作的那张卡就丢了焦点（detail-modal.test.mjs:85 抓的正是这个竞态）。
+   重绘前记下「焦点在哪个 keyId 的哪个角色上」，重绘后交给对应的新节点；账号已不在列表里就不抢焦点。 */
+function cardFocusRole(el) {
+  if (el.classList) {
+    if (el.classList.contains('detail-trigger')) return '.detail-trigger';
+    if (el.classList.contains('row-detail')) return '.row-detail';
+  }
+  return null;
+}
+function captureCardFocus() {
+  const el = document.activeElement;
+  if (!el || el === document.body || !el.closest) return null;
+  const host = el.closest('[data-key-id]');
+  if (!host || !host.getAttribute) return null;
+  const detail = document.getElementById('m-detail');
+  if (detail && detail.contains(el)) return null;      // 弹窗内的焦点不归卡片管
+  const key = host.getAttribute('data-key-id');
+  return key ? { key: key, role: cardFocusRole(el) } : null;
+}
+function restoreCardFocus(info) {
+  if (!info) return;
+  const hosts = Array.from(document.querySelectorAll('#cards [data-key-id], #acctTableBody [data-key-id]'))
+    .filter((n) => n.getAttribute('data-key-id') === info.key);
+  const host = hosts.filter((n) => n.offsetParent !== null)[0] || hosts[0];
+  if (!host) return;                                   // 账号已被过滤掉 / 移除 → 不抢焦点
+  const target = info.role ? host.querySelector(info.role) : host;
+  if (target && target.focus) target.focus();
+}
+
 function renderCards() {
   if (!state.data) return;
   if (document.querySelector && document.querySelector('#m-detail.open')) return;
   const all = state.data.accounts;
   const list = filteredAccounts();
+  const focusInfo = captureCardFocus();
   renderTable();
   if (!list.length) {
     const msg = all.length
@@ -291,6 +322,7 @@ function renderCards() {
     syncNameColumn();
     syncStatusColumn();
     syncTagMasks();
+    restoreCardFocus(focusInfo);
     return;
   }
   const scrollOf = new Map();
@@ -305,6 +337,7 @@ function renderCards() {
     if (scrollOf.has(key)) el.scrollLeft = scrollOf.get(key);
   }
   syncTagMasks();
+  restoreCardFocus(focusInfo);
 }
 
 /** 筛选后的账号列表（分组视图与表格视图共用同一份结果，保证两种排布说的是同一件事）。 */
@@ -340,7 +373,7 @@ function tableRow(a, index) {
   const btn = field(node, 'row-detail');
   if (btn) {
     btn.setAttribute('aria-label', '查看 ' + (a.name || a.keyPrefix || shortId(a.keyId) || '未命名账号') + ' 详情');
-    btn.setAttribute('data-focus-return', String(index));
+    btn.setAttribute('data-focus-return', 'row:' + String(index));
   }
   for (const el of node.querySelectorAll('[data-f]')) el.removeAttribute('data-f');
   return node;

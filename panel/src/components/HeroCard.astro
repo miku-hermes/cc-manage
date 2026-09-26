@@ -42,13 +42,21 @@ import { RefreshCw, TrendingUp, ChevronRight } from '@lucide/astro';
   </div>
 
   <div class="hero-banner-mid">
-    <div class="hero-balance">
-      <b id="balance" class="tabular-nums">—</b>
-      <span id="bal-label" class="bal-label aux-text">剩余额度（USD）</span>
+    <div class="hero-main-col">
+      <div class="hero-balance">
+        <b id="balance" class="tabular-nums">—</b>
+        <span id="bal-label" class="bal-label aux-text">剩余额度（USD）</span>
+      </div>
+      <!-- 额度构成紧贴在余额下方、由标题「额度构成」领起：以前它和「本月已用」用 `·` 并列在同一行，
+           读者会把构成金额读成「本月已用金额」（剩余额度与月度额度数值接近时更会串味）。 -->
+      <div class="hero-compose">
+        <span class="hero-compose-cap aux-text">额度构成</span>
+        <p id="bal-breakdown" class="hero-breakdown tabular-nums"></p>
+      </div>
     </div>
     <div class="hero-gauge">
       <span id="usage-gauge" class="radial-progress tabular-nums text-primary [--size:3.5rem]" style="--value:0" role="progressbar" aria-label="本月额度已用 0.0%">0.0%</span>
-      <p id="bal-breakdown" class="hero-breakdown tabular-nums aux-text"></p>
+      <span id="gauge-cap" class="hero-gauge-cap aux-text">本月已用</span>
     </div>
   </div>
 

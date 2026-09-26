@@ -62,9 +62,15 @@ test('B4-1：Hero 构成明细对两账号的月度/购买/赠送分别求和（
   const a = account({ keyId: 'aaaa1111', lastQuota: quota({ credits: { monthlyCredits: 2, purchasedCredits: 1, freeCredits: 0.5 } }) });
   const b = account({ keyId: 'bbbb2222', lastQuota: quota({ credits: { monthlyCredits: 3, purchasedCredits: 2, freeCredits: 1.5 } }) });
   page.render(status([a, b]));
+  // UI 修正：构成行不再挂「本月已用」——并列写法会让读者把构成金额读成「本月已用金额」
+  //（实测用户就是这么读的）。百分比语义改由环旁的固定标签承载，这里同时断言「归属唯一」的正反两面。
   assert.equal(shim.el('bal-breakdown').textContent,
-    '本月已用 · 月度 $5.00 · 购买 $3.00 · 赠送 $2.00',
-    '用量与额度构成清晰，2+3 / 1+2 / 0.5+1.5 三项求和');
+    '月度 $5.00 · 购买 $3.00 · 赠送 $2.00',
+    '额度构成三项求和：2+3 / 1+2 / 0.5+1.5');
+  assert.equal(shim.el('gauge-cap').textContent, '本月已用', '百分比语义由环旁的固定标签承载');
+  assert.doesNotMatch(shim.el('bal-breakdown').textContent, /本月已用/,
+    '构成行不得再出现「本月已用」（变异：加回并列写法即红）');
+  assert.match(INDEX_HTML, /id="gauge-cap"[^>]*>本月已用</, '环旁标签在源码里固定存在');
 });
 
 // ── ② Y% 是 Σused/Σcap 的加权值，不是各账号百分比的简单平均 ──────────
@@ -75,14 +81,17 @@ test('B4-2：本月已用百分比按 Σused/Σcap 加权（只算 cap>0）', as
   const b = account({ keyId: 'bbbb2222', lastQuota: quota({ monthly: { used: 1, cap: 8, percent: 12.5, resetAt: 0 } }) });
   page.render(status([a, b]));
   const text = shim.el('bal-breakdown').textContent;
-  assert.match(text, /^本月已用 · /);
+  assert.doesNotMatch(text, /本月已用/, '构成行不承载百分比语义（标签归属唯一）');
   assert.doesNotMatch(text, /%/);
   assert.doesNotMatch(text, /31\.3%/, '不得用简单平均');
+  // 加权口径直接读环：1+1 / 2+8 = 20.0%（简单平均会是 31.3%）
+  assert.equal(shim.el('usage-gauge').textContent, '20.0%', '环读数是 Σused/Σcap 的加权值');
   // cap 为 0 的账号不参与分母：加进来也不改变结果
   const c = account({ keyId: 'cccc3333', lastQuota: quota({ monthly: { used: 99, cap: 0, percent: 0, resetAt: 0 } }) });
   page.render(status([a, b, c]));
-  assert.match(shim.el('bal-breakdown').textContent, /^本月已用 · /);
+  assert.doesNotMatch(shim.el('bal-breakdown').textContent, /本月已用/);
   assert.doesNotMatch(shim.el('bal-breakdown').textContent, /%/);
+  assert.equal(shim.el('usage-gauge').textContent, '20.0%', 'cap=0 的账号不进分母，读数不变');
 });
 
 // ── ③ 分段进度条三段宽度 = 各段金额 / 三段之和 ───────────────────────
@@ -204,7 +213,8 @@ test('B4-9：所有账号都没有 cap 时明细行给兜底文案，不出现 N
   // B24 设计约束 4：购买/赠送恒为 0 → 不占位；非 0 的月度仍是真实值。
   assert.match(text, /月度 \$1\.00/);
   assert.doesNotMatch(text, /购买 \$0\.00|赠送 \$0\.00/, '恒为 0 的构成段不出现');
-  assert.match(text, /本月用量待同步/, '无 cap 时给兜底文案');
+  assert.equal(shim.el('gauge-cap').textContent, '本月用量待同步', '无 cap 时环旁标签给兜底文案');
+  assert.match(shim.el('usage-gauge').textContent, /—/, '无 cap 时环读数不谎报百分比');
   assert.doesNotMatch(text, /NaN|undefined|%/, '不得出现 NaN / 伪百分比');
 });
 

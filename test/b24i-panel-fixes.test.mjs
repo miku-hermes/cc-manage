@@ -300,7 +300,10 @@ test('B24i-3：环内呈现百分比，旁文说明用量与额度且不重复�
   page.render(status(percentFixture()));
   const got = gaugeAndBreakdown(shim);
   assert.equal(got.gaugeText, '62.6%', '进度环承担百分比语义');
-  assert.match(got.breakdownText, /^本月已用 · /, '旁文说明用量及额度构成');
+  // UI 修正：「本月已用」语义改由环旁的固定标签承载；构成行只讲构成（标签归属唯一，
+  // 否则读者会把构成金额读成「本月已用金额」）。
+  assert.equal(shim.el('gauge-cap').textContent, '本月已用', '环旁标签承载「本月已用」语义');
+  assert.doesNotMatch(got.breakdownText, /本月已用/, '构成行不得再挂「本月已用」（变异：改回并列写法即红）');
   assert.doesNotMatch(got.breakdownText, /%/, '旁文不重复百分比');
   assert.equal(got.aria, '本月额度已用 62.6%', 'aria-label 用同一个口径');
   // 鉴别力 / 变异验证：旧的取整写法（Math.round → 63%）与旁词可区分 ⇒ 改回去必红。
@@ -320,7 +323,7 @@ test('B24i-3b：两处共用同一个格式化函数；边界值也一致（≥9
   page.render(status([account({ keyId: 'aaaa1111', lastQuota: quota({ monthly: { used: 99.96, cap: 100, percent: 99.96, resetAt: 0 } }) })]));
   let got = gaugeAndBreakdown(shim);
   assert.equal(got.gaugeText, '100%', `边界值环内（实际 ${got.gaugeText}）`);
-  assert.match(got.breakdownText, /^本月已用 · /);
+  assert.doesNotMatch(got.breakdownText, /本月已用/);
   assert.doesNotMatch(got.breakdownText, /%/);
   // 超过 100% 也夹到同一处（环画不出更多，旁词不谎报）。
   page.render(status([account({ keyId: 'aaaa1111', lastQuota: quota({ monthly: { used: 120, cap: 100, percent: 120, resetAt: 0 } }) })]));
@@ -330,5 +333,5 @@ test('B24i-3b：两处共用同一个格式化函数；边界值也一致（≥9
   // 没有 cap：环内「—」、旁词兜底文案（不出现伪百分比）。
   page.render(status([account({ keyId: 'aaaa1111', lastQuota: quota({ monthly: { used: 5, cap: 0, percent: 0, resetAt: 0 } }) })]));
   assert.equal(shim.el('usage-gauge').textContent, '—');
-  assert.match(shim.el('bal-breakdown').textContent, /本月用量待同步/);
+  assert.equal(shim.el('gauge-cap').textContent, '本月用量待同步', '环旁标签跟值走：无 cap 时给兜底文案');
 });
