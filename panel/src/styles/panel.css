@@ -334,7 +334,9 @@
   .hero-avatar-svg { width: 2.6rem; height: 2.6rem; }
   .hero-greet { min-width: 0; }
   .greeting { font-size: 1.45rem; font-weight: 700; letter-spacing: -.01em; line-height: 1.25; }
-  .hero-sub { display: flex; align-items: center; gap: .4rem; font-size: .85rem; color: var(--text-secondary); margin-top: 0; }
+  /* nowrap 写在基础规则里（不限断点）：真机字体比无头浏览器宽，靠"放得下"会漏 ——
+     安卓上「网关状态」的最后一个「态」字曾单独掉到第二行。 */
+  .hero-sub { display: flex; align-items: center; gap: .4rem; font-size: .85rem; color: var(--text-secondary); margin-top: 0; white-space: nowrap; }
   .hero-clock-box { text-align: right; margin-left: auto; }
   .hero-date { font-size: .8rem; color: var(--text-secondary); }
   .hero-clock { font-size: 1.7rem; line-height: 1.15; font-weight: 700; color: var(--accent); }
@@ -455,7 +457,10 @@
      根因是 .hero-greet 的 min-width:0 允许它被压缩，把副行挤到放不下；这里让它按内容宽
      （min-width:max-content）且不收缩，副行整体 nowrap。极窄屏兜底用省略号，不裁到卡片外。 */
   .hero-greet { min-width: max-content; flex: 0 0 auto; }
-  .hero-sub { flex-wrap: nowrap; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hero-sub { flex-wrap: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* 窄屏收掉「网关状态」四个字：徽章「可用 2/4」语义自足，留着它只是把最后的字挤到第二行。
+     这是在真机上发现的（无头浏览器复现不出），所以从"腾宽度"改为"结构上不挤"。 */
+  .hero-sub-label { display: none; }
 }
 
 /* 顶栏右侧的固定尺寸控件一律不许被 flex 压缩（否则窄屏下先被压窄再用 overflow:hidden 裁内容）。 */
