@@ -313,6 +313,19 @@ export function createDomShim({ html, fetchImpl, localStorageData = {} }) {
     return node.cloneNode(true);
   }
 
+  /** 极简 CSSStyleDeclaration：够 setProperty / getPropertyValue 用（B24g 的 syncNameColumn
+      在真机读布局后把 --name-col 写进 #cards.style，垫片要能承接这次写入）。
+      方法设为不可枚举，这样 _serialize / cloneNode 遍历 Object.keys(style) 时只看到 CSS 声明。 */
+  function makeStyle() {
+    const decl = {};
+    Object.defineProperties(decl, {
+      setProperty: { value: (k, v) => { decl[String(k)] = String(v); }, enumerable: false },
+      getPropertyValue: { value: (k) => (String(k) in decl ? String(decl[String(k)]) : ''), enumerable: false },
+      removeProperty: { value: (k) => { delete decl[String(k)]; }, enumerable: false },
+    });
+    return decl;
+  }
+
   function makeEl(tag = '') {
     const classes = new Set();
     const attrs = new Map();
@@ -337,7 +350,7 @@ export function createDomShim({ html, fetchImpl, localStorageData = {} }) {
       scrollLeft: 0,
       scrollWidth: 0,
       offsetWidth: 0,
-      style: {},
+      style: makeStyle(),
       dataset: {},
       _handlers: handlers,
       _focusCount: 0,

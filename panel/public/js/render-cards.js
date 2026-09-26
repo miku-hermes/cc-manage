@@ -129,7 +129,7 @@ function fillFresh(root, q) {
   const t = Number(q.fetchedAt);
   const known = Number.isFinite(t) && t > 0;
   const f = freshness(known ? t : NaN);
-  el.className = 'card-fresh aux-text text-xs text-base-content/60' + (f.stale ? ' is-stale' : '');
+  el.className = 'card-fresh aux-text text-sm' + (f.stale ? ' is-stale' : '');
   if (known) el.setAttribute('data-fetched-at', String(t));
   if (f.stale) el.setAttribute('title', staleText());
   el.textContent = f.text;
@@ -165,15 +165,20 @@ function fillTags(root, a) {
 
 function fillHead(root, a) {
   const head = field(root, 'account-head');
-  if (!head) return;
-  clearChildren(head);
-  head.appendChild(document.createTextNode(a.name || a.keyPrefix || shortId(a.keyId) || '未命名账号'));
+  if (head) {
+    clearChildren(head);
+    head.appendChild(document.createTextNode(a.name || a.keyPrefix || shortId(a.keyId) || '未命名账号'));
+  }
+  // B24h：套餐徽章写进名称**后面**的独立槽位，而不是塞进 h2 —— 否则徽章内联在名称文字后，
+  // 起点跟着名字长度走（短名那行左移几像素）。放进槽位后起点 = 统一名称列宽 + gap。
+  const slot = field(root, 'plan-slot');
+  if (slot) clearChildren(slot);
   const label = a.lastQuota && a.lastQuota.plan ? planLabel(a.lastQuota.plan.planId) : null;
-  if (label) {
+  if (label && slot) {
     const pill = document.createElement('span');
     pill.className = 'plan-pill badge badge-ghost badge-sm font-mono';
     pill.textContent = label;
-    head.appendChild(pill);
+    slot.appendChild(pill);
   }
 }
 
@@ -217,6 +222,29 @@ function card(a, wideLast = false, index = 0) {
   return node.outerHTML;
 }
 
+/** B24g/B24h：名称列统一宽度 —— 逐行内容自适应会让「短名」那行的徽章起点左移几像素（真机 8-9px）。
+    这里量出全表最长名称所需宽（h2 现在只含名称文字，徽章在旁边的 .plan-slot），写到 #cards 的
+    --name-col；模板里 h2 用 min-w-[var(--name-col,0px)] 兜住这个宽度，于是每一行名称列等宽、紧随
+    其后的 .plan-slot 徽章起点也等宽，而名字本身仍按内容自适应（不截死像素、不截断）。
+    没有布局引擎（scrollWidth/rect 恒 0）时量不到值，保持逐行内容宽。 */
+function syncNameColumn() {
+  const host = $('cards');
+  if (!host || !host.style || typeof host.style.setProperty !== 'function') return;
+  const heads = host.querySelectorAll('.row-card h2');
+  if (!heads.length) { host.style.setProperty('--name-col', '0px'); return; }
+  host.style.setProperty('--name-col', '0px');       // 先归零：数据变短后名称列要能缩回去
+  let max = 0;
+  for (const h2 of heads) {
+    const rect = typeof h2.getBoundingClientRect === 'function' ? h2.getBoundingClientRect() : null;
+    max = Math.max(max, Number(h2.scrollWidth) || 0, rect ? Number(rect.width) || 0 : 0);
+  }
+  if (max <= 0) return;
+  // 窄屏兜底：名称列最多占卡片 60%，否则超长名字会把卡片撑出横向滚动。
+  const cap = (Number(host.clientWidth) || 0) * 0.6;
+  host.style.setProperty('--name-col', Math.ceil(cap > 0 ? Math.min(max, cap) : max) + 'px');
+}
+window.syncNameColumn = syncNameColumn;
+
 function renderCards() {
   if (!state.data) return;
   const all = state.data.accounts;
@@ -228,6 +256,7 @@ function renderCards() {
       ? (state.filter.trim() ? '没有匹配「' + esc(state.filter) + '」的账号。' : '该筛选下没有账号。')
       : '账号池为空。请在 accounts.json 里配置账号，或用 CC_ACCOUNTS 环境变量注入。';
     $('cards').innerHTML = emptyCard(msg);
+    syncNameColumn();
     syncTagMasks();
     return;
   }
@@ -236,6 +265,7 @@ function renderCards() {
     scrollOf.set(el.getAttribute('data-key-id'), el.scrollLeft);
   }
   $('cards').innerHTML = list.map((a, i) => card(a, i === list.length - 1 && list.length % 2 === 1, i)).join('');
+  syncNameColumn();
   for (const el of document.querySelectorAll('#cards .tags[data-key-id]')) {
     const key = el.getAttribute('data-key-id');
     if (scrollOf.has(key)) el.scrollLeft = scrollOf.get(key);

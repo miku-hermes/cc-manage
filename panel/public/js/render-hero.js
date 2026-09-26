@@ -50,7 +50,7 @@ function renderKpis(s, st) {
     const node = tpl.content.firstElementChild.cloneNode(true);
     const value = Number(def.value);
     node.id = 'kpi-box-' + def.key;
-    node.className = 'kpi stat bg-base-100 transition-colors' + kpiModifier(def, value);
+    node.className = 'kpi stat bg-base-100 py-2 transition-colors' + kpiModifier(def, value);
     const icon = field(node, 'kpi-icon-' + def.icon);
     for (const svg of node.querySelectorAll('.kpi-icon svg')) svg.hidden = svg !== icon;
     const label = field(node, 'kpi-label');

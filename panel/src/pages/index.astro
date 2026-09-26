@@ -8,7 +8,7 @@ import AccountCard from '../components/AccountCard.astro';
 <Layout title="cc-manage · 额度面板" description="cc-manage 额度面板：Command Code 多账号反代网关的账号额度、可用性与请求 KPI 概览。">
 <SiteHeader />
 
-<main class="mx-auto flex w-full max-w-6xl flex-col gap-4 px-4 py-4 2xl:max-w-[1600px]">
+<main class="mx-auto flex w-full max-w-6xl flex-col gap-2 px-4 py-2 2xl:max-w-[1600px]">
   <HeroCard />
 
   <!-- KPI 行：唯一模板在这里，render-hero.js 克隆它并按需隐藏零值卡 -->
@@ -52,6 +52,16 @@ document.addEventListener('toggle', (e) => {
   }
 }, true);
 $('cards').addEventListener('scroll', syncTagMasks, true);
+/* 名称列统一宽度（syncNameColumn 在 render-cards.js）：窗口尺寸 / 字体加载会改变文本像素宽，
+   重算一次才能保持徽章起点对齐。防抖，避免拖动窗口时反复重排。 */
+let nameColTimer = null;
+function scheduleNameColumn() {
+  if (nameColTimer) clearTimeout(nameColTimer);
+  nameColTimer = setTimeout(() => { if (typeof syncNameColumn === 'function') syncNameColumn(); }, 120);
+}
+addEventListener('resize', scheduleNameColumn);
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(scheduleNameColumn);
+window.scheduleNameColumn = scheduleNameColumn;
 window.state = state;
 window.renderCards = renderCards;
 window.syncTagMasks = syncTagMasks;
