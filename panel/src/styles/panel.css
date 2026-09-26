@@ -430,11 +430,6 @@
   .acct-row.is-warn .acct-dot { background: var(--warning); }
   .acct-row.is-bad .acct-dot { background: var(--danger); }
 
-  /* ── 视图切换按钮 ──────────────────────────────────── */
-  .view-switch { border: 1px solid var(--border-color); border-radius: var(--radius-sm); overflow: hidden; }
-  .view-switch .view-btn { border: 0; border-radius: 0; background: transparent; color: var(--text-secondary); }
-  .view-switch .view-btn.is-active { background: var(--accent); color: #fff; }
-
   /* ── 页脚 ───────────────────────────────────────────── */
   .site-footer { display: flex; align-items: center; justify-content: center; gap: .4rem; padding: 1.25rem 1rem; font-size: .78rem; color: var(--text-secondary); }
 }
@@ -448,3 +443,12 @@
   .hero-gauge .radial-progress { --size: 2.6rem; font-size: .7rem; }
   .hero-gauge-cap { font-size: .72rem; }
 }
+
+/* ── 视图切换按钮（刻意放在所有 @layer 之外）──────────────────────────────
+   daisyUI 5 的 .btn 落在 utilities 层（daisyui.l1.l2.l3），components 层排在 utilities 之前，
+   跨层压制与特异性无关 —— 只写在 @layer components 里的话，选中态的粉色会被 .btn 的
+   --btn-bg（以及 .btn:is([aria-pressed="true"]) 那条）顶掉，实测线上选中按钮是浅灰不是粉色。
+   非 layer 的普通 CSS 优先于所有 layer，故这几条必须留在 layer 外。 */
+.view-switch { border: 1px solid var(--border-color); border-radius: var(--radius-sm); overflow: hidden; }
+.view-switch .view-btn { border: 0; border-radius: 0; background: transparent; color: var(--text-secondary); }
+.view-switch .view-btn.is-active { background: var(--accent); color: #fff; }

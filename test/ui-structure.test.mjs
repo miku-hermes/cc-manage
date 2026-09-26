@@ -91,3 +91,39 @@ test('结构#4：两页外链脚本按 utils → state → app 顺序加载', ()
   assert.match(ADMIN_HTML, /window\.renderAccounts\s*=\s*renderAccounts/, 'admin 引导块暴露 renderAccounts');
   assert.match(ADMIN_HTML, /window\.renderKeys\s*=\s*renderKeys/, 'admin 引导块暴露 renderKeys');
 });
+
+// ── 顶栏视图切换器：两个真实踩到的坑，各留一条哨兵 ─────────────────────────
+// ① Astro **不解析引号内的 `{}`**：class="a b{cond ? ' c' : ''}" 会原样输出成字面量类名，
+//    于是 `join-item` 连同选择器语法一起变成垃圾 token（按钮组拼合失效），而想要的 `is-active`
+//    得靠 JS 补。必须用 class:list 或反引号模板字符串。
+test('UI-结构：HTML 的 class 属性不得漏出 Astro 模板字面量（引号内 {} 不被解析）', () => {
+  const files = ['index.html', 'admin.html', 'trend.html'];
+  const bad = [];
+  for (const f of files) {
+    const html = fs.readFileSync(new URL('../panel/dist/' + f, import.meta.url), 'utf8');
+    for (const m of html.match(/class="[^"]*\{[^"]*"/g) || []) bad.push(f + ': ' + m.slice(0, 70));
+  }
+  assert.deepEqual(bad, [], `class 属性里出现了未解析的 Astro 模板字面量：${bad.slice(0, 3).join(' | ')}`);
+});
+
+// ② daisyUI 5 的 `.btn` 落在 utilities 层（`@layer daisyui.l1.l2.l3`），而 components 层排在
+//    utilities 之前 —— 跨层压制与特异性无关。所以只写在 @layer components 里的选中态规则会被
+//    `.btn`（以及 `.btn:is([aria-pressed="true"])`）顶掉：实测线上选中按钮是浅灰而不是粉色。
+//    这类规则必须留在所有 @layer 之外（非 layer 的普通 CSS 优先于任何 layer）。
+test('UI-结构：需要压过 daisyUI 的规则必须放在所有 @layer 之外', () => {
+  const css = fs.readFileSync(new URL('../panel/src/styles/panel.css', import.meta.url), 'utf8');
+  const blocks = [];
+  const re = /@layer\s+([\w.\-]+)\s*\{/g;
+  let hit;
+  while ((hit = re.exec(css)) !== null) {
+    let depth = 1; let j = hit.index + hit[0].length;
+    while (j < css.length && depth > 0) { if (css[j] === '{') depth++; else if (css[j] === '}') depth--; j++; }
+    blocks.push({ name: hit[1], start: hit.index, end: j });
+  }
+  for (const sel of ['.view-switch .view-btn.is-active']) {
+    const idx = css.indexOf(sel);
+    assert.ok(idx > 0, `${sel} 必须在 panel.css 里存在`);
+    const inside = blocks.filter((b) => idx > b.start && idx < b.end).map((b) => b.name);
+    assert.deepEqual(inside, [], `${sel} 会被 daisyUI 的 utilities 层压过，必须放在所有 @layer 之外（实际落在：${inside.join(', ')}）`);
+  }
+});
