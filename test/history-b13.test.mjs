@@ -225,6 +225,75 @@ test('B13-10：/api/history 响应体不含账号名 / keyId / displayName / las
   }
 });
 
+
+// ── 12：账号级桶采样与消耗派生 ───────────────────────────────────────
+test('B13-12：账号桶保存快照/增量，充值不抵消消耗，零消耗 ETA 为 null', () => {
+  let now = 0;
+  const state = {};
+  const history = createHistory({ state, now: () => now });
+  history.recordAccounts([{ keyId: 'id-one', remaining: 10, requests: 4, errors: 1, fiveHourPct: 20, weeklyPct: 30 }]);
+  now += HISTORY_BUCKET_MS;
+  history.recordAccounts([{ keyId: 'id-one', remaining: 6, requests: 7, errors: 2, fiveHourPct: 25, weeklyPct: 35 }]);
+  now += HISTORY_BUCKET_MS;
+  history.recordAccounts([{ keyId: 'id-one', remaining: 12, requests: 7, errors: 2, fiveHourPct: 10, weeklyPct: 15 }]);
+  now += HISTORY_BUCKET_MS;
+  history.recordAccounts([{ keyId: 'id-one', remaining: 10, requests: 8, errors: 2, fiveHourPct: 11, weeklyPct: 16 }]);
+  const [account] = Object.values(history.accountViews());
+  assert.equal(account.samples.length, 4);
+  assert.deepEqual(account.samples.map(({ requests, errors }) => ({ requests, errors })), [
+    { requests: 0, errors: 0 }, { requests: 3, errors: 1 }, { requests: 0, errors: 0 }, { requests: 1, errors: 0 },
+  ]);
+  assert.equal(account.samples[1].remaining, 6);
+  assert.equal(account.samples[1].fiveHourPct, 25);
+  assert.ok(account.burnPerHour > 0, 'balance drops count despite intervening recharge');
+  assert.equal(account.etaHours, 10 / account.burnPerHour);
+  history.recordAccounts([{ keyId: 'id-flat', remaining: 4, requests: 0, errors: 0, fiveHourPct: 0, weeklyPct: 0 }]);
+  now += HISTORY_BUCKET_MS;
+  history.recordAccounts([{ keyId: 'id-flat', remaining: 4, requests: 0, errors: 0, fiveHourPct: 0, weeklyPct: 0 }]);
+  assert.equal(history.accountViews()['id-flat'].burnPerHour, null);
+  assert.equal(history.accountViews()['id-flat'].etaHours, null);
+});
+
+test('B13-13：账号历史落盘恢复、账号删除后同 keyId 重加不继承历史', () => {
+  const dir = makeTmpDir();
+  try {
+    const keyId = keyIdOf(ALIVE);
+    const store = createStore({ rootDir: dir });
+    writeAccountFiles(dir, { accounts: [{ name: 'fixture', key: ALIVE }], keys: [] });
+    const accounts = store.loadAccounts();
+    store.loadState(accounts);
+    store.state.historyAccounts[keyId] = [{ t: 1, remaining: 2, requests: 3, errors: 1, fiveHourPct: 4, weeklyPct: 5 }];
+    store.saveState();
+    const restored = createStore({ rootDir: dir });
+    restored.loadState(accounts);
+    assert.deepEqual(restored.state.historyAccounts[keyId], store.state.historyAccounts[keyId], 'saved account samples are restored');
+    const removed = createStore({ rootDir: dir });
+    removed.loadState([]);
+    removed.saveState();
+    const readded = createStore({ rootDir: dir });
+    readded.loadState([{ keyId }]);
+    assert.equal(readded.state.historyAccounts[keyId], undefined);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('B13-14：/api/history/accounts 匿名权限同档且只返回 keyId 与采样读数', async (t) => {
+  const ctx = await startTestGateway();
+  t.after(() => ctx.close());
+  const account = ctx.gateway.accounts[0];
+  ctx.gateway.history.recordAccounts([{ keyId: account.keyId, remaining: 9, requests: 2, errors: 1, fiveHourPct: 4, weeklyPct: 5 }]);
+  const response = await request(`${ctx.baseUrl}/api/history/accounts`);
+  assert.equal(response.status, 200);
+  const body = JSON.parse(response.body);
+  assert.equal(body.ok, true);
+  const [view] = body.accounts;
+  assert.equal(view.keyId, account.keyId);
+  assert.equal(view.samples[0].t % HISTORY_BUCKET_MS, 0);
+  assert.deepEqual({ ...view.samples[0], t: undefined }, { t: undefined, remaining: 9, requests: 0, errors: 0, fiveHourPct: 4, weeklyPct: 5 });
+  assert.equal(view.burnPerHour, null);
+  assert.equal(view.etaHours, null);
+  for (const forbidden of ['displayName', 'lastError', 'keyPrefix', '账号A', 'user_test']) assert.ok(!response.body.includes(forbidden));
+});
+
 // ── 11：落盘 / 恢复带 history ────────────────────────────────────────
 test('B13-11：saveState() 后 state.json 含 history，重新 loadState() 读回同样的样本数', () => {
   const dir = makeTmpDir();

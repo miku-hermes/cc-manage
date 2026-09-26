@@ -259,7 +259,7 @@ export function createStore({ rootDir = process.cwd(), env = process.env, log = 
   // 时并不在池中，说明它是「删掉旧账号后重新加回来的同 keyId 新账号」，runtime 标记必须
   // 清空，绝不能继承旧账号的 authInvalid / pausedUntil。老 state.json 没有该字段 → null，
   // 此时不做该判定（保守，避免升级后误清真实账号的标记）。
-  const state = { accounts: {}, stats: { total: 0, errors: 0, totalTokens: 0, byAccount: {} }, pool: null, history: blankHistory() };
+  const state = { accounts: {}, stats: { total: 0, errors: 0, totalTokens: 0, byAccount: {} }, pool: null, history: blankHistory(), historyAccounts: {} };
   // loadState 里是否已经落过盘（损坏重建 / 残留清理）—— 供测试断言用，不进任何响应体
   let persistAfterLoad = false;
 
@@ -411,6 +411,7 @@ export function createStore({ rootDir = process.cwd(), env = process.env, log = 
       delete byAccount[id];
       removed.stats.push(id);
     }
+    for (const id of Object.keys(state.historyAccounts ?? {})) if (!alive.has(id)) delete state.historyAccounts[id];
     state.pool = accounts.map((a) => a.keyId);
     return removed;
   }
@@ -444,11 +445,18 @@ export function createStore({ rootDir = process.cwd(), env = process.env, log = 
     // 只在内存里规范化 —— 绝不在这里落盘，否则「账号全在册」的加载路径会多写一次
     // state.json，破坏 store.test.mjs 的逐字节不变量。
     state.history = normalizeHistory(raw?.history);
+    state.historyAccounts = raw?.historyAccounts && typeof raw.historyAccounts === 'object' && !Array.isArray(raw.historyAccounts) ? raw.historyAccounts : {};
     // B4：先恢复「上次落盘时的池成员」再 prune —— pruneState 据此识别新出现的 keyId。
     state.pool = Array.isArray(raw?.pool) ? raw.pool.map(String) : null;
     if (Array.isArray(accounts)) {
+      const previousPool = Array.isArray(state.pool) ? new Set(state.pool) : null;
+      const aliveIds = new Set(accounts.map((account) => account.keyId));
+      let historyPruned = Object.keys(state.historyAccounts).some((id) => !aliveIds.has(id) || (previousPool && !previousPool.has(id)));
       const removed = pruneState(accounts);
-      if (removed.accounts.length > 0 || removed.stats.length > 0) {
+      for (const id of Object.keys(state.historyAccounts)) {
+        if (!aliveIds.has(id) || (previousPool && !previousPool.has(id))) { delete state.historyAccounts[id]; historyPruned = true; }
+      }
+      if (removed.accounts.length > 0 || removed.stats.length > 0 || historyPruned) {
         log?.info?.(`清理已删除账号的残留状态: ${[...new Set([...removed.accounts, ...removed.stats])].join(', ')}`);
         saveState();
         persistAfterLoad = true;
@@ -469,7 +477,7 @@ export function createStore({ rootDir = process.cwd(), env = process.env, log = 
     // 于是 pruneState 的 B4 分支静默清空 authInvalid / pausedUntil / creditsExhausted。
     // 写 null 会让 pruneState 在「池成员未知」时跳过 B4 判定（宁可不清理，也不能误清）。
     const pool = Array.isArray(state.pool) ? state.pool : null;
-    atomicWrite(stateFile, JSON.stringify({ accounts, stats: state.stats, pool, history: state.history }, null, 2), { log });
+    atomicWrite(stateFile, JSON.stringify({ accounts, stats: state.stats, pool, history: state.history, historyAccounts: state.historyAccounts }, null, 2), { log });
   }
 
   return {

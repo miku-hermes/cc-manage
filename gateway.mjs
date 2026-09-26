@@ -604,6 +604,11 @@ export async function startGateway(overrides = {}) {
         available: accounts.filter((a) => scheduler.isAvailable(a)).length,
         remaining: usableRemainingTotal(),
       });
+      history.recordAccounts(accounts.map((account) => {
+        const quota = store.state.accounts[account.keyId]?.lastQuota;
+        const accountStats = stats.byAccount?.[account.keyId] ?? {};
+        return { keyId: account.keyId, remaining: quota?.remaining, requests: accountStats.requests, errors: accountStats.errors, fiveHourPct: quota?.fiveHour?.percent, weeklyPct: quota?.weekly?.percent };
+      }));
       if (rolled) { try { store.saveState(); } catch { /* 落盘失败不影响服务 */ } }
     }, HISTORY_TICK_MS);
     historyTimer.unref?.();   // 不要因为这个定时器卡住退出
@@ -1586,8 +1591,11 @@ export async function startGateway(overrides = {}) {
       return sendJSON(res, 200, statusView());
     }
     // B13：历史趋势（只读，与 /api/status 同档）。刻意不塞进 /api/status：
-    // 那是 5 秒轮询的接口，不能把整个样本数组每次都带上。响应只含聚合数字，
-    // 绝不含账号名 / keyId / displayName / lastError 等身份字段。
+    // 那是 5 秒轮询的接口，不能把整个样本数组每次都带上；聚合趋势走 /api/history，账号趋势走独立接口。
+    if (req.method === 'GET' && url.pathname === '/api/history/accounts') {
+      if (!requirePanelRead(req, res)) return;
+      return sendJSON(res, 200, { ok: true, accounts: Object.values(history.accountViews()) });
+    }
     if (req.method === 'GET' && url.pathname === '/api/history') {
       if (!requirePanelRead(req, res)) return;
       return sendJSON(res, 200, { ok: true, bucketMs: HISTORY_BUCKET_MS, tickMs: HISTORY_TICK_MS, samples: history.samples() });

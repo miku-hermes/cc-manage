@@ -68,7 +68,7 @@ test('令牌#1：粉紫浅/深主题、语义色、圆角与动效令牌完整',
   }
   assert.match(TOKENS_CSS, /:root\[data-theme="dark"\][\s\S]*?--bg-primary:\s*#0f0a15/);
   assert.match(TOKENS_CSS, /:root\[data-theme="dark"\][\s\S]*?--accent:\s*#ff8fa3/);
-  assert.match(TOKENS_CSS, /--color-primary:\s*oklch\(65% 0\.17 5\)/, 'daisyUI 主色映射樱花粉');
+  assert.match(TOKENS_CSS, /--color-primary:\s*#e8668a/, '实际渲染的浅色主色使用达标樱花粉');
   assert.match(TOKENS_CSS, /--font-mono:/, '数字字体使用本机等宽栈');
   assert.doesNotMatch(TOKENS_CSS, /--elev-/i, '旧 elev 令牌不再存在');
   assert.match(TOKENS_CSS, /--chart-series-cpu:\s*#e8668a/);
@@ -85,14 +85,34 @@ test('首页空态：提供进入账号管理的下一步动作', () => {
   assert.match(EMPTY_STATE_JS, /class=\"btn btn-primary btn-sm mt-2 w-fit\" href=\"\/admin\">管理账号/);
 });
 
-test('令牌#1b：辅助正文、暗色次级文字与状态徽章达到 WCAG AA', () => {
-  assert.ok(contrast('#604e70', '#f8f6f9') >= 4.5, '浅色辅助正文对页面底达到 4.5:1');
-  assert.ok(contrast('#766687', '#f8f6f9') >= 4.5, '浅色 tertiary 对页面底达到 4.5:1');
-  assert.ok(contrast('#aa99b9', '#0f0a15') >= 4.5, '暗色 tertiary 对页面底达到 4.5:1');
+test('令牌#1b：实际渲染的主题文字颜色与状态徽章达到 WCAG AA', () => {
+  const lightVars = TOKENS_CSS.match(/:root\s*\{([^}]*)\}/)?.[1];
+  const darkVars = TOKENS_CSS.match(/:root\[data-theme=\"dark\"\]\s*\{([^}]*)\}/)?.[1];
+  const readColor = (block, name) => block?.match(new RegExp(`${name}:\\s*(#[0-9a-f]{6})`, 'i'))?.[1];
+  const lightBg = readColor(lightVars, '--bg-card');
+  const darkBg = readColor(darkVars, '--bg-card');
+  const lightSecondary = readColor(lightVars, '--text-secondary');
+  const lightTertiary = readColor(lightVars, '--text-tertiary');
+  const darkSecondary = readColor(darkVars, '--text-secondary');
+  const darkTertiary = readColor(darkVars, '--text-tertiary');
+  assert.ok(lightBg && darkBg && lightSecondary && lightTertiary && darkSecondary && darkTertiary, 'reads rendered text and card colors from panel.css');
+  assert.ok(contrast(lightSecondary, lightBg) >= 4.5, '浅色次级文字对卡片达到 4.5:1');
+  assert.ok(contrast(lightTertiary, lightBg) >= 4.5, '浅色三级文字对卡片达到 4.5:1');
+  assert.ok(contrast(darkSecondary, darkBg) >= 4.5, '暗色次级文字对卡片达到 4.5:1');
+  assert.ok(contrast(darkTertiary, darkBg) >= 4.5, '暗色三级文字对卡片达到 4.5:1');
   assert.ok(contrast('#24583e', '#e8f5e9') >= 4.5, '成功徽章文字对底色达到 4.5:1');
   assert.ok(contrast('#805000', '#fff8e1') >= 4.5, '警告徽章文字对底色达到 4.5:1');
   assert.ok(contrast('#8d2535', '#fde8eb') >= 4.5, '错误徽章文字对底色达到 4.5:1');
-  assert.ok(contrast('#2d1b3d', '#e8668a') >= 4.5, '樱花粉主按钮深紫文字达到 4.5:1');
+  const lightPrimary = TOKENS_CSS.match(/name: \"light\"[\s\S]*?--color-primary:\s*(#[0-9a-f]{6})[;\s]*[\s\S]*?--color-primary-content:\s*(#[0-9a-f]{6})/i);
+  const darkPrimary = TOKENS_CSS.match(/name: \"dark\"[\s\S]*?--color-primary:\s*(#[0-9a-f]{6})[;\s]*[\s\S]*?--color-primary-content:\s*(#[0-9a-f]{6})/i);
+  const lightInk = TOKENS_CSS.match(/:root\s*\{[\s\S]*?--accent-ink:\s*(#[0-9a-f]{6})/i)?.[1];
+  const darkInk = TOKENS_CSS.match(/data-theme=\"dark\"[\s\S]*?--accent-ink:\s*(#[0-9a-f]{6})/i)?.[1];
+  assert.ok(lightPrimary && darkPrimary && lightInk && darkInk, 'reads rendered theme colors from panel.css');
+  assert.ok(contrast(lightPrimary[2], lightPrimary[1]) >= 4.5, '浅色主按钮实际前景/底色达到 4.5:1');
+  assert.ok(contrast(darkPrimary[2], darkPrimary[1]) >= 4.5, '暗色主按钮实际前景/底色达到 4.5:1');
+  assert.match(TOKENS_CSS, /\.bar-pct\s*\{\s*color:\s*var\(--accent-ink\)/, '账号额度百分比实际使用 accent-ink');
+  assert.ok(contrast(lightInk, lightBg) >= 4.5, '浅色粉色小字实际前景对卡片达到 4.5:1');
+  assert.ok(contrast(darkInk, darkBg) >= 4.5, '暗色粉色小字实际前景对卡片达到 4.5:1');
   assert.ok(contrast('#193b2a', '#4caf7d') >= 4.5, '成功语义按钮文字达到 4.5:1');
   assert.ok(contrast('#18334f', '#5c9ced') >= 4.5, '信息语义按钮文字达到 4.5:1');
   assert.ok(contrast('#300d18', '#e74c5e') >= 4.5, '错误语义按钮文字达到 4.5:1');

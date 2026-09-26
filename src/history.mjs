@@ -18,6 +18,27 @@ export const HISTORY_MAX_SAMPLES = 288;           // 288 × 5min = 24 小时
 export const HISTORY_TICK_MS = 60 * 1000;         // 采样节奏
 
 const SAMPLE_FIELDS = ['t', 'r', 'e', 'k', 'a', 'm'];
+const ACCOUNT_SAMPLE_FIELDS = ['t', 'remaining', 'requests', 'errors', 'fiveHourPct', 'weeklyPct'];
+
+function normalizeAccountHistory(raw) {
+  const out = {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+  for (const [keyId, value] of Object.entries(raw)) {
+    if (!Array.isArray(value)) continue;
+    const samples = value.map((sample) => {
+      if (!sample || typeof sample !== 'object' || Array.isArray(sample)) return null;
+      const normalized = {};
+      for (const field of ACCOUNT_SAMPLE_FIELDS) {
+        const n = Number(sample[field]);
+        if (!Number.isFinite(n)) return null;
+        normalized[field] = n;
+      }
+      return normalized;
+    }).filter(Boolean).slice(-HISTORY_MAX_SAMPLES);
+    out[keyId] = samples;
+  }
+  return out;
+}
 
 /** 空历史：初始化 / 坏形状回退都用它，每次返回新对象。 */
 export function blankHistory() {
@@ -71,6 +92,10 @@ export function createHistory({ state, now = Date.now } = {}) {
   const host = (state && typeof state === 'object') ? state : {};
   let hist = normalizeHistory(host.history);
   host.history = hist;
+  let accountHistories = normalizeAccountHistory(host.historyAccounts);
+  host.historyAccounts = accountHistories;
+  const accountLast = new Map();
+  let accountCurrent = new Map();
 
   let last = null;        // 上一次 record 的累计计数器快照
   let current = null;     // 当前尚未定稿的桶
@@ -81,6 +106,10 @@ export function createHistory({ state, now = Date.now } = {}) {
     host.history = hist;
     last = null;
     current = null;
+    accountHistories = normalizeAccountHistory(host.historyAccounts);
+    host.historyAccounts = accountHistories;
+    accountLast.clear();
+    accountCurrent = new Map();
     return hist;
   }
 
@@ -130,6 +159,59 @@ export function createHistory({ state, now = Date.now } = {}) {
     return { rolled };
   }
 
+  function recordAccounts(accounts = []) {
+    const bucketStart = Math.floor(now() / HISTORY_BUCKET_MS) * HISTORY_BUCKET_MS;
+    const live = new Set(accounts.map((account) => String(account.keyId)));
+    for (const keyId of Object.keys(accountHistories)) {
+      if (!live.has(keyId)) { delete accountHistories[keyId]; accountLast.delete(keyId); accountCurrent.delete(keyId); }
+    }
+    if (accountCurrent.size && [...accountCurrent.values()][0]?.t !== bucketStart) {
+      for (const [keyId, sample] of accountCurrent) {
+        const samples = (accountHistories[keyId] ??= []);
+        samples.push(sample);
+        while (samples.length > HISTORY_MAX_SAMPLES) samples.shift();
+      }
+      accountCurrent = new Map();
+    }
+    for (const account of accounts) {
+      const keyId = String(account.keyId);
+      const counters = { requests: num(account.requests), errors: num(account.errors) };
+      const previous = accountLast.get(keyId);
+      const currentSample = accountCurrent.get(keyId);
+      const delta = (field) => previous ? Math.max(0, counters[field] - previous[field]) : 0;
+      const sample = currentSample ?? { t: bucketStart, remaining: 0, requests: 0, errors: 0, fiveHourPct: 0, weeklyPct: 0 };
+      sample.requests += delta('requests');
+      sample.errors += delta('errors');
+      sample.remaining = Math.round(num(account.remaining) * 100) / 100;
+      sample.fiveHourPct = num(account.fiveHourPct);
+      sample.weeklyPct = num(account.weeklyPct);
+      accountCurrent.set(keyId, sample);
+      accountLast.set(keyId, counters);
+    }
+    host.historyAccounts = accountHistories;
+  }
+
+  function accountViews() {
+    const result = {};
+    const keyIds = new Set([...Object.keys(accountHistories), ...accountCurrent.keys()]);
+    for (const keyId of keyIds) {
+      const copy = (accountHistories[keyId] ?? []).map((sample) => ({ ...sample }));
+      const currentSample = accountCurrent.get(keyId);
+      const latest = currentSample ?? copy.at(-1);
+      const recent = [...copy, ...(currentSample ? [currentSample] : [])].slice(-13);
+      let decline = 0;
+      let elapsed = 0;
+      for (let i = 1; i < recent.length; i += 1) {
+        const hours = (recent[i].t - recent[i - 1].t) / 3600000;
+        if (hours > 0) { decline += Math.max(0, recent[i - 1].remaining - recent[i].remaining); elapsed += hours; }
+      }
+      // Recharge increases are not negative consumption: only downward segments count; divisor spans the observed window.
+      const burnPerHour = elapsed > 0 && decline > 0 ? decline / elapsed : null;
+      const samplesForView = currentSample ? [...copy, { ...currentSample }].slice(-HISTORY_MAX_SAMPLES) : copy;
+      result[keyId] = { keyId, samples: samplesForView, burnPerHour, etaHours: burnPerHour > 0 && latest ? latest.remaining / burnPerHour : null };
+    }
+    return result;
+  }
   /** 样本数组的**深拷贝**：调用方改不动内部状态。 */
   function samples() {
     return hist.samples.map((s) => ({ ...s }));
@@ -140,5 +222,5 @@ export function createHistory({ state, now = Date.now } = {}) {
     return { samples: hist.samples.map((s) => ({ ...s })) };
   }
 
-  return { record, samples, toJSON, load, recover: load };
+  return { record, recordAccounts, accountViews, samples, toJSON, load, recover: load };
 }

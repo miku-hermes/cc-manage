@@ -17,11 +17,11 @@
   --color-base-200: oklch(97.5% 0.008 315);
   --color-base-300: oklch(92.5% 0.018 315);
   --color-base-content: oklch(25% 0.055 305);
-  --color-primary: oklch(65% 0.17 5);
+  --color-primary: #e8668a;
   --color-primary-content: #2d1b3d;
   --color-secondary: oklch(52% 0.06 305);
   --color-secondary-content: oklch(100% 0 0);
-  --color-accent: oklch(65% 0.17 5);
+  --color-accent: #e8668a;
   --color-accent-content: #2d1b3d;
   --color-neutral: oklch(25% 0.055 305);
   --color-neutral-content: oklch(100% 0 0);
@@ -50,12 +50,12 @@
   --color-base-200: oklch(16% 0.035 300);
   --color-base-300: oklch(27% 0.045 300);
   --color-base-content: oklch(91% 0.025 305);
-  --color-primary: oklch(74% 0.13 5);
-  --color-primary-content: oklch(16% 0.035 300);
+  --color-primary: #ff8fa3;
+  --color-primary-content: #20152b;
   --color-secondary: oklch(72% 0.035 305);
   --color-secondary-content: oklch(16% 0.035 300);
-  --color-accent: oklch(74% 0.13 5);
-  --color-accent-content: oklch(16% 0.035 300);
+  --color-accent: #ff8fa3;
+  --color-accent-content: #20152b;
   --color-neutral: oklch(91% 0.025 305);
   --color-neutral-content: oklch(16% 0.035 300);
   --color-info: oklch(75% 0.10 250);
@@ -115,6 +115,7 @@
     --border-color-rgb: 232, 224, 240;
     --border-light: #f0eaf5;
     --accent: #e8668a;
+    --accent-ink: #a12b4b;
     --accent-rgb: 232, 102, 138;
     --accent-light: #fce4ec;
     --accent-hover: #d44a72;
@@ -129,7 +130,7 @@
     --shadow-sm: 0 1px 3px rgba(45, 27, 61, .06);
     --shadow-md: 0 4px 12px rgba(45, 27, 61, .08);
     --shadow-lg: 0 8px 30px rgba(45, 27, 61, .12);
-    --shadow-card: 0 2px 8px rgba(45, 27, 61, .05);
+    --shadow-card: 0 2px 8px rgba(45, 27, 61, .05), 0 1px 2px rgba(45, 27, 61, .04);
     --radius-sm: 8px;
     --radius-md: 12px;
     --radius-lg: 16px;
@@ -177,6 +178,7 @@
     --border-color-rgb: 45, 32, 64;
     --border-light: #241a32;
     --accent: #ff8fa3;
+    --accent-ink: #ff8fa3;
     --accent-rgb: 255, 143, 163;
     --accent-light: #3d1a2a;
     --accent-hover: #ffb7c5;
@@ -191,7 +193,7 @@
     --shadow-sm: 0 1px 3px rgba(0, 0, 0, .2);
     --shadow-md: 0 4px 12px rgba(0, 0, 0, .3);
     --shadow-lg: 0 8px 30px rgba(0, 0, 0, .4);
-    --shadow-card: 0 2px 8px rgba(0, 0, 0, .2);
+    --shadow-card: 0 2px 8px rgba(0, 0, 0, .2), 0 1px 2px rgba(0, 0, 0, .12);
     --scrim: rgba(0, 0, 0, .6);
     --chart-series-request: #b7a9c5;
     --chart-series-error: #ff6b7a;
@@ -239,6 +241,7 @@
   .modal-backdrop { background: var(--scrim); }
   .tabular-nums { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
   .kpi-value, .stat-value, .stat-value * { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: 700; }
+  .bar-pct { color: var(--accent-ink); }
   .kpi-label, .stat-label { color: var(--text-secondary); font-size: .85rem; font-weight: 500; }
   .header { background: color-mix(in srgb, var(--bg-card) 92%, transparent); border-color: var(--border-color); }
   .badge-success { border-color: transparent; background: var(--success-light); color: #24583e; }
