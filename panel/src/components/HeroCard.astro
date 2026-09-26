@@ -49,9 +49,11 @@ import { RefreshCw, TrendingUp, ChevronRight } from '@lucide/astro';
         <b id="balance" class="tabular-nums">—</b>
         <span id="bal-label" class="bal-label aux-text">剩余额度（USD）</span>
       </div>
-      <div class="hero-gauge">
-        <span id="usage-gauge" class="radial-progress tabular-nums text-primary" style="--value:0" role="progressbar" aria-label="本月额度已用 0.0%">0.0%</span>
+      <!-- 环缩小成小圆环当指示器，数值放到环外：○ 本月已用 68.5% -->
+      <div class="hero-gauge" role="group" aria-label="本月额度用量">
+        <span id="usage-gauge" class="radial-progress text-primary" style="--value:0" role="progressbar" aria-label="本月额度已用 0.0%"></span>
         <span id="gauge-cap" class="hero-gauge-cap aux-text">本月已用</span>
+        <span id="gauge-pct" class="hero-gauge-pct tabular-nums">—</span>
       </div>
     </div>
     <!-- 额度构成独立一行、由标题领起：以前它和「本月已用」用 `·` 并列，读者会把构成金额读成「本月已用金额」。 -->

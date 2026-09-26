@@ -17,7 +17,7 @@ function assertClass(source, selector, className, description) {
 }
 
 test('动态数值读数节点逐项启用 tabular-nums', () => {
-  for (const [id, label] of [['balance', 'Hero 余额'], ['usage-gauge', 'Hero 环形百分比'], ['updated', 'Hero 更新时间'], ['bal-breakdown', 'Hero 额度构成摘要'], ['tokens', '累计 token']]) {
+  for (const [id, label] of [['balance', 'Hero 余额'], ['gauge-pct', 'Hero 百分比数值'], ['updated', 'Hero 更新时间'], ['bal-breakdown', 'Hero 额度构成摘要'], ['tokens', '累计 token']]) {
     assertClass(hero, id, 'tabular-nums', label);
   }
   assertClass(kpi, 'kpi-value', 'tabular-nums', 'KPI 数值模板');

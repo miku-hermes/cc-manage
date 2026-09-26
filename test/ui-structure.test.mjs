@@ -120,7 +120,8 @@ test('UI-结构：需要压过 daisyUI 的规则必须放在所有 @layer 之外
     while (j < css.length && depth > 0) { if (css[j] === '{') depth++; else if (css[j] === '}') depth--; j++; }
     blocks.push({ name: hit[1], start: hit.index, end: j });
   }
-  for (const sel of ['.view-switch .view-btn.is-active']) {
+  // 同一类坑的两处实例：daisyUI 的 .btn 与 .radial-progress 都在 utilities 层。
+  for (const sel of ['.view-switch .view-btn.is-active', '.hero-gauge .radial-progress { --size: 1.5rem']) {
     const idx = css.indexOf(sel);
     assert.ok(idx > 0, `${sel} 必须在 panel.css 里存在`);
     const inside = blocks.filter((b) => idx > b.start && idx < b.end).map((b) => b.name);

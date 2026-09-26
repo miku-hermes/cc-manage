@@ -85,13 +85,13 @@ test('B4-2：本月已用百分比按 Σused/Σcap 加权（只算 cap>0）', as
   assert.doesNotMatch(text, /%/);
   assert.doesNotMatch(text, /31\.3%/, '不得用简单平均');
   // 加权口径直接读环：1+1 / 2+8 = 20.0%（简单平均会是 31.3%）
-  assert.equal(shim.el('usage-gauge').textContent, '20.0%', '环读数是 Σused/Σcap 的加权值');
+  assert.equal(shim.el('gauge-pct').textContent, '20.0%', '数值是 Σused/Σcap 的加权值');
   // cap 为 0 的账号不参与分母：加进来也不改变结果
   const c = account({ keyId: 'cccc3333', lastQuota: quota({ monthly: { used: 99, cap: 0, percent: 0, resetAt: 0 } }) });
   page.render(status([a, b, c]));
   assert.doesNotMatch(shim.el('bal-breakdown').textContent, /本月已用/);
   assert.doesNotMatch(shim.el('bal-breakdown').textContent, /%/);
-  assert.equal(shim.el('usage-gauge').textContent, '20.0%', 'cap=0 的账号不进分母，读数不变');
+  assert.equal(shim.el('gauge-pct').textContent, '20.0%', 'cap=0 的账号不进分母，读数不变');
 });
 
 // ── ③ 分段进度条三段宽度 = 各段金额 / 三段之和 ───────────────────────
@@ -213,8 +213,9 @@ test('B4-9：所有账号都没有 cap 时明细行给兜底文案，不出现 N
   // B24 设计约束 4：购买/赠送恒为 0 → 不占位；非 0 的月度仍是真实值。
   assert.match(text, /月度 \$1\.00/);
   assert.doesNotMatch(text, /购买 \$0\.00|赠送 \$0\.00/, '恒为 0 的构成段不出现');
-  assert.equal(shim.el('gauge-cap').textContent, '本月用量待同步', '无 cap 时环旁标签给兜底文案');
-  assert.match(shim.el('usage-gauge').textContent, /—/, '无 cap 时环读数不谎报百分比');
+  assert.equal(shim.el('gauge-cap').textContent, '本月已用', '标签恒定');
+  assert.equal(shim.el('gauge-pct').textContent, '—', '无 cap 时兜底在数值位（标签不跟着变）');
+  assert.match(shim.el('gauge-pct').textContent, /—/, '无 cap 时数值位不谎报百分比');
   assert.doesNotMatch(text, /NaN|undefined|%/, '不得出现 NaN / 伪百分比');
 });
 

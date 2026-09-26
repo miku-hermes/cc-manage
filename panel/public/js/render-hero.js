@@ -188,19 +188,21 @@ function render(d) {
   const totals = creditsTotals(accounts);
   const gauge = $('usage-gauge');
   const gaugeCap = $('gauge-cap');
+  const gaugePct = $('gauge-pct');
   if (gauge) {
     if (totals.cap > 0 && Number.isFinite(totals.percent)) {
       const pct = Math.max(0, Math.min(100, Math.round(totals.percent)));
       const pctLabel = heroPctText(totals.percent);   // 与 breakdownText 同一口径（逐字符相同）
       gauge.setAttribute('style', '--value:' + pct);
-      gauge.textContent = pctLabel;
+      // 环只做指示器，数值挂在环外（○ 本月已用 68.5%）；无障碍口径仍走环上的 aria-label。
       gauge.setAttribute('aria-label', '本月额度已用 ' + pctLabel);
+      if (gaugePct) gaugePct.textContent = pctLabel;
       if (gaugeCap) gaugeCap.textContent = '本月已用';
     } else {
       gauge.setAttribute('style', '--value:0');
-      gauge.textContent = '—';
       gauge.setAttribute('aria-label', '本月额度用量待同步');
-      if (gaugeCap) gaugeCap.textContent = '本月用量待同步';
+      if (gaugePct) gaugePct.textContent = '—';
+      if (gaugeCap) gaugeCap.textContent = '本月已用';
     }
   }
 

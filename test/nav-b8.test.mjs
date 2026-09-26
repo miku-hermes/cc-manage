@@ -46,8 +46,10 @@ test('导航#1：展开态同时由 .expanded 与 :focus-within 驱动，且宽�
 });
 
 // ── 2：折叠态固定窄盒，输入框可收缩 ───────────────────────────────
-test('导航#2：折叠态是固定窄盒（w-9），输入框 min-w-0 可收缩', () => {
-  assert.match(SITE_HEADER, /class="search-box[^"]*\bw-9\b/, '折叠态固定宽度');
+test('导航#2：折叠态是固定窄盒（w-10），输入框 min-w-0 可收缩', () => {
+  // w-10 = 2.5rem = 40px：内容需 39px（px-2 两侧留白 + 15px 图标）。此前的 w-9(36px) / 窄屏
+  // w-8(32px) 装不下，实测 scrollWidth 39 > clientWidth 27，放大镜被裁掉一截。
+  assert.match(SITE_HEADER, /class="search-box[^"]*\bw-10\b/, '折叠态固定宽度（40px，够装图标）');
   assert.match(SITE_HEADER, /id="search"[^>]*class="[^"]*min-w-0/, '输入框 min-w-0（不撑破窄盒）');
 });
 

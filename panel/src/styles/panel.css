@@ -345,16 +345,12 @@
   .hero-balance { display: flex; align-items: baseline; gap: .5rem; min-width: 0; }
   .hero-balance b { font-size: 2.35rem; font-weight: 800; letter-spacing: -.02em; line-height: 1.05; }
   .bal-label { font-size: .85rem; }
-  .hero-gauge { display: flex; align-items: center; gap: .55rem; margin-left: auto; flex: none; }
+  .hero-gauge { display: flex; align-items: center; gap: .35rem; margin-left: auto; flex: none; }
   /* daisyUI 的 radial-progress 未完成段是透明的（没有底轨），窄环读起来像一段开口弧线 ——
      这里把缺省色换成描边色补出底轨。 */
-  .hero-gauge .radial-progress { --size: 2.75rem; font-size: .74rem; font-weight: 700; }
-  .hero-gauge .radial-progress:before {
-    background:
-      radial-gradient(farthest-side, currentColor 98%, #0000) top/var(--thickness) var(--thickness) no-repeat,
-      conic-gradient(currentColor var(--radialprogress), var(--border-color) 0);
-  }
+  /* 小圆环只当指示器（数值在环外），所以不需要为文字留内圈空间。 */
   .hero-gauge-cap { font-size: .78rem; white-space: nowrap; }
+  .hero-gauge-pct { font-size: .95rem; font-weight: 700; color: var(--accent); line-height: 1.1; }
   /* 额度构成：贴在余额下方的小字，由标题「额度构成」领起，标签归属唯一
      （不再用 `·` 与「本月已用」并列）。收在 mid 内而不是独占带边框的区块，省首屏高度。 */
   .hero-compose { display: flex; align-items: baseline; gap: .45rem; flex-wrap: wrap; }
@@ -439,8 +435,10 @@
   .hero-actions .trend-link { flex: 1 1 auto; justify-content: flex-start; }
   .hero-clock { font-size: 1.6rem; }
   .hero-balance b { font-size: 2rem; }
+  /* 窄屏：标签（如「剩余额度（USD） · 含 2 个未同步账号」）挤在数字右侧会被压成竖排（实测 102px 高、
+     6 行），把整行撑高。允许换行后标签独占下一行，回归 1~2 行。 */
+  .hero-balance { flex-wrap: wrap; }
   /* 窄屏环缩小，数字随环径一起缩（不然「68.1%」会撑满内圈压到弧线上）。 */
-  .hero-gauge .radial-progress { --size: 2.6rem; font-size: .7rem; }
   .hero-gauge-cap { font-size: .72rem; }
 }
 
@@ -457,3 +455,17 @@
 .view-switch { flex: none; border: 1px solid var(--border-color); border-radius: var(--radius-sm); overflow: hidden; }
 .view-switch .view-btn { border: 0; border-radius: 0; background: transparent; color: var(--text-secondary); }
 .view-switch .view-btn.is-active { background: var(--accent); color: #fff; }
+
+/* ── Hero 小圆环（同 .view-switch：必须放在所有 @layer 之外）─────────────────
+   daisyUI 的 .radial-progress 落在 utilities 层（daisyui.l1.l2.l3），components 层排在它之前 ——
+   写在 @layer components 里的 --size 会被它的默认 5rem 顶掉（实测环仍是 80px 没缩小），
+   底轨覆盖同理不生效。非 layer 的普通 CSS 优先于任何 layer，故这几条留在 layer 外。 */
+.hero-gauge .radial-progress { --size: 1.5rem; }
+.hero-gauge .radial-progress:before {
+  background:
+    radial-gradient(farthest-side, currentColor 98%, #0000) top/var(--thickness) var(--thickness) no-repeat,
+    conic-gradient(currentColor var(--radialprogress), var(--border-color) 0);
+}
+@media (max-width: 639px) {
+  .hero-gauge .radial-progress { --size: 1.35rem; }
+}

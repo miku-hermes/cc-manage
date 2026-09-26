@@ -254,7 +254,9 @@ test('B24i-2：环内数字居中机制完好（真机实测水平 0.00px / 垂�
   //   → 水平偏差 0.00px、垂直偏差 0.50px，两者均 ≤1px ⇒ 本来就居中，观感为误报。
   const gauge = /<span id="usage-gauge"[^>]*>([^<]*)<\/span>/.exec(INDEX_HTML);
   assert.ok(gauge, '产物里必须有 #usage-gauge');
-  assert.equal(gauge[1].trim(), '0.0%', '环内占位读数与运行时口径一致（一位小数）');
+  // 环已瘦身成纯指示器：环内不放占位读数，数值元素在环外（占位用破折号，不谎报 0.0%）。
+  assert.equal(gauge[1].trim(), '', '环内不得有占位读数（数值由 #gauge-pct 承担）');
+  assert.match(INDEX_HTML, /<span id="gauge-pct"[^>]*>—</, '数值位初始占位为破折号，不谎报百分比');
 
   // 居中由 daisyUI radial-progress 提供：inline-grid + place-content:center + content-box。
   assert.match(CSS, /\.radial-progress\s*\{[^}]*display:\s*inline-grid/);
@@ -267,6 +269,10 @@ test('B24i-2：环内数字居中机制完好（真机实测水平 0.00px / 垂�
   const gaugeTag = /<span id="usage-gauge"[^>]*>/.exec(INDEX_HTML)[0];
   const tokens = /class="([^"]*)"/.exec(gaugeTag)[1].split(/\s+/).filter(Boolean);
   assert.ok(tokens.includes('radial-progress'), '环元素必须用 daisyUI 的 radial-progress 组件类');
+  // 环已瘦身成纯指示器：数值移到环外（○ 本月已用 68.5%），环内必须是空的 ——
+  // 否则小环（1.5rem）里塞文字会顶到弧线上。
+  assert.match(INDEX_HTML, /<span id="usage-gauge"[^>]*>\s*<\/span>/,
+    '环内不得放文字（数值由 #gauge-pct 在环外呈现）');
   for (const prop of ['padding', 'padding-inline', 'padding-block', 'padding-top', 'padding-left',
     'inset', 'translate', 'margin', 'margin-left', 'margin-right', 'mx', 'px', 'py', 'translate-x', 'translate-y']) {
     const v = declForTokens(CSS, tokens, prop);
@@ -293,8 +299,10 @@ function percentFixture() {
 }
 function gaugeAndBreakdown(shim) {
   const gaugeText = shim.el('usage-gauge').textContent;
+  const pctEl = shim.el('gauge-pct');
   const breakdown = shim.el('bal-breakdown').textContent;
-  return { gaugeText, breakdownText: breakdown, aria: shim.el('usage-gauge').getAttribute('aria-label') };
+  return { gaugeText, pctText: pctEl ? pctEl.textContent : null,
+    breakdownText: breakdown, aria: shim.el('usage-gauge').getAttribute('aria-label') };
 }
 
 test('P1：产物卡片使用粉紫柔影令牌', () => {
@@ -306,7 +314,8 @@ test('B24i-3：环内呈现百分比，旁文说明用量与额度且不重复�
   const { shim, page } = await boot();
   page.render(status(percentFixture()));
   const got = gaugeAndBreakdown(shim);
-  assert.equal(got.gaugeText, '62.6%', '进度环承担百分比语义');
+  assert.equal(got.pctText, '62.6%', '百分比数值在环外呈现（○ 本月已用 62.6%）');
+  assert.equal(got.gaugeText, '', '环内不再放数字（纯指示器）');
   // UI 修正：「本月已用」语义改由环旁的固定标签承载；构成行只讲构成（标签归属唯一，
   // 否则读者会把构成金额读成「本月已用金额」）。
   assert.equal(shim.el('gauge-cap').textContent, '本月已用', '环旁标签承载「本月已用」语义');
@@ -329,16 +338,16 @@ test('B24i-3b：两处共用同一个格式化函数；边界值也一致（≥9
   // 99.96% → 一处进位成「100%」，另一处必须一样（否则又会 100.0% vs 100% 打架）。
   page.render(status([account({ keyId: 'aaaa1111', lastQuota: quota({ monthly: { used: 99.96, cap: 100, percent: 99.96, resetAt: 0 } }) })]));
   let got = gaugeAndBreakdown(shim);
-  assert.equal(got.gaugeText, '100%', `边界值环内（实际 ${got.gaugeText}）`);
+  assert.equal(got.pctText, '100%', `边界值（实际 ${got.pctText}）`);
   assert.doesNotMatch(got.breakdownText, /本月已用/);
   assert.doesNotMatch(got.breakdownText, /%/);
   // 超过 100% 也夹到同一处（环画不出更多，旁词不谎报）。
   page.render(status([account({ keyId: 'aaaa1111', lastQuota: quota({ monthly: { used: 120, cap: 100, percent: 120, resetAt: 0 } }) })]));
   got = gaugeAndBreakdown(shim);
   assert.doesNotMatch(got.breakdownText, /%/, '超过 100% 旁文仍不重复');
-  assert.equal(got.gaugeText, '100%');
+  assert.equal(got.pctText, '100%');
   // 没有 cap：环内「—」、旁词兜底文案（不出现伪百分比）。
   page.render(status([account({ keyId: 'aaaa1111', lastQuota: quota({ monthly: { used: 5, cap: 0, percent: 0, resetAt: 0 } }) })]));
-  assert.equal(shim.el('usage-gauge').textContent, '—');
-  assert.equal(shim.el('gauge-cap').textContent, '本月用量待同步', '环旁标签跟值走：无 cap 时给兜底文案');
+  assert.equal(shim.el('gauge-pct').textContent, '—', '无 cap 时数值位给破折号，不谎报百分比');
+  assert.equal(shim.el('gauge-cap').textContent, '本月已用', '标签保持恒定，兜底在数值位');
 });

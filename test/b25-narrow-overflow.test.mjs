@@ -184,16 +184,21 @@ test('B25-C：窄屏无横向溢出 + 卡片网格真机几何（列数/等高/�
     return {
       bTop: b.top, bBottom: b.bottom, bRight: b.right,
       gTop: g.top, gBottom: g.bottom, gLeft: g.left, gW: g.width,
-      capRight: cap.right, bdTop: bd.top,
+      capRight: cap.right, bdTop: bd.top, rmHeight: document.querySelector('.hero-row-main').getBoundingClientRect().height,
+      balLabelTop: document.getElementById('bal-label').getBoundingClientRect().top,
+      balLabelBottom: document.getElementById('bal-label').getBoundingClientRect().bottom,
       sw: document.documentElement.scrollWidth, iw: window.innerWidth,
     };
   });
-  assert.ok(hero.gBottom > hero.bTop && hero.gTop < hero.bBottom,
-    `窄屏下环必须与余额同行（余额 ${Math.round(hero.bTop)}-${Math.round(hero.bBottom)}，环 ${Math.round(hero.gTop)}-${Math.round(hero.gBottom)}）`);
+  // 同行判据用「水平相邻」而不是「垂直区间重叠」：row-main 是 align-items:center，
+  // 行内若有更高的兄弟元素（如换行后的额度标签），居中的环与矮的余额数字并不垂直重叠，
+  // 但它明明还在同一行 —— 用重叠判定会误报。环一旦换到下一行，left 会回到容器左缘。
   assert.ok(hero.gLeft > hero.bRight - 4,
-    `环应在余额右侧（环 x=${Math.round(hero.gLeft)}，余额右缘 ${Math.round(hero.bRight)}）`);
+    `窄屏下环必须与余额在同一行且位于其右侧（环 x=${Math.round(hero.gLeft)}，余额右缘 ${Math.round(hero.bRight)}）`);
   assert.ok(hero.capRight <= hero.iw, `环旁标签不得溢出（右缘 ${Math.round(hero.capRight)} > ${hero.iw}）`);
   assert.ok(hero.bdTop >= hero.bBottom - 2, '额度构成必须落在余额行下方，不与环抢同一行');
+  assert.ok(hero.balLabelBottom - hero.balLabelTop <= 50,
+    `额度标签不得被压成竖排（实测高 ${Math.round(hero.balLabelBottom - hero.balLabelTop)}px；竖排时可达 100px+）`);
   assert.ok(hero.sw <= hero.iw, `窄屏 hero 不得横向溢出（${hero.sw} > ${hero.iw}）`);
   // daisyUI 的 radial-progress 未完成段本身是 #0000（透明）→ 窄环读起来像一段开口弧线。
   assert.match(PANEL_CSS_SRC, /\.hero-gauge \.radial-progress:before\s*\{[^}]*var\(--border-color\)/,
@@ -208,9 +213,11 @@ test('B25-C：窄屏无横向溢出 + 卡片网格真机几何（列数/等高/�
     const vs = document.querySelector('.view-switch'); const sw = vs.getBoundingClientRect();
     const l = document.getElementById('view-list');
     const lr = l.getBoundingClientRect(); const ls = l.querySelector('svg').getBoundingClientRect();
-    const sb = document.querySelector('.search-box').getBoundingClientRect();
+    const sbEl = document.querySelector('.search-box');
+    const sb = sbEl.getBoundingClientRect();
     return { vsW: sw.width, vsRight: sw.right, listRight: lr.right, listIconRight: ls.right,
-      searchW: sb.width, docSw: document.documentElement.scrollWidth, iw: window.innerWidth };
+      searchW: sb.width, searchClientW: sbEl.clientWidth, searchScrollW: sbEl.scrollWidth,
+      docSw: document.documentElement.scrollWidth, iw: window.innerWidth };
   });
   assert.ok(bar.listRight <= bar.vsRight + 0.5,
     `窄屏下切换器的第二个按钮不得被裁（按钮右缘 ${bar.listRight.toFixed(1)} > 容器右缘 ${bar.vsRight.toFixed(1)}）`);
@@ -218,7 +225,9 @@ test('B25-C：窄屏无横向溢出 + 卡片网格真机几何（列数/等高/�
     `列表图标不得被裁（图标右缘 ${bar.listIconRight.toFixed(1)} > 容器右缘 ${bar.vsRight.toFixed(1)}）`);
   assert.ok(bar.vsW >= 80,
     `切换器在窄屏不得被 flex 压缩（实测 ${bar.vsW.toFixed(1)}px，桌面为 81px；变异：去掉 flex:none 即红）`);
-  assert.ok(bar.searchW >= 30, `搜索框不得被压窄到装不下图标（实测 ${bar.searchW.toFixed(1)}px）`);
+  // 判据必须是「内容装得下」而不是「宽度够大」：实测 27px 宽装 39px 内容时，放大镜一样被裁。
+  assert.ok(bar.searchScrollW <= bar.searchClientW + 1,
+    `搜索框内容不得溢出（scrollWidth ${bar.searchScrollW} > clientWidth ${bar.searchClientW}）`);
   assert.ok(bar.docSw <= bar.iw, `窄屏顶栏不得横向溢出（${bar.docSw} > ${bar.iw}）`);
 });
 
