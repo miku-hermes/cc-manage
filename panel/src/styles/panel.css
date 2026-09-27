@@ -416,7 +416,7 @@
   .acct-card-bars { display: flex; flex-direction: column; gap: .5rem; }
   .bar-head { display: flex; align-items: baseline; justify-content: space-between; gap: .5rem; font-size: .75rem; }
   .bar-tail { display: flex; align-items: baseline; gap: .4rem; min-width: 0; }
-  .bar-label { color: var(--text-secondary); }
+  .bar-label { color: var(--text-secondary); white-space: nowrap; flex: none; }
   .acct-card .progress.bar { height: .375rem; width: 100%; }
   .acct-card .credits-block { display: flex; flex-direction: column; gap: .3rem; }
   .acct-card .card-credits, .acct-card .card-usage { font-size: .72rem; }
