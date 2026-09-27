@@ -142,7 +142,7 @@ function fillStatus(root, st) {
   if (!status) return;
   // B24i：min-w 把 --status-col（全表最宽状态徽章的实测盒宽）兜成地板 —— 四行状态列等宽，
   // 文案由 daisyUI badge 自带的 justify-content:center 在列内居中。
-  status.className = 'acct-status badge shrink-0 whitespace-nowrap min-w-[var(--status-col,0px)] px-2.5 py-1 text-sm ' + toneBadge(st.tone) + ' is-' + st.tone;
+  status.className = 'acct-status badge shrink-0 whitespace-nowrap min-w-[var(--status-col,0px)] ' + toneBadge(st.tone) + ' is-' + st.tone;
   const dot = status.querySelector('.dot');
   for (const c of [...status.children]) if (c !== dot) status.removeChild(c);
   status.appendChild(document.createTextNode(st.t));

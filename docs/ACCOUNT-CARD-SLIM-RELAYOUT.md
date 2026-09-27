@@ -116,6 +116,30 @@
 - **必须做变异检查并贴出两次输出**：`git stash push -- panel/public/js/render-cards.js`（徽章会回来）→ 跑这两条用例**必须变红**；`git stash pop` → 再跑**必须变绿**。不红就说明断言是空转的装饰，必须修到能红。
 - 改完跑 `npm run panel:build` + `npm test`（`# fail 0`）+ `npm --prefix vendor/commandcode-proxy test`，给前后计数与命令原文。
 
+## 7quater. 状态标签去底色、变小（用户要求：「右上角的可用/不可用标签太大了，能不能去除背景」）
+- 目标形态：卡片右上角的状态从「实底药丸」改成 **色点 + 文字**：
+  - 去掉底色/边框/内边距（`background: transparent; border: 0; padding: 0`），不再有大色块；
+  - 字号降到 **0.75rem（12px）**、字重 600；文字用 tone 色（`is-ok`→`--success`、`is-warn`→`--warning`、`is-bad`→`--danger`），色点（`.dot`）保留；
+  - 卡片内右对齐（`justify-content: flex-end`），使短文案（「可用」）也贴着卡片右边缘，不留空色块痕迹。
+- **契约不许动**：HTML 仍须匹配 `<span class="acct-status badge[^"]*is-ok">` 这类既有断言；`.acct-status` / `.dot` / `is-ok|is-warn|is-bad` 类名、`min-w-[var(--status-col,0px)]` 等宽地板与 `syncStatusColumn()` 全部保留（不许钉死像素宽）。
+- 作用域只限**卡片网格**（`.acct-card .acct-status`）；表格视图行（`.acct-table`）与后台页面不要动。
+- 允许等强度修改的测试：`test/detail-modal.test.mjs:82` 的 `assert.ok(parseFloat(after.statusFont) > parseFloat(before.statusFont))`——它靠「页面状态字号 > 内联 12px」成立，字号降到 12px 后会假红。改成与最终字号有明显差距的内联值（例如 18px）或改为断言内边距差异，**保持原意**（状态徽章尺寸参与卡片几何：改尺寸会改变卡片高度），不许删掉这条。
+- 其余测试若因此变红，同样只许等强度重写。改完跑 `npm run panel:build` + `npm test`（`# fail 0`）+ vendor 套件，给前后计数与命令原文。
+
+## 7quinquies. 状态标签：让样式真正生效 + 头部换行时也要贴右（Hermes 线上实测发现的遗漏）
+上一轮 §7quater 只改了 panel.css，**线上实测没生效**，而且暴露第二个缺陷。实测证据（cc.mikus.ink，改后仍如此）：
+- 卡片状态标签 computed：`background: oklch(0.61 0.12 155)`（绿底还在）、`padding: 4px 10px`、`font-size: 14px`、`justify-content: center` → 说明 panel.css 的 `.acct-card-head .acct-status` 规则**被 Tailwind 工具类/ daisyUI `badge-success` 压过**（层序问题，特异性再高也没用）。
+- 头部换行缺陷：卡片宽 269.5px（vw1485，4 列）与 297px（vw640）时 `.acct-card-head` 折成两行（headH 67.9 而非 35.9），`.acct-card-actions`（状态标签）掉到第二行**左端**（与卡片右边距 130–158px）——「右上角的状态」在这两档根本不在右上角。
+
+要做：
+1. **样式生效**：运行时 className（`panel/public/js/render-cards.js:145`）去掉与视觉冲突的工具类 `px-2.5 py-1 text-sm`，视觉由 panel.css 的卡片作用域规则统一给；对 `background / border / padding / font-size` 用 `!important`（或等效的层序/选择器手段，前提是——线上 computed 必须是 `background-color: rgba(0,0,0,0)`、`padding: 0px`、`font-size: 12px`）。**契约不许动**：HTML 仍须匹配 `<span class="acct-status badge[^"]*is-ok">`；`.dot`、`is-*`、`min-w-[var(--status-col,0px)]`、`syncStatusColumn()` 全部保留。
+2. **换行也贴右**：`.acct-card-actions` 加 `margin-left: auto`（头部 `justify-content: space-between; flex-wrap: wrap` 保持不动），使状态标签在「同行」或「被换到第二行」两种情况下都靠卡片右边缘。
+3. **补一条真机断言（这次漏检的根因）**：`test/detail-modal.test.mjs` 用的是真 chromium + 构建产物，请在那里加一节断言（同文件，用现有 page）：
+   - `.acct-card .acct-status` 的 computed `background-color` 为透明（`rgba(0, 0, 0, 0)`）、`padding` 为 `0px`、`font-size` ≤ 12.5px；
+   - 同一个卡片上，状态标签右边缘与卡片右边缘的距离 ≤ 24px（375px 视口），且与标题同一行（`Math.abs(identityTop - actionsTop) < 2`）。
+   断言必须在**改前**能红（Leaving 上面两条改动前它是红的），改后变绿。
+4. 跑 `npm run panel:build` + `npm test`（`# fail 0`）+ vendor 套件；并在结论里贴出构建产物里该规则的原文（`grep -o '\.acct-card-head \.acct-status{[^}]*}' public/assets/*.css`）作为「样式确实编译进去了」的证据。
+
 ## 8. 边界
 - 不要 `git commit` / `git push` / 不要动 docker / 不要碰 `vendor/`、`config/`、`.env`。
 - 像素级与视口级核验（320/360/390/403/430px 卡片高度、折行、出框、重叠）由 Hermes 做，你不用跑浏览器。

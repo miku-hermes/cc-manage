@@ -53,6 +53,20 @@ test('首页详情：真实数据填充、模态框 inert/焦点归还与窄屏�
   await page.goto(ctx.baseUrl + '/', { waitUntil:'networkidle' });
   const trigger = page.getByRole('button', { name:'查看 详情样例 详情' });
   await trigger.waitFor();
+  const cardStatus = await page.locator('.acct-card').evaluate(card => {
+    const identity = card.querySelector('.acct-card-identity').getBoundingClientRect();
+    const actions = card.querySelector('.acct-card-actions').getBoundingClientRect();
+    const status = card.querySelector('.acct-status');
+    const bounds = status.getBoundingClientRect();
+    const cardBounds = card.getBoundingClientRect();
+    const style = getComputedStyle(status);
+    return { background: style.backgroundColor, padding: style.padding, fontSize: parseFloat(style.fontSize), rightGap: cardBounds.right - bounds.right, identityTop: identity.top, actionsTop: actions.top };
+  });
+  assert.equal(cardStatus.background, 'rgba(0, 0, 0, 0)', '卡片状态背景透明');
+  assert.equal(cardStatus.padding, '0px', '卡片状态无内边距');
+  assert.ok(cardStatus.fontSize <= 12.5, `卡片状态字号 ${cardStatus.fontSize}px 不超过 12.5px`);
+  assert.ok(cardStatus.rightGap <= 24, `状态标签距卡片右缘 ${cardStatus.rightGap}px`);
+  assert.ok(Math.abs(cardStatus.identityTop - cardStatus.actionsTop) < 2, '状态标签与标题同行');
   actualKeyId = await page.locator('.acct-card').getAttribute('data-key-id');
   const originalNodes = await page.locator('body *').all();
   const originalInert = await Promise.all(originalNodes.map(node => node.getAttribute('inert')));
@@ -72,9 +86,9 @@ test('首页详情：真实数据填充、模态框 inert/焦点归还与窄屏�
   await trigger.press('Enter');
   await page.waitForFunction(() => document.getElementById('m-detail-chart-empty')?.textContent === '数据不足');
   assert.equal(await page.locator('#m-detail h3').allInnerTexts().then(lines => lines.includes('消耗与预测')), true);
-  const geometry = await page.evaluate(() => { const card=document.querySelector('.acct-card'), head=card.querySelector('.acct-card-head'), dialog=document.querySelector('.detail-dialog'); const status=card.querySelector('.acct-status'); const after={cardHeight:card.getBoundingClientRect().height,headPad:getComputedStyle(head).paddingLeft,numberFont:getComputedStyle(document.querySelector('.usable-balance')).fontSize,headGap:getComputedStyle(head).gap,statusFont:getComputedStyle(status).fontSize,statusPadding:getComputedStyle(status).padding,dialogScrollWidth:dialog.scrollWidth,dialogClientWidth:dialog.clientWidth}; head.style.paddingLeft='24px'; status.style.fontSize='12px'; status.style.padding='2px 8px'; const button=card.querySelector('.detail-trigger'); button.style.display='none'; const before={cardHeight:card.getBoundingClientRect().height,headPad:getComputedStyle(head).paddingLeft,numberFont:after.numberFont,headGap:getComputedStyle(head).gap,statusFont:getComputedStyle(status).fontSize,statusPadding:getComputedStyle(status).padding}; head.style.paddingLeft=''; status.style.fontSize=''; status.style.padding=''; button.style.display=''; return {before,after}; });
+  const geometry = await page.evaluate(() => { const card=document.querySelector('.acct-card'), head=card.querySelector('.acct-card-head'), dialog=document.querySelector('.detail-dialog'); const status=card.querySelector('.acct-status'); const after={cardHeight:card.getBoundingClientRect().height,headPad:getComputedStyle(head).paddingLeft,numberFont:getComputedStyle(document.querySelector('.usable-balance')).fontSize,headGap:getComputedStyle(head).gap,statusFont:getComputedStyle(status).fontSize,statusPadding:getComputedStyle(status).padding,dialogScrollWidth:dialog.scrollWidth,dialogClientWidth:dialog.clientWidth}; head.style.paddingLeft='24px'; status.style.setProperty('font-size','18px','important'); status.style.setProperty('padding','2px 8px','important'); const button=card.querySelector('.detail-trigger'); button.style.display='none'; const before={cardHeight:card.getBoundingClientRect().height,headPad:getComputedStyle(head).paddingLeft,numberFont:after.numberFont,headGap:getComputedStyle(head).gap,statusFont:getComputedStyle(status).fontSize,statusPadding:getComputedStyle(status).padding}; head.style.paddingLeft=''; status.style.removeProperty('font-size'); status.style.removeProperty('padding'); button.style.display=''; return {before,after}; });
   assert.notEqual(geometry.after.headPad, geometry.before.headPad);
-  assert.ok(parseFloat(geometry.after.statusFont) > parseFloat(geometry.before.statusFont));
+  assert.ok(parseFloat(geometry.before.statusFont) > parseFloat(geometry.after.statusFont));
   assert.ok(geometry.after.dialogScrollWidth <= geometry.after.dialogClientWidth, `详情横向溢出 ${geometry.after.dialogScrollWidth} > ${geometry.after.dialogClientWidth}`);
   console.log('首页账号卡尺寸（375px）', JSON.stringify(geometry));
   await page.evaluate(() => window.renderCards());

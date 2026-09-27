@@ -408,13 +408,19 @@
   .acct-card.is-crit { opacity: .94; }
   .acct-card-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; min-width: 0; flex-wrap: wrap; padding-bottom: .65rem; border-bottom: 1px solid var(--border-light); }
   .acct-card-identity, .acct-card-actions { display: flex; align-items: center; gap: .45rem; min-width: 0; }
-  .acct-card-actions { flex: none; }
+  .acct-card-actions { flex: none; margin-left: auto; }
   .acct-dot { width: .5rem; height: .5rem; border-radius: 9999px; background: var(--text-tertiary); flex: none; }
   .acct-card.is-ok .acct-dot { background: var(--success); }
   .acct-card.is-warn .acct-dot { background: var(--warning); }
   .acct-card.is-bad .acct-dot { background: var(--danger); }
   .acct-card .card-head { font-size: 1.02rem; font-weight: 700; min-width: 0; }
-  .acct-card-head .acct-status { flex: none; }
+  .acct-card-head .acct-status {
+    flex: none; justify-content: flex-end; gap: .35rem; padding: 0 !important; border: 0 !important;
+    background: transparent !important; color: var(--text-secondary); font-size: .75rem !important; font-weight: 600;
+  }
+  .acct-card-head .acct-status.is-ok { color: var(--success); }
+  .acct-card-head .acct-status.is-warn { color: var(--warning); }
+  .acct-card-head .acct-status.is-bad { color: var(--danger); }
   .acct-card-balance { display: flex; align-items: baseline; justify-content: space-between; gap: .4rem; min-width: 0; }
   .acct-bal-cap { font-size: .75rem; color: var(--text-secondary); flex: none; }
   .usable-balance { font-size: 1.5rem; font-weight: 800; letter-spacing: -.01em; }
