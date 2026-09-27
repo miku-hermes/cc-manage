@@ -355,3 +355,64 @@ test('B25-D-结构：网关状态徽章 ok 状态不得再用绿色底', () => {
   assert.doesNotMatch(UTILS_JS, /tone === 'ok' \? 'badge-success'/,
     'ok 不得映射到 badge-success（绿底徽章）');
 });
+
+// ── ② 看板娘「真的冲出卡片」的几何断言（2026-09-27 补）──────────────────
+// 背景：B39 只断言了「.hero-mascot 有 position:absolute / 有弹跳动画 / 有让位」，
+// 全是**规则存在**级别的检查 —— 于是上线后手机上帽顶被卡片上边缘切掉、只露出 3px 也没人报红。
+// 根因（实测）：top 的定位基准不是 .hero-banner(120) 而是 .hero-banner-top(≈135.4)，
+// 因为 `.hero-banner > *:not(.hero-deco)` 那条规则给顶区设了 position:relative；
+// 少算 Hero 的 border 1px + padding-top 14.4px 这 15.4px，视觉上就等于没冲出。
+// 所以必须量**渲染后的几何**：图顶要比卡片顶高出一段（冲出），同时不得撞到顶栏。
+test('B25-E：Hero 看板娘必须真的冲出卡片上缘，且不撞顶栏（几何，非规则）', async (t) => {
+  const pwPath = findPlaywright();
+  if (!pwPath) {
+    t.skip('本机无 Playwright，跳过真实浏览器断言（结构断言见 B25-D-结构）');
+    return;
+  }
+  if (process.env.CC_TEST_HANG_GUARD_MS === '900000') return;
+  const chromiumPath = findChromium();
+  const ctx = await startTestGateway({ accounts: [account('主号', 'user_test_alpha')] });
+  t.after(() => ctx.close());
+  const mod = await import(pwPath);
+  const playwright = mod.default ?? mod;
+  const browser = await playwright.chromium.launch(chromiumPath ? { executablePath: chromiumPath } : {});
+  t.after(() => browser.close());
+
+  const UA = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36';
+  const seen = [];
+  for (const [w, h, dpr, ua] of [[1440, 900, 2, undefined], [384, 900, 3, UA]]) {
+    const page = await browser.newPage({ viewport: { width: w, height: h }, deviceScaleFactor: dpr, userAgent: ua });
+    await page.goto(ctx.baseUrl, { waitUntil: 'networkidle' });
+    await page.waitForTimeout(400);
+    const m = await page.evaluate(() => {
+      const img = document.querySelector('.hero-mascot');
+      const hero = document.querySelector('.hero-banner');
+      const hdr = document.querySelector('header');
+      if (!img || !hero || !hdr) return null;
+      img.style.animation = 'none'; // 免得读到弹跳中间帧
+      const ri = img.getBoundingClientRect(), rh = hero.getBoundingClientRect(), rd = hdr.getBoundingClientRect();
+      return {
+        imgTop: ri.top, imgBottom: ri.bottom, imgLeft: ri.left, imgRight: ri.right,
+        heroTop: rh.top, headerBottom: rd.bottom,
+        popOut: rh.top - ri.top,            // >0 才是「冲出卡片上缘」
+        gapToHeader: ri.top - rd.bottom,    // >0 才是不撞顶栏
+        loaded: img.complete && img.naturalWidth > 0,
+      };
+    });
+    assert.ok(m, `${w}px：页面里必须同时存在 .hero-mascot / .hero-banner / header`);
+    assert.ok(m.loaded, `${w}px：看板娘图片必须加载成功（naturalWidth>0）`);
+    // 冲出量：桌面至少 30px、手机至少 25px —— 小到看不见就等于没做（实测曾只有 3px）
+    const need = w >= 1000 ? 30 : 25;
+    assert.ok(m.popOut >= need,
+      `${w}px：看板娘必须明显冲出卡片上缘（实测只露 ${m.popOut.toFixed(1)}px，要求 >= ${need}px）`);
+    // 不得撞顶栏
+    assert.ok(m.gapToHeader >= 8,
+      `${w}px：看板娘不得撞到顶栏（图顶距顶栏底仅 ${m.gapToHeader.toFixed(1)}px，要求 >= 8px）`);
+    // 不得横向溢出
+    const sw = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, iw: window.innerWidth }));
+    assert.ok(sw.sw <= sw.iw, `${w}px：不得横向溢出（scrollWidth ${sw.sw} > innerWidth ${sw.iw}）`);
+    seen.push(`${w}px 露出 ${m.popOut.toFixed(0)}px / 距顶栏 ${m.gapToHeader.toFixed(0)}px`);
+    await page.close();
+  }
+  assert.equal(seen.length, 2, '两档视口都量到了');
+});
