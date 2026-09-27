@@ -126,7 +126,7 @@ test('B2-2：后台额度条对已用完的窗口画满 100%，未耗尽仍显�
 });
 
 // ── B2-3：额度构成明细各显真实值，不被 usableRemaining 门控 ─────────
-test('B2-3：额度构成明细各显真实值，不被 usableRemaining 门控成 0.00', async () => {
+test('B2-3：额度构成移入详情弹窗，剩余余额仍按 usableRemaining 显示', async () => {
   const shim = dom(INDEX_HTML);
   const page = await runInlineScript(INDEX_HTML, shim);
   const dead = account({
@@ -134,14 +134,13 @@ test('B2-3：额度构成明细各显真实值，不被 usableRemaining 门控�
     lastQuota: quota(0, { credits: { monthlyCredits: 0.098, purchasedCredits: 1.5, freeCredits: 0 } }),
   });
   const out = page.card(dead);
-  // B24：恒为 0 的构成段不占位（赠送 0 直接省略），但非 0 的月度/购买仍是真实值，不被门控。
-  assert.match(out, /月度 0\.10 · 购买 1\.50/, '构成明细必须是真实数值');
-  assert.doesNotMatch(out, /赠送/, '赠送恒为 0 → 不占位');
-  assert.doesNotMatch(out, /月度 0\.00/, '独立构成字段不得被门控成 0');
+  assert.doesNotMatch(out, /class="credits-block|月度 0\.10|购买 1\.50/, '卡片不再展示额度构成');
+  assert.match(INDEX_HTML, /id="m-detail-credits"/, '详情弹窗仍保留额度构成容器');
+  assert.match(INDEX_HTML, /额度构成/, '详情弹窗仍保留额度构成标题');
   assert.match(out, /<b class="usable-balance[^"]*">0\.00<\/b>/, '剩余额度结论仍按「用不了算 0」');
 
   const ok = page.card(account({ lastQuota: quota(9.9, { credits: { monthlyCredits: 2, purchasedCredits: 1, freeCredits: 0.5 } }) }));
-  assert.match(ok, /月度 2\.00 · 购买 1\.00 · 赠送 0\.50/, '正常账号构成不回归');
+  assert.doesNotMatch(ok, /月度 2\.00|购买 1\.00|赠送 0\.50/, '额度构成不再出现在账号卡片');
 });
 
 // ── B2-4：状态文案 st.t 必须转义 ────────────────────────────────────
@@ -170,16 +169,16 @@ test('B2-5：快照过旧提示按实际阈值算出分钟数，不再写死 10 
   const stale = Date.now() - 30 * 60 * 1000;
 
   // B23：新鲜度行不再是独立函数，从账号卡模板克隆后取 .card-fresh。
-  page.setStaleFrom({ quotaPoll: { idleIntervalMs: 600000 } });   // → 20 分钟
+  page.setStaleFrom({ quotaPoll: { idleIntervalMs: 600000 } });
   const a20 = page.card(account({ lastQuota: quota(9.9, { fetchedAt: stale }) }));
-  assert.match(a20, /title="额度快照已超过 20 分钟未更新"/, '阈值 20 分钟 → 文案 20 分钟');
-  assert.doesNotMatch(a20, /10 分钟/, '不得再出现写死的 10 分钟');
+  assert.match(a20, /class="card-fresh[^"]*"[^>]*hidden/, '新鲜度字段保留但隐藏');
+  assert.doesNotMatch(a20, /额度快照已超过|刷新间隔|额度刷新/, '卡片不显示轮询或快照刷新文案');
 
-  page.setStaleFrom({ quotaPoll: { idleIntervalMs: 300000 } });   // → 10 分钟
+  page.setStaleFrom({ quotaPoll: { idleIntervalMs: 300000 } });
   const a10 = page.card(account({ lastQuota: quota(9.9, { fetchedAt: stale }) }));
-  assert.match(a10, /title="额度快照已超过 10 分钟未更新"/, '改配置后文案随之为 10 分钟，证明是算出来的');
+  assert.match(a10, /class="card-fresh[^"]*"[^>]*hidden/, '不同轮询配置下新鲜度字段仍隐藏');
 
-  assert.doesNotMatch(INDEX_HTML, /已超过 10 分钟未更新/, '静态源码里不得再有写死的 10 分钟文案');
+  assert.match(INDEX_HTML, /class="card-fresh[^"]*"[^>]*hidden/, '模板保留隐藏的新鲜度钩子');
 });
 
 // ── B2-6：窄屏标签条的可滑动提示（纯 CSS 静态断言）──────────────────

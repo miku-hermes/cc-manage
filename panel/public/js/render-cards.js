@@ -38,7 +38,7 @@ function usableRemaining(a) {
 /** daisyUI 状态色映射：健康度只用 ok/warn/crit 三档。 */
 function toneBadge(tone) { return tone === 'bad' ? 'badge-error' : tone === 'warn' ? 'badge-warning' : 'badge-success'; }
 function toneText(tone) { return tone === 'bad' ? 'text-error' : tone === 'warn' ? 'text-warning' : 'text-success'; }
-function progressTone(p) { const v = Number(p); return Number.isFinite(v) && v >= 90 ? 'progress-error' : Number.isFinite(v) && v >= 70 ? 'progress-warning' : 'progress-success'; }
+function progressTone(p) { const v = Number(p); return Number.isFinite(v) && v >= 80 ? 'progress-error' : Number.isFinite(v) && v >= 60 ? 'progress-warning' : 'progress-success'; }
 
 /* ── 模板克隆工具（无 HTML 字符串拼接）────────────────────────────── */
 function clearChildren(el) { while (el && el.firstChild) el.removeChild(el.firstChild); }
@@ -51,44 +51,7 @@ function field(root, name) { return root.querySelector('[data-f="' + name + '"]'
 function fillText(root, name, text) { const el = field(root, name); if (el) el.textContent = text; return el; }
 function dropField(root, name) { const el = field(root, name); if (el) el.remove(); }
 
-/** 额度构成：只画非 0 的段（恒为 0 的购买/赠送不占位），图例同步省略。 */
-function fillCredits(root, q) {
-  const c = q && q.credits ? q.credits : null;
-  const bar = field(root, 'credits-bar');
-  if (!c) {
-    if (bar) bar.remove();
-    fillText(root, 'credits-legend', '尚未获取额度快照');
-    return;
-  }
-  const parts = [
-    ['seg-month', '月度', Number(c.monthlyCredits) || 0],
-    ['seg-buy', '购买', Number(c.purchasedCredits) || 0],
-    ['seg-gift', '赠送', Number(c.freeCredits) || 0],
-  ];
-  const shown = parts.filter(([, , v]) => v > 0);
-  const total = shown.reduce((s, [, , v]) => s + v, 0);
-  // 三段全 0：没有构成可画，去掉空条，只留一句真话（空态不撒谎，也不画假比例）。
-  if (bar && !shown.length) {
-    bar.remove();
-    fillText(root, 'credits-legend', '额度构成待同步');
-    return;
-  }
-  if (bar) {
-    for (const [name, , v] of parts) {
-      const el = field(bar, name);
-      if (!el) continue;
-      if (v <= 0) { el.remove(); continue; }
-      el.style.width = (total > 0 ? +(v / total * 100).toFixed(4) : 0) + '%';
-    }
-    const label = '额度构成：' + shown.map(([, t, v]) => t + ' ' + money(v)).join(' · ');
-    bar.setAttribute('aria-label', label);
-    bar.setAttribute('title', label);
-  }
-  fillText(root, 'credits-legend', shown.map(([, t, v]) => t + ' ' + money(v)).join(' · '));
-}
-
-/** 单条窗口进度条（daisyUI progress）。没有快照的窗口整行不渲染（空闲不占位）。
-    重置时间与窗口条同行、只说一次。 */
+/** 单条窗口进度条（daisyUI progress）。没有快照的窗口整行不渲染（空闲不占位）。 */
 function fillBar(root, key, label, w, opts) {
   const group = field(root, 'bar-' + key);
   if (!group) return;
@@ -117,7 +80,6 @@ function fillBar(root, key, label, w, opts) {
     if (reset) resetEl.textContent = reset;
     else resetEl.remove();
   }
-  // 三个读数都没有（没百分比、没金额、没重置时间）→ 整个窗口没有信息量，不占一行。
   if (pct === null && !amountText && !reset) group.remove();
 }
 
@@ -125,7 +87,7 @@ function fillBar(root, key, label, w, opts) {
 function fillFresh(root, q) {
   const el = field(root, 'card-fresh');
   if (!el) return;
-  if (!q) { el.remove(); return; }
+  if (!q) { el.hidden = true; el.textContent = ''; return; }
   const t = Number(q.fetchedAt);
   const known = Number.isFinite(t) && t > 0;
   const f = freshness(known ? t : NaN);
@@ -158,7 +120,7 @@ function fillTags(root, a) {
   if (a.exhausted && a.exhausted.label) {
     const exMs = toMs(a.exhausted.resetAt);
     if (Number.isFinite(exMs) && exMs > 0) {
-      push('badge-ghost', shortDate(exMs) + (exMs <= Date.now() ? ' 已重置' : ' 重置'));
+      push('badge-ghost', shortDate(exMs) + (exMs <= Date.now() ? ' 窗口已重置' : ' 重置'));
     }
   }
 }
@@ -212,18 +174,18 @@ function card(a, wideLast = false, index = 0) {
 
   fillHead(node, a);
   fillStatus(node, st);
-  fillCredits(node, q);
   fillText(node, 'usable-balance', money(usableRemaining(a)));
   fillBar(node, '5h', '5 小时窗口', q && q.fiveHour, { spent: ex && ex.kind === 'window' && ex.window === 'fiveHour' });
   fillBar(node, 'week', '本周窗口', q && q.weekly, { spent: ex && ex.kind === 'window' && ex.window === 'weekly' });
   fillBar(node, 'month', '本月周期', q && q.monthly, { spent: ex && ex.kind === 'monthly' });
   if (q && q.usage) {
-    fillText(node, 'card-usage', '本周期 token ' + num(q.usage.totalTokens)
+    fillText(node, 'card-usage', num(q.usage.totalTokens) + ' token'
       + (q.usage.totalCost === undefined ? '' : ' · 花费 ' + money(q.usage.totalCost)));
   } else {
     dropField(node, 'card-usage');
   }
-  fillFresh(node, q);
+  const fresh = field(node, 'card-fresh');
+  if (fresh) { fresh.hidden = true; fresh.setAttribute('hidden', ''); fresh.textContent = ''; }
   fillTags(node, a);
   // 内部钩子不留在产出 DOM 里。
   for (const el of node.querySelectorAll('[data-f]')) el.removeAttribute('data-f');

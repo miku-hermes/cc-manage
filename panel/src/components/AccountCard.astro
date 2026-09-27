@@ -1,59 +1,58 @@
 ---
-/* 账号卡片（网格视图，参考主题节点卡的形态）：头部=状态点+名称+套餐+状态药丸；
-   中部=三条额度窗口进度条；下部=额度构成 + 本周期用量；底部=补充标签 + 详情按钮。
+/* 账号卡片：头部含名称、套餐、状态与详情按钮；中部展示额度窗口；底部展示余额、用量与标签。
    结构只在这里出现一次（index.astro 产出 <template id="tpl-account">）。
-   可变文本全部由 render-cards.js 用 textContent 填值；没有数据的区块 JS 直接 remove。 */
-import CreditsBar from './CreditsBar.astro';
+   可变文本由 render-cards.js 用 textContent 填值；无数据的窗口由脚本移除。 */
 import StatusPill from './StatusPill.astro';
-import { ChartNoAxesCombined } from '@lucide/astro';
 ---
 <article class="card acct-card border border-base-300 bg-base-100 transition-[box-shadow,transform,background-color]">
   <div class="acct-card-head min-w-0">
-    <span class="acct-dot" aria-hidden="true"></span>
-    <h2 class="card-head truncate" data-f="account-head"></h2>
-    <span class="plan-slot shrink-0" data-f="plan-slot"></span>
-    <StatusPill />
-  </div>
-
-  <div class="acct-card-balance">
-    <span class="acct-bal-cap">剩余</span>
-    <b class="usable-balance tabular-nums" data-f="usable-balance"></b>
-    <span class="card-fresh aux-text text-sm tabular-nums" data-f="card-fresh"></span>
+    <div class="acct-card-identity min-w-0">
+      <span class="acct-dot" aria-hidden="true"></span>
+      <h2 class="card-head truncate" data-f="account-head"></h2>
+      <span class="plan-slot shrink-0" data-f="plan-slot"></span>
+    </div>
+    <div class="acct-card-actions">
+      <StatusPill />
+    </div>
   </div>
 
   <div class="acct-card-bars">
     <div class="bar-group" role="group" data-f="bar-5h">
       <div class="bar-head">
         <span class="bar-label">5 小时窗口</span>
-        <span class="bar-tail"><span class="bar-pct tabular-nums" data-f="bar-5h-pct"></span><span class="bar-reset aux-text tabular-nums" data-f="bar-5h-reset"></span></span>
+        <span class="bar-pct tabular-nums" data-f="bar-5h-pct"></span>
       </div>
       <progress class="progress bar" max="100" value="0" data-f="bar-5h-track"></progress>
+      <div class="bar-reset aux-text tabular-nums" data-f="bar-5h-reset"></div>
     </div>
     <div class="bar-group" role="group" data-f="bar-week">
       <div class="bar-head">
         <span class="bar-label">本周窗口</span>
-        <span class="bar-tail"><span class="bar-pct tabular-nums" data-f="bar-week-pct"></span><span class="bar-reset aux-text tabular-nums" data-f="bar-week-reset"></span></span>
+        <span class="bar-pct tabular-nums" data-f="bar-week-pct"></span>
       </div>
       <progress class="progress bar" max="100" value="0" data-f="bar-week-track"></progress>
+      <div class="bar-reset aux-text tabular-nums" data-f="bar-week-reset"></div>
     </div>
     <div class="bar-group" role="group" data-f="bar-month">
       <div class="bar-head">
         <span class="bar-label">本月周期</span>
-        <span class="bar-tail"><span class="bar-pct tabular-nums" data-f="bar-month-pct"></span><span class="bar-reset aux-text tabular-nums" data-f="bar-month-reset"></span></span>
+        <span class="bar-pct tabular-nums" data-f="bar-month-pct"></span>
       </div>
       <progress class="progress bar" max="100" value="0" data-f="bar-month-track"></progress>
+      <div class="bar-reset aux-text tabular-nums" data-f="bar-month-reset"></div>
     </div>
   </div>
 
-  <div class="credits-block" data-f="credits-block">
-    <CreditsBar />
-    <div class="card-credits aux-text tabular-nums" data-f="credits-legend"></div>
+  <div class="acct-card-balance">
+    <span class="acct-bal-cap">剩余</span>
+    <b class="usable-balance tabular-nums" data-f="usable-balance"></b>
+    <span class="card-fresh aux-text text-sm tabular-nums" data-f="card-fresh" hidden></span>
   </div>
 
   <div class="card-usage aux-text tabular-nums" data-f="card-usage"></div>
 
   <div class="acct-card-foot">
     <div class="tags flex min-h-6 flex-wrap items-center gap-1 max-sm:flex-nowrap max-sm:overflow-x-auto max-sm:[&.is-scrollable]:mask-fade-x max-sm:[&.at-end]:mask-fade-x-none max-sm:scrollbar-thin-x" data-f="tags"></div>
-    <button class="detail-trigger btn btn-ghost btn-sm gap-1" type="button" data-f="detail-trigger" aria-haspopup="dialog"><ChartNoAxesCombined size={16} /><span>详情</span></button>
   </div>
+  <button class="detail-trigger" type="button" data-f="detail-trigger" aria-haspopup="dialog"></button>
 </article>

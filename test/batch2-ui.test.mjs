@@ -479,8 +479,15 @@ test('B24-1：账号卡提供详情触发按钮（弹出对话框），带含账
   assert.doesNotMatch(cards.innerHTML, /<details/, '账号卡不再是 <details> 折叠行（UI 重写：卡片 + 弹窗）');
 
   const trigger = cards.querySelector('.detail-trigger');
-  assert.ok(trigger, '每张卡都有详情触发按钮');
+  assert.ok(trigger, '每张卡都有整卡详情触发按钮');
+  assert.equal(trigger.tagName.toLowerCase(), 'button', '整卡触发器仍是真实 button');
   assert.equal(trigger.getAttribute('aria-haspopup'), 'dialog', '触发按钮声明 aria-haspopup=dialog');
   assert.match(trigger.getAttribute('aria-label') || '', /^查看 .+ 详情$/, '触发按钮带含账号名的无障碍名字');
+  const cardSource = fs.readFileSync(new URL('../panel/src/components/AccountCard.astro', import.meta.url), 'utf8');
+  const cssSource = fs.readFileSync(new URL('../panel/src/styles/panel.css', import.meta.url), 'utf8');
+  assert.match(cardSource, /class="detail-trigger"[^>]*data-f="detail-trigger"[^>]*aria-haspopup="dialog"/, '触发按钮保留模板钩子与弹窗语义');
+  assert.match(cssSource, /\.acct-card\s*\{[^}]*position:\s*relative[^}]*cursor:\s*pointer/s, '整卡有定位上下文与可点击光标');
+  assert.match(cssSource, /\.detail-trigger\s*\{[^}]*position:\s*absolute[^}]*inset:\s*0[^}]*width:\s*100%[^}]*height:\s*100%[^}]*opacity:\s*0/s, '触发按钮透明覆盖整张卡');
+  assert.match(cssSource, /\.acct-card:focus-within\s*\{[^}]*outline:/, '键盘焦点反馈画在整张卡上');
   assert.ok(shim.el('m-detail'), '详情弹窗存在于文档中（触发按钮的弹出目标）');
 });

@@ -122,17 +122,27 @@ function shortDate(ts) {
  * 所以这里要单独说清楚，不能显示成「即将重置」。
  */
 function resetText(w, { zeroMeansIdle = false } = {}) {
-  const ts = toMs(w && w.resetAt);
-  if (!Number.isFinite(ts) || ts <= 0) {
-    return zeroMeansIdle ? '空闲中 · 首次使用后 5 小时重置' : '';
+  if (!w || typeof w !== 'object') return '';
+  const raw = Number(w.resetAt);
+  if (!Number.isFinite(raw) || raw <= 0) {
+    const used = Number(w.used);
+    const percent = Number(w.percent);
+    return (!Number.isFinite(used) || used === 0) && (!Number.isFinite(percent) || percent === 0) ? '空闲中' : '';
   }
-  const abs = shortDate(ts);
-  // 时间戳已是过去 → 窗口其实已经重置（上游快照没跟上）。不能再拼「（还有 即将重置）」，
-  // 那会变成「重置于 9/22 19:51（还有 即将重置）」这种病句。
-  if (ts <= Date.now()) return '重置于 ' + abs + ' · 窗口已重置，等待额度刷新';
-  const until = untilText(ts);
-  if (!until) return '';
-  return '重置于 ' + abs + '（还有 ' + until + '）';
+  const ts = toMs(raw);
+  if (!Number.isFinite(ts)) return '';
+  if (ts <= Date.now()) return '窗口已重置';
+  const remaining = ts - Date.now();
+  const minutes = Math.floor(remaining / 60000);
+  let duration;
+  if (minutes < 60) duration = Math.max(1, minutes) + ' 分钟';
+  else {
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+    if (days > 0) duration = days + ' 天' + (hours % 24 ? ' ' + (hours % 24) + ' 小时' : '');
+    else duration = hours + ' 小时' + (minutes % 60 ? ' ' + (minutes % 60) + ' 分' : '');
+  }
+  return shortDate(ts) + ' 重置 · 还有 ' + duration;
 }
 /** 把毫秒写成「1 分钟」这种话。 */
 function fmtEvery(ms) {

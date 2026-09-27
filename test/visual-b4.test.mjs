@@ -4,6 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import vm from 'node:vm';
 import { createDomShim, runInlineScript, styleText } from './helpers.mjs';
 
 const INDEX_HTML = fs.readFileSync(new URL('../panel/dist/index.html', import.meta.url), 'utf8');
@@ -94,27 +95,48 @@ test('B4-2：本月已用百分比按 Σused/Σcap 加权（只算 cap>0）', as
   assert.equal(shim.el('gauge-pct').textContent, '20.0%', 'cap=0 的账号不进分母，读数不变');
 });
 
-// ── ③ 分段进度条三段宽度 = 各段金额 / 三段之和 ───────────────────────
-test('B4-3：额度构成分段条三段宽度按金额占比（月度/购买/赠送）', async () => {
-  const { shim, page } = await boot();
-  // B24：分段条挂 daisyUI/Tailwind 类，段仍按金额占比；选择器放宽为前缀，比例数值不变。
-  const out = page.card(account({ lastQuota: quota({ credits: { monthlyCredits: 2, purchasedCredits: 1, freeCredits: 1 } }) }));
-  assert.match(out, /class="credits-bar[^"]*"/, '要有分段条容器');
-  assert.match(out, /<i class="seg-month[^"]*" style="width:50%"><\/i>/, '月度 2/4 = 50%');
-  assert.match(out, /<i class="seg-buy[^"]*" style="width:25%"><\/i>/, '购买 1/4 = 25%');
-  assert.match(out, /<i class="seg-gift[^"]*" style="width:25%"><\/i>/, '赠送 1/4 = 25%');
-  // B24 设计约束 4：三段全 0 → 不画假比例，空条整个移除，只留一句真话。
-  const empty = page.card(account({ lastQuota: quota({ credits: { monthlyCredits: 0, purchasedCredits: 0, freeCredits: 0 } }) }));
-  assert.doesNotMatch(empty, /credits-bar/, '三段全 0 不再画空条（恒为 0 不占位）');
-  assert.match(empty, /额度构成待同步/, '空态给真话，不撒谎');
+// ── ③ 详情弹窗额度构成按金额占比 ───────────────────────────────────
+function detailCredits(accountData) {
+  const detailSource = fs.readFileSync(new URL('../panel/public/js/detail.js', import.meta.url), 'utf8');
+  const start = detailSource.indexOf('function openAccountDetail(');
+  const end = detailSource.indexOf("document.addEventListener('click'", start);
+  assert.ok(start >= 0 && end > start, '详情弹窗填充函数存在');
+  const elements = new Map();
+  const element = id => {
+    if (!elements.has(id)) elements.set(id, { id, children: [], textContent: '', style: {}, attributes: {}, replaceChildren(...children) { this.children = children; }, appendChild(child) { this.children.push(child); }, setAttribute(name, value) { this.attributes[name] = value; } });
+    return elements.get(id);
+  };
+  const document = { getElementById: element, createElement(tag) { return { tag, children: [], style: {}, appendChild(child) { this.children.push(child); } }; }, createTextNode(text) { return { textContent: text }; } };
+  const context = {
+    document, Date, Number, Math, String,
+    detailText(id, value) { element(id).textContent = value; },
+    fillAccountDetailBase() {},
+    accountStatus() { return { tone: 'ok', t: '可用' }; }, toneBadge() { return ''; }, planLabel() { return ''; },
+    detailMoney(value) { return '$' + value.toFixed(2); }, detailWindow() { return {}; }, openModal() {},
+    apiFetch() { return Promise.resolve({ json: async () => ({ accounts: [] }) }); },
+    paintDetailChart() {},
+    state: { data: { accounts: [] } },
+  };
+  vm.runInNewContext(detailSource.slice(start, end) + '\nopenAccountDetail(globalThis.testAccount);', Object.assign(context, { testAccount: accountData }));
+  return { credits: element('m-detail-credits'), label: element('m-detail-credit-label') };
+}
+
+test('B4-3：额度构成分段条三段宽度按金额占比（月度/购买/赠送）', () => {
+  const populated = detailCredits(account({ lastQuota: quota({ credits: { monthlyCredits: 2, purchasedCredits: 1, freeCredits: 1 } }) }));
+  const byClass = name => populated.credits.children.find(child => child.className?.includes(name));
+  assert.equal(byClass('seg-month')?.style.width, '50%', '月度 2/4 = 50%');
+  assert.equal(byClass('seg-buy')?.style.width, '25%', '购买 1/4 = 25%');
+  assert.equal(byClass('seg-gift')?.style.width, '25%', '赠送 1/4 = 25%');
+  const empty = detailCredits(account({ lastQuota: quota({ credits: { monthlyCredits: 0, purchasedCredits: 0, freeCredits: 0 } }) }));
+  assert.equal(empty.credits.children.filter(child => /^seg-/.test(child.className || '')).length, 0, '三段全 0 不画分段');
+  assert.equal(empty.label.textContent, '额度构成无数据', '三段全 0 显示兜底文案');
 });
 
-// ── ④ 无快照账号：构成区块显示「尚未获取额度快照」，不出分段条 ──────────
 test('B4-4：无 lastQuota 快照的账号构成区块显示兜底文案，无假分段条', async () => {
+  const out = detailCredits(account({ name: '无快照号', lastQuota: null }));
+  assert.equal(out.label.textContent, '额度构成无数据');
+  assert.equal(out.credits.children.filter(child => /^seg-/.test(child.className || '')).length, 0, '没有快照不画分段');
   const { shim, page } = await boot();
-  const out = page.card(account({ name: '无快照号', lastQuota: null }));
-  assert.match(out, /class="card-credits aux-text[^"]*">尚未获取额度快照</);
-  assert.doesNotMatch(out, /credits-bar/, '没有快照就不该画构成条');
   // Hero 明细：全部账号都无快照 → 整行兜底
   page.render(status([account({ keyId: 'aaaa1111', lastQuota: null })]));
   assert.equal(shim.el('bal-breakdown').textContent, '尚未获取额度快照');

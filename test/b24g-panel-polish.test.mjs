@@ -436,13 +436,14 @@ test('B24g-2：新鲜度文字不是最小字号，两主题对比度均 ≥4.5:
   const page = await runInlineScript(INDEX_HTML, shim);
   page.render(status([account({ paused: true, pausedUntil: Date.now() + 60000 })]));
   const fresh = shim.document.querySelector('#cards .card-fresh');
-  assert.ok(fresh, '新鲜度行必须渲染出来');
-  assert.match(fresh.className, /\btabular-nums\b/, '运行时重建的新鲜度类名必须含 tabular-nums');
+  assert.ok(fresh, '新鲜度钩子必须保留');
+  assert.equal(fresh.hasAttribute('hidden'), true, '卡片新鲜度字段必须以 hidden 属性隐藏');
+  assert.equal(fresh.textContent, '', '卡片不得展示额度刷新文案');
   const resetBadge = shim.document.querySelector('#cards .tags .tag.badge');
   assert.ok(resetBadge, '重置徽章必须渲染出来');
   assert.match(resetBadge.className, /\btabular-nums\b/, '运行时重建的 tag badge 类名必须含 tabular-nums');
   // 防作弊：要么改回 opacity/透明度色，要么缩回最小字号，都得红。
-  assert.ok(fresh.textContent.includes('额度更新于'), '文案语义不变（不回归）');
+  assert.doesNotMatch(fresh.textContent, /额度更新于|刷新间隔|额度刷新/, '隐藏字段不得展示刷新节奏文案');
 
   const tokens = clsTokens(fresh);
   const textTok = tokens.find((t) => /^text-(xs|sm|base|lg|xl|2xl|4xl)$/.test(t));
@@ -464,8 +465,8 @@ test('B24g-2：新鲜度文字不是最小字号，两主题对比度均 ≥4.5:
   assert.equal(results.dark.alpha, 1, `不许用透明度弱化（${results.dark.source} 的 alpha=${results.dark.alpha}）`);
 
   // 实现锚点：模板与脚本都得用 aux-text（AA 令牌），不得再叠加 text-base-content/NN。
-  assert.match(ACCOUNT_CARD_SRC, /class="card-fresh[^"]*\baux-text\b[^"]*\btext-sm\b[^"]*"/, '模板：新鲜度 = aux-text + text-sm');
-  assert.match(RENDER_CARDS_JS, /'card-fresh aux-text text-sm\b[^']*tabular-nums\b/, '脚本重建的新鲜度类名同样含 tabular-nums'),
+  assert.match(ACCOUNT_CARD_SRC, /class="card-fresh[^"]*"[^>]*hidden/, '模板保留隐藏的新鲜度钩子');
+  assert.match(RENDER_CARDS_JS, /fresh\.hidden = true/, '渲染后新鲜度字段保持隐藏'),
   assert.doesNotMatch(ACCOUNT_CARD_SRC, /card-fresh[^"]*text-base-content\//, '不得再用 base-content/NN 的透明色');
 });
 

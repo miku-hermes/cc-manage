@@ -193,8 +193,9 @@ test('视觉#9：额度/更新时间/内核辅助文字统一 aux-text，小字�
   const page = await runInlineScript(INDEX_HTML, shim);
   const out = page.card(account({ lastQuota: quota(9.9) }));
   assert.match(INDEX_HTML, /class="hero-meta aux-text[^"]*"/);
-  assert.match(out, /class="card-credits aux-text[^"]*"/);
-  assert.match(out, /class="card-fresh aux-text/);
+  assert.doesNotMatch(out, /class="credits-block/);
+  assert.match(INDEX_HTML, /额度构成/);
+  assert.match(out, /class="card-fresh[^"]*"[^>]*hidden/);
   // B24：aux-text 改由 Tailwind @utility 提供颜色（同一 --text-secondary 令牌，选择器语法变了）。
   assert.match(styleText(INDEX_HTML), /\.aux-text\{color:var\(--text-secondary\)\}/);
   // 令牌值语义不变（AA 小字）；徽章色改用 daisyUI 语义令牌（warning→--color-warning / error→--color-error）。

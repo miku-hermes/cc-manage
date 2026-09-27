@@ -1079,15 +1079,15 @@ test('重置时间文案：未来 / 空闲 / 已过期 / 没有数据，四种�
   // 取值刻意避开整点（+30s）：页面脚本加载要几百毫秒，掐在整点上会算出
   // 「1 小时 59 分」——那是测试的时间敏感，不是功能错。
   const five = page.resetText({ resetAt: at(2 * 3600 + 30) }, { zeroMeansIdle: true });
-  assert.match(five, /^重置于 \d+\/\d+ \d{2}:\d{2}（还有 2 小时 0 分）$/, `5h 文案不对: ${five}`);
+  assert.match(five, /^\d+\/\d+ \d{2}:\d{2} 重置 · 还有 2 小时$/, `5h 文案不对: ${five}`);
 
   // 周：5 天后 → 用「天」，不要写成 120 小时
   const week = page.resetText({ resetAt: at(5 * 86400 + 60) });
-  assert.match(week, /还有 5 天 0 小时/, `周文案不对: ${week}`);
+  assert.match(week, /还有 5 天/, `周文案不对: ${week}`);
   assert.doesNotMatch(week, /120 小时/, '超过一天不要写成小时');
 
   // 月：20 天后
-  assert.match(page.resetText({ resetAt: at(20 * 86400 + 60) }), /还有 20 天 0 小时/);
+  assert.match(page.resetText({ resetAt: at(20 * 86400 + 60) }), /还有 20 天/);
 
   // resetAt=0 = 上游「还没开始用」，不是「马上重置」——这两种说法不能混
   const idle = page.resetText({ resetAt: 0 }, { zeroMeansIdle: true });
@@ -1095,7 +1095,7 @@ test('重置时间文案：未来 / 空闲 / 已过期 / 没有数据，四种�
   assert.doesNotMatch(idle, /即将重置/, '空闲不等于即将重置');
 
   // 文案里的绝对时间必须真的是未来（防止秒/毫秒换算又写错）
-  const abs = /重置于 (\d+)\/(\d+) (\d{2}):(\d{2})/.exec(five);
+  const abs = /(\d+)\/(\d+) (\d{2}):(\d{2}) 重置 · 还有/.exec(five);
   assert.ok(abs, `文案里应含具体时间: ${five}`);
   const y = new Date().getFullYear();
   let absMs = new Date(y, Number(abs[1]) - 1, Number(abs[2]), Number(abs[3]), Number(abs[4])).getTime();
@@ -1111,9 +1111,9 @@ test('重置时间文案：未来 / 空闲 / 已过期 / 没有数据，四种�
   assert.doesNotMatch(expired, /还有 即将重置/, '过期时间戳不得出现「还有 即将重置」');
 
   // 上游不给 resetAt（老数据）→ 宁可什么都不显示，也不编一个假时间
-  assert.equal(page.resetText({}), '', '没有 resetAt 时不得显示任何时间');
+  assert.equal(page.resetText({}), '空闲中', '空闲窗口显示空闲状态');
   assert.equal(page.resetText(null), '');
-  assert.equal(page.resetText({ resetAt: 'not-a-date' }), '');
+  assert.equal(page.resetText({ resetAt: 'not-a-date', used: 1, percent: 10 }), '');
 });
 
 // ── 回归：账号「余额不足」不得让客户端吃 400 ──────────────────────────
@@ -1349,7 +1349,7 @@ test('进度条只报百分比（金额收进 title），被证明用完的窗�
 });
 
 // ── 用不了的钱就是 0（usableRemaining 唯一口径）─────────────────────
-test('额度已用完的账号卡片显示 0.00，window 卡住的钱照常显示', async (t) => {
+test('额度已用完的账号卡片显示 0.00，window 卡住的钱照常显示，额度构成留在详情弹窗', async (t) => {
   const ctx = await startTestGateway();
   t.after(() => ctx.close());
   const html = (await request(`${ctx.baseUrl}/`)).body;
@@ -1366,15 +1366,14 @@ test('额度已用完的账号卡片显示 0.00，window 卡住的钱照常显�
   // ① 主号：周期额度用完 + 账上还剩 0.098 → 用不了的钱算 0，卡片显示 0.00
   const spent = page.card({ ...base, name: '主号', keyId: 'aaaaaaaa', available: false, creditsExhausted: true,
     exhausted: { kind: 'monthly', label: '月额度已用完', resetAt: 0 }, lastQuota: q(0.098) });
-  // B24：余额是 <b class="usable-balance …">；构成明细里恒为 0 的段不占位（购买/赠送省略），
-  // 但非 0 的月度仍是真实账面值 —— 行为断言（用不了的钱=0；构成不被门控）一字未改。
+  // 卡片只显示可用余额，额度构成由详情弹窗承载。
   assert.match(spent, /<b class="usable-balance[^"]*">0\.00<\/b>/,
     '用不了的钱就是 0：卡片必须显示 0.00，不能与「月额度已用完」打脸');
   assert.doesNotMatch(spent, /<b class="usable-balance[^"]*">0\.10<\/b>/,
     '死账号的零头不许再出现在「剩余额度」结论数字上');
-  assert.match(spent, /月度 0\.10/,
-    'B2-3：额度构成明细各显真实值，不随剩余额度被门控成 0.00');
-  assert.doesNotMatch(spent, /购买 0\.00|赠送 0\.00/, '恒为 0 的构成段不占位');
+  assert.doesNotMatch(spent, /月度 0\.10|购买 0\.00|赠送 0\.00/, '卡片不再显示额度构成明细');
+  assert.match(html, /id="m-detail-credits"/, '额度构成保留在详情弹窗');
+  assert.match(html, /额度构成/, '详情弹窗保留额度构成标题');
   assert.doesNotMatch(spent, /不可支付|money-note/, '不再需要「不可支付」标签');
   assert.doesNotMatch(spent, /title="周期额度已用完/, '不再需要悬停解释');
 
