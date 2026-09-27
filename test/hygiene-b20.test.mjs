@@ -154,13 +154,14 @@ const ALLOWED_SKIPS = [
   },
   {
     reason: '本机无 Playwright',
-    max: 2,
-    why: 'b25-narrow-overflow.test.mjs 的两条真机断言（B25-C 卡片网格几何、B25-D Hero 顶区问候语与时钟同行）'
+    max: 3,
+    why: 'b25-narrow-overflow.test.mjs 的三条真机断言（B25-C 卡片网格几何、B25-D Hero 顶区问候语与时钟同行、'
+      + 'B25-E 看板娘冲出卡片上缘的几何 + 不撞顶栏）'
       + '需要 Playwright + Chromium，CI runner 未安装，故必须跳过。'
       + '这不构成静默降级：无浏览器的结构 + 计算模型断言在任何环境都真跑 —— '
       + 'B25-C-结构 断言 max-sm:flex-wrap 在位，并用文本宽模型证明不换行最小所需 282px > 可用 277px；'
       + 'B25-D-结构 断言网关状态徽章的映射只能是 bad→badge-error / 其余→badge-ghost（ok 不得再映射到绿底 badge-success）。'
-      + '本机有 Playwright 时两条真跑：node --test test/b25-narrow-overflow.test.mjs 实测 4 tests / 4 pass / 0 skipped，'
+      + '本机有 Playwright 时三条真跑：node --test test/b25-narrow-overflow.test.mjs 实测 5 tests / 5 pass / 0 skipped，'
       + '真实 Chromium 在 375/414/384/360px 断言通过。',
   },
   {
