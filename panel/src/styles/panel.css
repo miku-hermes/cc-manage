@@ -533,6 +533,6 @@
 
 /* 窄屏：看板娘缩小，问候语让位同步收窄 */
 @media (max-width: 639px) {
-  .hero-mascot { width: 72px; height: 72px; top: -59px; left: -10px; }
+  .hero-mascot { width: 72px; height: 72px; top: -46px; left: -10px; }
   .hero-ident { padding-left: 46px; }
 }
