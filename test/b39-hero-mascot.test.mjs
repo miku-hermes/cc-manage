@@ -56,7 +56,11 @@ test('B39-3：样式照抄参考主题（绝对定位 + 上下弹跳 + 问候语
   assert.match(ident[0], /padding-left:\s*\d+px/, '问候语必须让位给图标，否则文字会压在图上');
 
   assert.match(css, /prefers-reduced-motion[\s\S]{0,140}\.hero-mascot \{ animation: none; \}/, '必须有动效降级');
-  const narrow = /@media \(max-width: 639px\) \{[\s\S]*?\.hero-mascot \{ width: 76px;[\s\S]*?\}/.exec(css);
+  // 参考主题能'冲出卡片'是靠卡片上方有空白（.main-content padding:24 + .welcome-section margin-top:60）
+  const heroRule = /\.hero-banner \{[^}]*\}/.exec(css);
+  assert.ok(heroRule, '.hero-banner 规则缺失');
+  assert.match(heroRule[0], /margin-top:\s*\d+px/, 'Hero 上方必须留白，否则图标冲出卡片时会撞顶栏');
+  const narrow = /@media \(max-width: 639px\) \{[\s\S]*?\.hero-mascot \{ width: 72px;[\s\S]*?\}/.exec(css);
   assert.ok(narrow, '窄屏必须有收窄规则');
 });
 

@@ -316,7 +316,9 @@
   .page-main { gap: .5rem; padding-top: .7rem; padding-bottom: .7rem; }
 
   .hero-banner {
-    position: relative; overflow: hidden;
+    margin-top: 48px;
+    /* 不能 overflow:hidden —— 看板娘要冲出卡片上缘（blob 由 .hero-deco 自己兜住）*/
+    position: relative;
     padding: .9rem 1.25rem .55rem;
     border-radius: var(--radius-lg);
     background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 8%, var(--bg-card)) 0%, var(--bg-card) 58%);
@@ -329,11 +331,11 @@
   .hero-deco .b3 { width: 220px; height: 220px; right: -64px; top: -96px; background: color-mix(in srgb, var(--info) 22%, transparent); }
   .hero-banner > *:not(.hero-deco) { position: relative; z-index: 1; }
   .hero-banner-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
-  .hero-ident { display: flex; align-items: center; gap: .85rem; min-width: 0; padding-left: 140px; }
+  .hero-ident { display: flex; align-items: center; gap: .85rem; min-width: 0; padding-left: 104px; }
   /* 看板娘：素材取自参考主题 komari-mikus 的 QWQ.webp（页面里是问候语旁的 mascot）。
      参考主题的形态是「180px 图标 + 绝对定位挂左上方 + 上下弹跳 + 问候语 padding-left 让位」，
      这里照抄该形态，尺寸按 cc-manage 的 Hero 高度（227px）收敛，避免顶到顶栏。 */
-  .hero-mascot { position: absolute; width: 130px; height: 130px; top: 6px; left: -2px; object-fit: contain; z-index: 2; pointer-events: none; transform-origin: bottom center; animation: hero-bounce 2s ease-in-out infinite; filter: drop-shadow(0 4px 12px rgba(0, 0, 0, .15)); }
+  .hero-mascot { position: absolute; width: 180px; height: 180px; top: -48px; left: -56px; object-fit: contain; z-index: 2; pointer-events: none; transform-origin: bottom center; animation: hero-bounce 2s ease-in-out infinite; filter: drop-shadow(0 4px 12px rgba(0, 0, 0, .15)); }
   @keyframes hero-bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
   @media (prefers-reduced-motion: reduce) { .hero-mascot { animation: none; } }
   .hero-greet { min-width: 0; }
@@ -528,6 +530,6 @@
 
 /* 窄屏：看板娘缩小，问候语让位同步收窄 */
 @media (max-width: 639px) {
-  .hero-mascot { width: 76px; height: 76px; top: 4px; left: 0; }
-  .hero-ident { padding-left: 86px; }
+  .hero-mascot { width: 72px; height: 72px; top: -18px; left: -10px; }
+  .hero-ident { padding-left: 46px; }
 }
