@@ -6,28 +6,12 @@
 import StatusPill from './StatusPill.astro';
 import { RefreshCw, TrendingUp, ChevronRight } from '@lucide/astro';
 ---
-<section class="hero-banner card overflow-hidden border border-base-300 bg-base-100 transition-[box-shadow,transform,background-color]">
-  <div class="hero-deco" aria-hidden="true"><span class="blob b1"></span><span class="blob b2"></span><span class="blob b3"></span><img class="hero-mikus" src="/img/mikus.webp" alt="" width="1200" height="750" decoding="async"></div>
+<section class="hero-banner card border border-base-300 bg-base-100 transition-[box-shadow,transform,background-color]">
+  <div class="hero-deco" aria-hidden="true"><span class="blob b1"></span><span class="blob b2"></span><span class="blob b3"></span></div>
 
   <div class="hero-banner-top">
     <div class="hero-ident">
-      <span class="hero-avatar" aria-hidden="true">
-        <svg viewBox="0 0 64 64" class="hero-avatar-svg">
-          <defs>
-            <linearGradient id="av-g" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0" stop-color="#e8668a"></stop>
-              <stop offset="1" stop-color="#a78bfa"></stop>
-            </linearGradient>
-          </defs>
-          <path d="M15 24 L12 7 L27 16 Z" fill="url(#av-g)"></path>
-          <path d="M49 24 L52 7 L37 16 Z" fill="url(#av-g)"></path>
-          <circle cx="32" cy="35" r="19" fill="url(#av-g)" opacity="0.92"></circle>
-          <circle cx="25" cy="33" r="2.7" fill="#fff"></circle>
-          <circle cx="39" cy="33" r="2.7" fill="#fff"></circle>
-          <path d="M28 43 q4 3.6 8 0" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round"></path>
-          <path d="M13 37 H4 M13 43 H7 M51 37 H60 M51 43 H57" stroke="url(#av-g)" stroke-width="2" stroke-linecap="round" opacity="0.65"></path>
-        </svg>
-      </span>
+      <img class="hero-mascot" src="/img/QWQ.webp" alt="" width="360" height="360" decoding="async">
       <div class="hero-greet">
         <h1 id="greeting" class="greeting">下午好</h1>
         <p class="hero-sub"><span class="hero-sub-label">网关<span class="hero-sub-label-rest">状态</span></span><StatusPill variant="health" id="health" /></p>

@@ -327,16 +327,15 @@
   .hero-deco .b1 { width: 190px; height: 190px; left: -52px; top: -74px; background: color-mix(in srgb, var(--accent) 34%, transparent); }
   .hero-deco .b2 { width: 150px; height: 150px; left: 36%; bottom: -84px; background: color-mix(in srgb, var(--success) 24%, transparent); }
   .hero-deco .b3 { width: 220px; height: 220px; right: -64px; top: -96px; background: color-mix(in srgb, var(--info) 22%, transparent); }
-  /* 看板娘：素材取自参考主题 komari-mikus 的 mikus.jpg（原图 3541x2213，已压成 webp 75.7KB）。
-     参考主题里它只是主题预览图、页面未使用，这里放到 Hero 装饰层当氛围图：
-     靠右下、左缘渐隐融入卡片、pointer-events:none 不拦点击；窄屏空间不足直接隐藏。 */
-  /* opacity/mask 实测调过：0.5 + 116% 高时视检判定『人物和数据打架』（12.1% 压脸、时钟压帽子），降到水印级并整体下沉。 */
-  .hero-deco .hero-mikus { position: absolute; right: -11%; bottom: -24%; height: 108%; width: auto; opacity: .16; pointer-events: none; -webkit-mask-image: linear-gradient(to left, #000 8%, transparent 68%); mask-image: linear-gradient(to left, #000 8%, transparent 68%); }
   .hero-banner > *:not(.hero-deco) { position: relative; z-index: 1; }
   .hero-banner-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
-  .hero-ident { display: flex; align-items: center; gap: .85rem; min-width: 0; }
-  .hero-avatar { width: 3.25rem; height: 3.25rem; flex: none; display: grid; place-items: center; border-radius: var(--radius-md); background: color-mix(in srgb, var(--accent) 10%, transparent); }
-  .hero-avatar-svg { width: 2.6rem; height: 2.6rem; }
+  .hero-ident { display: flex; align-items: center; gap: .85rem; min-width: 0; padding-left: 140px; }
+  /* 看板娘：素材取自参考主题 komari-mikus 的 QWQ.webp（页面里是问候语旁的 mascot）。
+     参考主题的形态是「180px 图标 + 绝对定位挂左上方 + 上下弹跳 + 问候语 padding-left 让位」，
+     这里照抄该形态，尺寸按 cc-manage 的 Hero 高度（227px）收敛，避免顶到顶栏。 */
+  .hero-mascot { position: absolute; width: 130px; height: 130px; top: 6px; left: -2px; object-fit: contain; z-index: 2; pointer-events: none; transform-origin: bottom center; animation: hero-bounce 2s ease-in-out infinite; filter: drop-shadow(0 4px 12px rgba(0, 0, 0, .15)); }
+  @keyframes hero-bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+  @media (prefers-reduced-motion: reduce) { .hero-mascot { animation: none; } }
   .hero-greet { min-width: 0; }
   .greeting { font-size: 1.45rem; font-weight: 700; letter-spacing: -.01em; line-height: 1.25; }
   /* nowrap 写在基础规则里（不限断点）：真机字体比无头浏览器宽，靠"放得下"会漏 ——
@@ -526,6 +525,9 @@
 }
 
 /* 窄屏：Hero 空间不足，看板娘隐藏 */
+
+/* 窄屏：看板娘缩小，问候语让位同步收窄 */
 @media (max-width: 639px) {
-  .hero-deco .hero-mikus { display: none; }
+  .hero-mascot { width: 76px; height: 76px; top: 4px; left: 0; }
+  .hero-ident { padding-left: 86px; }
 }
