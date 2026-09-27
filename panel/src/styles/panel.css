@@ -531,8 +531,18 @@
 
 /* 窄屏：Hero 空间不足，看板娘隐藏 */
 
+/* 极小屏（≤379px，含系统字号 +50% 的极端档）：这一档物理上放不下"大图 + 宽让位 + 问候语 + 时钟"，
+   实测 375px/24px 根字号时 ident 需 195 + clock 需 162 = 357，而可用仅 221（默认字号刚好 216 ≤ 221）。
+   故仅在极窄屏把图与让位、时钟字号一起收一档；384px 主流机型不受影响。 */
+@media (max-width: 379px) {
+  .hero-mascot { width: 78px; height: 78px; top: -44px; left: -14px; }
+  .hero-ident { padding-left: 76px; }
+  /* 时钟用 min(rem, vw)：vw 不随根字号放大，正好顶住"系统字号调最大"的场景 */
+  .hero-clock { font-size: min(1.4rem, 4.6vw); }
+}
+
 /* 窄屏：看板娘缩小，问候语让位同步收窄 */
 @media (max-width: 639px) {
-  .hero-mascot { width: 72px; height: 72px; top: -46px; left: -10px; }
-  .hero-ident { padding-left: 46px; }
+  .hero-mascot { width: 98px; height: 98px; top: -57px; left: -28px; }
+  .hero-ident { padding-left: 82px; }
 }

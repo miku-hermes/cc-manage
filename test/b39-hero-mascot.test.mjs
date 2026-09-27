@@ -60,7 +60,7 @@ test('B39-3：样式照抄参考主题（绝对定位 + 上下弹跳 + 问候语
   const heroRule = /\.hero-banner \{[^}]*\}/.exec(css);
   assert.ok(heroRule, '.hero-banner 规则缺失');
   assert.match(heroRule[0], /margin-top:\s*\d+px/, 'Hero 上方必须留白，否则图标冲出卡片时会撞顶栏');
-  const narrow = /@media \(max-width: 639px\) \{[\s\S]*?\.hero-mascot \{ width: 72px;[\s\S]*?\}/.exec(css);
+  const narrow = /@media \(max-width: 639px\) \{[\s\S]*?\.hero-mascot \{ width: 98px;[\s\S]*?\}/.exec(css);
   assert.ok(narrow, '窄屏必须有收窄规则');
 });
 
