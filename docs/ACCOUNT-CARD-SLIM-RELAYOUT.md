@@ -140,6 +140,19 @@
    断言必须在**改前**能红（Leaving 上面两条改动前它是红的），改后变绿。
 4. 跑 `npm run panel:build` + `npm test`（`# fail 0`）+ vendor 套件；并在结论里贴出构建产物里该规则的原文（`grep -o '\.acct-card-head \.acct-status{[^}]*}' public/assets/*.css`）作为「样式确实编译进去了」的证据。
 
+## 7sexies. 标签条为空时，整个底部栏（含那条分隔线）收起来（用户要求）
+用户反馈：卡片底部「355,197,229 token · 花费 4.53」下面还有一条分隔线 + 一片空白（`.acct-card-foot` 的 `border-top` + `padding-top` + `min-height: 2.4rem`），下面什么都没有——因为自 §7ter 撤掉重置徽章后，**只有 paused / rateLimited 的账号才有标签**，其它账号的标签条是空的。
+
+要做：
+1. `panel/public/js/render-cards.js` 渲染卡片时（`card()` 里 `fillTags` 之后）：若标签条 host（`[data-f="tags"]`）的 `children.length === 0` → 给 `.acct-card-foot` 设 `hidden`（**保留元素，不删**，`b24h-1` 断言「每张卡都有底部栏」用的是 querySelector）；有标签时把 `hidden` 去掉。
+   - 建议顺手给底部栏加个 `data-f="card-foot"` 之类的位置钩子便于取用（注意 `card()` 结束前会移除所有 `[data-f]`，不会泄漏到产出 DOM）。
+2. `panel/src/styles/panel.css`：加 `.acct-card-foot[hidden] { display: none; }`（否则类上的 `display:flex` 会盖过 `[hidden]`）。
+3. 新增一条**改前能红**的 shim 断言（放 `test/batch2-ui.test.mjs` 或 `test/b24g-panel-polish.test.mjs` 均可）：
+   - 无标签的可用账号卡：`.acct-card-foot` 存在且 `hidden === true`；
+   - 带 `paused`（「暂停至 …」）的账号卡：`.acct-card-foot` 的 `hidden === false`（有内容时不收起）。
+4. 不许改：`.acct-card-foot` 的元素结构与「标签条在 foot 内」（`B24d-3`）、`[data-f="tags"]` 的 `min-h-6` 等契约、`b24h-1` 的既有断言。
+5. 跑 `npm run panel:build` + `npm test`（`# fail 0`）+ vendor；本次全量若再遇浏览器类用例抖动，请按文件单跑复核并如实报告。
+
 ## 8. 边界
 - 不要 `git commit` / `git push` / 不要动 docker / 不要碰 `vendor/`、`config/`、`.env`。
 - 像素级与视口级核验（320/360/390/403/430px 卡片高度、折行、出框、重叠）由 Hermes 做，你不用跑浏览器。

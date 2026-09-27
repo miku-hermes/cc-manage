@@ -434,6 +434,7 @@
   .acct-card .progress.bar { height: .5rem; width: 100%; border-radius: 9999px; }
   .acct-card .card-usage { font-size: .72rem; color: var(--text-secondary); }
   .acct-card-foot { display: flex; align-items: center; gap: .5rem; margin-top: auto; min-height: 2.4rem; padding-top: .6rem; border-top: 1px solid var(--border-light); }
+  .acct-card-foot[hidden] { display: none; }
   .acct-card .tags { display: flex; flex-wrap: wrap; gap: .25rem; min-width: 0; }
 
   /* ── 列表（表格）视图 ──────────────────────────────── */

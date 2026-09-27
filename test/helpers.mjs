@@ -371,6 +371,7 @@ export function createDomShim({ html, fetchImpl, localStorageData = {} }) {
           return;
         }
         attrs.set(key, val);
+        if (key === 'hidden') this.hidden = true;
         if (key.startsWith('data-')) {
           const camel = key.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
           this.dataset[camel] = val;
@@ -391,6 +392,7 @@ export function createDomShim({ html, fetchImpl, localStorageData = {} }) {
       removeAttribute(k) {
         const key = String(k);
         attrs.delete(key);
+        if (key === 'hidden') this.hidden = false;
         if (key === 'class') classes.clear();
         if (key === 'id') this.id = '';
       },

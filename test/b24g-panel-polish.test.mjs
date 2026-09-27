@@ -431,6 +431,23 @@ test('B24h-1：卡片网格同行等高（grid stretch），且每张卡都有�
   }
   assert.equal(lineHeightOf(CSS, 'base'), 24, 'text-base 行高不变（没有为对齐而改行高）');
 });
+test('B24h-2：空标签收起底部栏，有暂停标签时保留', async () => {
+  const shim = dom(INDEX_HTML);
+  const page = await runInlineScript(INDEX_HTML, shim);
+  page.render(status([
+    account({ keyId: 'empty001', name: '可用账号' }),
+    account({ keyId: 'paused01', name: '暂停账号', paused: true, pausedUntil: Date.now() + 60000 }),
+  ]));
+
+  const cards = shim.document.querySelectorAll('#cards .acct-card');
+  assert.equal(cards.length, 2, '渲染出无标签与 paused 两张卡片');
+  const emptyFoot = cards[0].querySelector('.acct-card-foot');
+  assert.ok(emptyFoot, '无标签卡仍保留底部栏元素');
+  assert.equal(emptyFoot.hidden, true, '无标签卡隐藏整个底部栏');
+  const pausedFoot = cards[1].querySelector('.acct-card-foot');
+  assert.ok(pausedFoot, 'paused 卡仍保留底部栏元素');
+  assert.equal(pausedFoot.hidden, false, 'paused 卡有标签时底部栏可见');
+});
 test('B24g-2：新鲜度文字不是最小字号，两主题对比度均 ≥4.5:1（按令牌计算）', async () => {
   const shim = dom(INDEX_HTML);
   const page = await runInlineScript(INDEX_HTML, shim);

@@ -180,6 +180,13 @@ function card(a, wideLast = false, index = 0) {
   const fresh = field(node, 'card-fresh');
   if (fresh) { fresh.hidden = true; fresh.setAttribute('hidden', ''); fresh.textContent = ''; }
   fillTags(node, a);
+  const tagHost = field(node, 'tags');
+  const foot = node.querySelector('.acct-card-foot');
+  if (tagHost && foot) {
+    foot.hidden = tagHost.children.length === 0;
+    if (foot.hidden) foot.setAttribute('hidden', '');
+    else foot.removeAttribute('hidden');
+  }
   // 内部钩子不留在产出 DOM 里。
   for (const el of node.querySelectorAll('[data-f]')) el.removeAttribute('data-f');
   return node.outerHTML;
