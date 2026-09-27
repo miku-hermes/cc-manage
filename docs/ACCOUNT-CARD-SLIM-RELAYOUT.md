@@ -107,6 +107,15 @@
 
 附带清理（仅当确认无引用时）：`panel/public/js/render-cards.js` 里为已删除的 `.credits-block` 填值的死代码（`credits-bar` / `credits-legend` 那段）可以删掉；如果任何测试仍引用这些字段，就保留函数并让它早退，不要制造新的失败。
 
+## 7ter. 收尾②：前台卡片标签条去掉重复的「重置」徽章（用户要求「去除」）
+- `panel/public/js/render-cards.js` 的 `fillTags()` 里，`exhausted` 分支（约 :120-125）会往标签条推一枚 `badge-ghost`「M/D HH:MM 重置」——现在卡片上每条进度条下方已有「重置时间」行，属重复，**从前台卡上移除这枚徽章**。
+- **只动前台卡**：`panel/public/js/render-accounts-table.js` 里后台表格的重置时间渲染（:35、:80-83）必须保持原样（`B2-3` / `B2-4` 两条断言测的是后台）。
+- 信息不能丢：账号耗尽状态仍由状态药丸（「月额度已用完」）+ 本月周期条下的重置时间行表达，`fillTags` 里 `paused` / `rateLimited` 两枚徽章保持不动。
+- 若某条测试因此变红，只允许**等强度重写**：改成「前台卡标签条里不含重置徽章」的负向断言，不许删除测试或放宽为「存在即可」。
+- ⚠️ **定位标签条必须用 class，不能用 `data-f`**：`card()` 在返回前会把所有 `[data-f]` 属性删掉（内部钩子不留在产出 DOM 里），所以 `/<div[^>]*data-f="tags"[^>]*>(.*?)<\/div>/s` 会匹配到空串 → `doesNotMatch('', /重置/)` 恒为真 = **假绿**。要用 `/<div[^>]*class="[^"]*\btags\b[^"]*"[^>]*>(.*?)<\/div>/s`（或在产出 HTML 上按 class 找）。
+- **必须做变异检查并贴出两次输出**：`git stash push -- panel/public/js/render-cards.js`（徽章会回来）→ 跑这两条用例**必须变红**；`git stash pop` → 再跑**必须变绿**。不红就说明断言是空转的装饰，必须修到能红。
+- 改完跑 `npm run panel:build` + `npm test`（`# fail 0`）+ `npm --prefix vendor/commandcode-proxy test`，给前后计数与命令原文。
+
 ## 8. 边界
 - 不要 `git commit` / `git push` / 不要动 docker / 不要碰 `vendor/`、`config/`、`.env`。
 - 像素级与视口级核验（320/360/390/403/430px 卡片高度、折行、出框、重叠）由 Hermes 做，你不用跑浏览器。

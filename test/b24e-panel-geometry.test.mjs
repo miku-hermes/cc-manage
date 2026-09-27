@@ -237,7 +237,8 @@ test('B24e-3：耗尽状态只在徽章说一次；标签条只留独有的重�
   }));
   const n = (out.match(/月额度已用完/g) || []).length;
   assert.equal(n, 1, `「月额度已用完」只能说一次（实际 ${n} 次）`);
-  assert.match(out, /badge[^"]*">\d{1,2}\/\d{1,2} \d{2}:\d{2} 重置</, '标签条要保留重置时间这条独有信息');
+  const tags = /<div[^>]*class="[^"]*\btags\b[^"]*"[^>]*>(.*?)<\/div>/s.exec(out)?.[1] || '';
+  assert.doesNotMatch(tags, /重置/, '前台卡片标签条不再重复重置时间');
 });
 
 test('B24e-3b：余额不足 / 鉴权失效同样只由徽章表达，标签条不重复状态词', async () => {

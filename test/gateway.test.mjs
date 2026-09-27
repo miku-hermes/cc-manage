@@ -1209,7 +1209,8 @@ test('面板：额度用尽的账号必须渲染成「额度已用完 + 重置�
     exhausted: { kind: 'monthly', label: '月额度已用完', resetAt: periodEndSec },
     lastQuota: quota(0.098) });
   assert.match(broke, /月额度已用完/, '要说清是「月」额度用完（与副号1 的「周额度已用完」同一类说法）');
-  assert.match(broke, /重置/, '要给恢复时间');
+  const tags = /<div[^>]*class="[^"]*\btags\b[^"]*"[^>]*>(.*?)<\/div>/s.exec(broke)?.[1] || '';
+  assert.doesNotMatch(tags, /重置/, '前台卡片标签条不再重复重置时间');
   assert.doesNotMatch(broke, /需充值/, '不往充值上引导');
   assert.doesNotMatch(broke, /可调度/, '绝不能再显示「可调度」');
   assert.doesNotMatch(broke, /暂停至/, '额度用完不是 5h 暂停，不该出现「暂停至 X」');

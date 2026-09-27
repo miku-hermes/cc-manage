@@ -99,7 +99,7 @@ function fillFresh(root, q) {
 
 /** 底部标签条：只放状态徽章**没说过的**补充信息，绝不重复状态词（同一件事不说两遍）。
     徽章已经表达「为什么不可用」（月/周额度已用完、余额不足、鉴权失效），
-    这里只补徽章没有的独有信息 —— 耗尽后的「重置时间」；时间未知就不占位。 */
+    这里只补暂停与限流信息；额度重置时间由进度条下方显示。 */
 function fillTags(root, a) {
   const host = field(root, 'tags');
   if (!host) return;
@@ -115,13 +115,6 @@ function fillTags(root, a) {
   if (a.rateLimited) {
     const left = Number(a.rateLimitedUntil) > Date.now() ? untilText(Number(a.rateLimitedUntil)) : '';
     push('badge-warning warn', '限流冷却中' + (left ? ' · 剩 ' + left : ''));
-  }
-  // 时间信息是补充事实，不是第二次状态判定 —— 用中性色，别再加一枚红/橙徽章。
-  if (a.exhausted && a.exhausted.label) {
-    const exMs = toMs(a.exhausted.resetAt);
-    if (Number.isFinite(exMs) && exMs > 0) {
-      push('badge-ghost', shortDate(exMs) + (exMs <= Date.now() ? ' 窗口已重置' : ' 重置'));
-    }
   }
 }
 
