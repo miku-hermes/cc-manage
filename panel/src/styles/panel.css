@@ -548,7 +548,7 @@
      定位基数：问候语 x = 37 + padding-left（实测），图右沿 107，留 8px 间距 → padding-left 78。
      网关再用负 margin 单独左移到图的正下方（约 x=10，与图左沿 9 对齐）。 */
   .hero-ident { padding-left: 72px; }
-  .hero-sub { margin-left: -105px; }
+  .hero-sub { margin-left: -73px; }
   /* 网关标签顶边原先落在图的下沿之内（实测图 y 78.3~176.3、标签 y 164.4~188.4 → 纵向重叠 12px，
      看着像被少女"踩住"）。下移 14px 让标签顶边越过图底，形成干净的"小人正下方"。 */
   .hero-sub { margin-top: 26px; }
