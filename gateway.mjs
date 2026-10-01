@@ -6,7 +6,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfig, configWarnings } from './src/config.mjs';
-import { createStore, CC_KEY_PREFIX, LOCAL_KEY_PREFIX } from './src/store.mjs';
+import { createStore, CC_KEY_PREFIX, LOCAL_KEY_PREFIX, parseKeyPolicy, keyPolicyForDisk, KEY_POLICY_FIELDS } from './src/store.mjs';
 import { createHistory, HISTORY_BUCKET_MS, HISTORY_TICK_MS } from './src/history.mjs';
 import { createLogger, keyIdOf, keyPrefixOf, redact, sanitizeForLog } from './src/log.mjs';
 import { fetchWhoami, fetchQuota } from './src/quota.mjs';
@@ -582,6 +582,122 @@ export async function startGateway(overrides = {}) {
   const usage = createUsageRecorder({ dir: config.requestLogDir, enabled: config.requestLogEnabled, retentionDays: config.requestLogRetentionDays, maxFileBytes: Number(config.requestLogMaxMb) * 1024 * 1024, noTimers: overrides.noTimers, log });
   const proxy = createProxy({ config, scheduler, log, stats, secrets, refreshAccount, touchActivity, persistState: () => store.saveState(), createUsageCollector, onRequestLog: (entry) => usage.record(entry) });
 
+  // ── 客户端 key 治理（§2）────────────────────────────────────────────
+  // 额度窗口一律是**滚动窗口**（相对当前时刻），口径简单可推导：5 小时 / 24 小时 / 7 天。
+  // 用量只从既有请求日志聚合（usage.keyTokenWindows），不新造计数器存储。
+  const KEY_WINDOW_MS = [5 * 3600 * 1000, 24 * 3600 * 1000, 7 * 24 * 3600 * 1000];
+  const KEY_WINDOW_NAMES = ['fiveHour', 'daily', 'weekly'];
+  const KEY_WINDOW_LABELS = ['5 小时', '日', '周'];
+  const KEY_RATE_MS = 60 * 1000;
+  const keyInflight = new Map();     // keyId → 进程内在途请求数（实时，不落盘）
+  const keyRateHits = new Map();     // keyId → 最近 60s 内的请求时刻数组
+
+  /** 一次读日志拿到所有 key 的三窗口 token 用量（Map<keyId, number[3]>）。 */
+  function keyUsageMap() {
+    return usage.keyTokenWindows({ now: nowFn(), windows: KEY_WINDOW_MS });
+  }
+
+  function keyUsageRow(map, keyId) {
+    return map.get(keyId) ?? [0, 0, 0];
+  }
+
+  /** 命中哪个窗口的超额（返回最小命中窗口；都没超返回 null）。 */
+  function quotaExceededFor(key, used) {
+    const quota = key.quota;
+    if (!quota) return null;
+    for (let i = 0; i < KEY_WINDOW_NAMES.length; i += 1) {
+      const cap = quota[KEY_WINDOW_NAMES[i]];
+      if (Number.isFinite(cap) && used[i] >= cap) {
+        return { window: KEY_WINDOW_NAMES[i], label: KEY_WINDOW_LABELS[i], used: used[i], cap };
+      }
+    }
+    return null;
+  }
+
+  /** 派生状态：disabled > expired > quota_exceeded > active。 */
+  function keyStateOf(key, used) {
+    if (key.enabled === false) return 'disabled';
+    if (Number.isFinite(key.expiresAt) && key.expiresAt <= nowFn()) return 'expired';
+    if (quotaExceededFor(key, used)) return 'quota_exceeded';
+    return 'active';
+  }
+
+  /** 预留一个并发名额；超限返回 null，否则返回 release()（幂等，所有终止路径都要调）。 */
+  function reserveConcurrency(key) {
+    if (!Number.isFinite(key.maxConcurrent)) return () => {};
+    const current = keyInflight.get(key.keyId) ?? 0;
+    if (current >= key.maxConcurrent) return null;
+    keyInflight.set(key.keyId, current + 1);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const next = (keyInflight.get(key.keyId) ?? 1) - 1;
+      if (next <= 0) keyInflight.delete(key.keyId);
+      else keyInflight.set(key.keyId, next);
+    };
+  }
+
+  /** 固定 60s 滑动窗口速率检查；超限返回信息（不计数），未超返回 null（并计数本次）。 */
+  function rateExceededFor(key) {
+    if (!Number.isFinite(key.ratePerMin)) return null;
+    const now = nowFn();
+    const hits = (keyRateHits.get(key.keyId) ?? []).filter((t) => now - t < KEY_RATE_MS);
+    if (hits.length >= key.ratePerMin) {
+      keyRateHits.set(key.keyId, hits);
+      return { retryAfterMs: Math.max(1, KEY_RATE_MS - (now - hits[0])) };
+    }
+    hits.push(now);
+    keyRateHits.set(key.keyId, hits);
+    return null;
+  }
+
+  /**
+   * 请求进入 /v1 前按顺序做治理检查（停用→过期→额度→并发→速率）。
+   * 命中即写事件日志 + 请求日志（状态码如实）并响应，返回 null；
+   * 全部通过则返回 release()（调用方必须在所有终止路径调用它释放并发名额）。
+   */
+  async function beginKeyRequest(req, res, key, url) {
+    const path = url?.pathname ?? null;
+    const deny = (status, message, type) => {
+      note('warn', `客户端 key「${sanitizeForLog(key.name)}」请求被拒绝（${status}）：${message}（来自 ${sanitizeForLog(clientIp(req))}）`);
+      try {
+        usage.record({
+          t: Date.now(), dur: 0, keyId: key.keyId, keyName: key.name, model: null, path,
+          status, stream: false, tokensIn: 0, tokensOut: 0, ip: clientIp(req),
+          accountKeyId: null, accountName: null, error: message,
+        });
+      } catch (e) { log.debug?.(`拒绝请求的日志写入失败: ${e.message}`); }
+      sendJSON(res, status, { error: { message, type } });
+      return null;
+    };
+
+    if (key.enabled === false) {
+      return deny(403, '客户端 key 已停用（disabled）：管理员已停用该 key，请联系管理员', 'key_disabled');
+    }
+    if (Number.isFinite(key.expiresAt) && key.expiresAt <= nowFn()) {
+      return deny(401, '客户端 key 已过期（expired）：请向管理员申请新的 key', 'key_expired');
+    }
+    if (key.quota) {
+      const used = keyUsageRow(await keyUsageMap(), key.keyId);
+      const exceeded = quotaExceededFor(key, used);
+      if (exceeded) {
+        return deny(429, `客户端 key 已超出「${exceeded.label}」token 额度（已用 ${exceeded.used} / 上限 ${exceeded.cap}）`, 'key_quota_exceeded');
+      }
+    }
+    const release = reserveConcurrency(key);
+    if (!release) {
+      return deny(429, `客户端 key 并发超限（上限 ${key.maxConcurrent} 个在途请求）`, 'key_concurrency_exceeded');
+    }
+    const rate = rateExceededFor(key);
+    if (rate) {
+      release();
+      res.setHeader('retry-after', String(Math.max(1, Math.ceil(rate.retryAfterMs / 1000))));
+      return deny(429, `客户端 key 速率超限（每分钟上限 ${key.ratePerMin} 次请求）`, 'key_rate_exceeded');
+    }
+    return release;
+  }
+
   // ── 后台定时器 ─────────────────────────────────────────
   let recheckTimer = null;
   let historyTimer = null;
@@ -1017,10 +1133,25 @@ export async function startGateway(overrides = {}) {
       : `不能${verb}最后一个可用账号：${verb}后没有可调度的账号（请先启用其它账号）`);
   }
 
+  /**
+   * 后台写盘的中间形态：保留治理字段（§1），否则 PATCH/POST 一轮往返就把
+   * note/quota/... 静默丢掉。keyPolicyForDisk 只写非默认值，老 key 不会被塞默认字段。
+   */
   function credentialKeys(list = localKeys) {
-    return list.map((k) => (k.createdAt === null || k.createdAt === undefined
-      ? { name: k.name, key: k.key }
-      : { name: k.name, key: k.key, createdAt: k.createdAt }));
+    return list.map((k) => {
+      const item = { name: k.name, key: k.key };
+      if (k.createdAt !== null && k.createdAt !== undefined) item.createdAt = k.createdAt;
+      return { ...item, ...keyPolicyForDisk(k) };
+    });
+  }
+
+  /** 校验治理字段；失败统一转 400（parseKeyPolicy 抛的是普通 Error）。 */
+  function cleanKeyPolicy(raw, label) {
+    try {
+      return parseKeyPolicy(raw, label);
+    } catch (e) {
+      throw new HttpError(400, e.message);
+    }
   }
 
   /** 对外账号视图：只有 keyId / keyPrefix，绝不含完整 key。 */
@@ -1044,7 +1175,19 @@ export async function startGateway(overrides = {}) {
   }
 
   function pubKey(k) {
-    return { name: k.name, keyId: k.keyId, keyPrefix: k.keyPrefix, createdAt: k.createdAt ?? null };
+    return {
+      name: k.name,
+      keyId: k.keyId,
+      keyPrefix: k.keyPrefix,
+      createdAt: k.createdAt ?? null,
+      // §1 治理字段（缺省 = 不限制）。绝不包含完整 key。
+      note: k.note ?? '',
+      enabled: k.enabled !== false,
+      expiresAt: k.expiresAt ?? null,
+      quota: k.quota ?? null,
+      maxConcurrent: k.maxConcurrent ?? null,
+      ratePerMin: k.ratePerMin ?? null,
+    };
   }
 
   function readBody(req, limit = ADMIN_BODY_LIMIT) {
@@ -1149,7 +1292,17 @@ export async function startGateway(overrides = {}) {
     }
 
     if (method === 'GET' && p === '/api/admin/keys') {
-      return sendJSON(res, 200, { ok: true, keys: localKeys.map(pubKey) });
+      // §3：附加三窗口已用 token（从既有请求日志聚合）与派生 state。
+      const usageMap = await keyUsageMap();
+      const keys = localKeys.map((k) => {
+        const row = keyUsageRow(usageMap, k.keyId);
+        return {
+          ...pubKey(k),
+          used: { fiveHour: row[0], daily: row[1], weekly: row[2] },
+          state: keyStateOf(k, row),
+        };
+      });
+      return sendJSON(res, 200, { ok: true, keys });
     }
 
     if (method === 'GET' && p === '/api/admin/accounts') {
@@ -1325,10 +1478,13 @@ export async function startGateway(overrides = {}) {
       const body = await readJSONBody(req);
       const name = cleanName(body.name);
       if (body.key !== undefined) throw new HttpError(400, '客户端 key 由服务端生成，不接受传入明文');
+      const unknown = Object.keys(body).filter((f) => f !== 'name' && !KEY_POLICY_FIELDS.includes(f));
+      if (unknown.length) throw new HttpError(400, `未知字段：${unknown.join('、')}`);
+      const policy = cleanKeyPolicy(body, `客户端 key「${name}」`);
       let key = generateLocalKey();
       while (localKeys.some((k) => k.key === key)) key = generateLocalKey();
       const createdAt = Date.now();
-      store.saveKeys([...credentialKeys(), { name, key, createdAt }]);
+      store.saveKeys([...credentialKeys(), { name, key, createdAt, ...policy }]);
       reloadNow();
       const created = localKeys.find((k) => k.key === key);
       // 日志/事件里只用 keyId/keyPrefix，明文绝不入库
@@ -1338,6 +1494,38 @@ export async function startGateway(overrides = {}) {
         key: pubKey(created),
         plaintext: key,
         warning: '此 key 只显示一次',
+      });
+    }
+
+    if (method === 'PATCH' && keyMatch) {
+      requireWritable();
+      const id = safeDecodeURIComponent(keyMatch[1]);
+      const target = localKeys.find((k) => k.keyId === id);
+      if (!target) throw new HttpError(404, '客户端 key 不存在');
+      const body = await readJSONBody(req);
+      // §3：严格校验 —— 未知字段 / 类型不对 / 负数 / note 超长一律 400，绝不静默忽略。
+      if (body.key !== undefined || body.name !== undefined) throw new HttpError(400, 'name / key 不支持在此修改（只能改治理字段）');
+      const unknown = Object.keys(body).filter((f) => !KEY_POLICY_FIELDS.includes(f));
+      if (unknown.length) throw new HttpError(400, `未知字段：${unknown.join('、')}`);
+      if (Object.keys(body).length === 0) throw new HttpError(400, '至少提供一个可更新字段');
+      // quota 深合并：只改提供的窗口，未提供的窗口沿用旧值。
+      const merged = {
+        ...target,
+        ...body,
+        quota: body.quota === undefined
+          ? (target.quota ?? null)
+          : (body.quota === null ? null : { ...(target.quota ?? {}), ...body.quota }),
+      };
+      const policy = cleanKeyPolicy(merged, `客户端 key「${target.name}」`);
+      const next = credentialKeys().map((k) => (k.key === target.key ? { ...k, ...policy } : k));
+      store.saveKeys(next);
+      reloadNow();
+      const updated = localKeys.find((k) => k.keyId === id);
+      const row = keyUsageRow(await keyUsageMap(), id);
+      note('info', `修改客户端 key「${target.name}」keyId=${id}：${Object.keys(body).join('、')}（${actorOf(req)}）`);
+      return sendJSON(res, 200, {
+        ok: true,
+        key: { ...pubKey(updated), used: { fiveHour: row[0], daily: row[1], weekly: row[2] }, state: keyStateOf(updated, row) },
       });
     }
 
@@ -1567,51 +1755,61 @@ export async function startGateway(overrides = {}) {
         return proxy.forward({ req, res, account: { name: 'passthrough', key, keyId: keyIdOf(key), keyPrefix: keyPrefixOf(key), enabled: true, __passthrough: true }, pathname: url.pathname, search: url.search, logContext: { keyId: keyIdOf(key), keyName: null, model: null, ip: clientIp(req) } });
       }
 
-      // 池调度：先 peek body 头部拿 session id
-      const headerSession = req.headers[SESSION_HEADER];
-      let initialChunks = [];
-      let bodyEnded = false;
-      let sessionId = typeof headerSession === 'string' && headerSession ? headerSession : null;
+      // §2：客户端 key 治理检查（停用 / 过期 / 额度 / 并发 / 速率）。命中即拒绝，不消耗上游。
+      // 并发名额在所有终止路径释放 —— forward() 的 Promise 覆盖流式透传与客户端中断，
+      // 这里 try/finally 兜住它的早退分支与自身抛出，确保计数一定回收。
+      const localKey = localKeys[localKeyIndexOf(key)];
+      const releaseKeySlot = await beginKeyRequest(req, res, localKey, url);
+      if (!releaseKeySlot) return;
+      try {
+        // 池调度：先 peek body 头部拿 session id
+        const headerSession = req.headers[SESSION_HEADER];
+        let initialChunks = [];
+        let bodyEnded = false;
+        let sessionId = typeof headerSession === 'string' && headerSession ? headerSession : null;
 
-      if (!sessionId && req.method !== 'GET' && req.method !== 'HEAD') {
-        const peeked = await peekBody(req, BODY_PEEK_BYTES, {
-          match: (cs) => peekSessionFromBody(cs) !== null,
-          startMs: config.bodyPeekStartMs,
-        }).catch(() => ({ chunks: [], ended: false }));
-        // L5：起始超时（连 body 都不发）→ 明确 408 并关连接，不再无限占住 socket。
-        if (peeked.timedOut) {
-          res.setHeader('connection', 'close');
-          note('warn', `请求体起始超时（${config.bodyPeekStartMs}ms 未收到 body），已断开`);
-          return sendJSON(res, 408, { error: { message: 'Request body timeout', type: 'request_timeout' } });
+        if (!sessionId && req.method !== 'GET' && req.method !== 'HEAD') {
+          const peeked = await peekBody(req, BODY_PEEK_BYTES, {
+            match: (cs) => peekSessionFromBody(cs) !== null,
+            startMs: config.bodyPeekStartMs,
+          }).catch(() => ({ chunks: [], ended: false }));
+          // L5：起始超时（连 body 都不发）→ 明确 408 并关连接，不再无限占住 socket。
+          if (peeked.timedOut) {
+            res.setHeader('connection', 'close');
+            note('warn', `请求体起始超时（${config.bodyPeekStartMs}ms 未收到 body），已断开`);
+            return sendJSON(res, 408, { error: { message: 'Request body timeout', type: 'request_timeout' } });
+          }
+          initialChunks = peeked.chunks;
+          bodyEnded = peeked.ended;
+          sessionId = peekSessionFromBody(initialChunks);
         }
-        initialChunks = peeked.chunks;
-        bodyEnded = peeked.ended;
-        sessionId = peekSessionFromBody(initialChunks);
-      }
 
-      let { account, reason } = scheduler.select({ sessionId });
-      if (!account) {
-        // 审查 A4：全池不可用时不能干等下一拍空闲轮询（最长 600s 的全池 503）。
-        // 若池里有窗口已过期 / 快照过旧的账号，立刻触发一轮额度刷新（refreshAll 自带
-        // refreshInFlight 去重 + 冷却，绝不会每个请求都刷），刷完在本请求内重选。
-        if (poolNeedsRefresh(Date.now()) && canAutoRefreshPool()) {
-          log.warn(`无可用账号（${reason}），快照可能过期 → 触发一轮额度刷新`);
-          await refreshAll().catch((e) => log.warn(`自动刷新额度失败: ${e.message}`));
-          ({ account, reason } = scheduler.select({ sessionId }));
+        let { account, reason } = scheduler.select({ sessionId });
+        if (!account) {
+          // 审查 A4：全池不可用时不能干等下一拍空闲轮询（最长 600s 的全池 503）。
+          // 若池里有窗口已过期 / 快照过旧的账号，立刻触发一轮额度刷新（refreshAll 自带
+          // refreshInFlight 去重 + 冷却，绝不会每个请求都刷），刷完在本请求内重选。
+          if (poolNeedsRefresh(Date.now()) && canAutoRefreshPool()) {
+            log.warn(`无可用账号（${reason}），快照可能过期 → 触发一轮额度刷新`);
+            await refreshAll().catch((e) => log.warn(`自动刷新额度失败: ${e.message}`));
+            ({ account, reason } = scheduler.select({ sessionId }));
+          }
         }
-      }
-      if (!account) {
-        log.warn(`无可用账号，拒绝 ${url.pathname}（${reason}）`);
-        const retryAfterMs = retryAfterMsForPool(Date.now());
-        res.setHeader('retry-after', String(Math.max(1, Math.ceil(retryAfterMs / 1000))));
-        return sendJSON(res, 503, {
-          error: { message: 'No available account in pool', type: 'no_available_account' },
-          retryAfterMs,
-        });
-      }
-      log.info(`路由 ${url.pathname} → 账号「${account.name}」${sessionId ? `(session ${sanitizeForLog(sessionId)})` : ''}`);
+        if (!account) {
+          log.warn(`无可用账号，拒绝 ${url.pathname}（${reason}）`);
+          const retryAfterMs = retryAfterMsForPool(Date.now());
+          res.setHeader('retry-after', String(Math.max(1, Math.ceil(retryAfterMs / 1000))));
+          return sendJSON(res, 503, {
+            error: { message: 'No available account in pool', type: 'no_available_account' },
+            retryAfterMs,
+          });
+        }
+        log.info(`路由 ${url.pathname} → 账号「${account.name}」${sessionId ? `(session ${sanitizeForLog(sessionId)})` : ''}`);
 
-      return proxy.forward({ req, res, account, pathname: url.pathname, search: url.search, initialChunks, bodyEnded, sessionId, logContext: { keyId: keyIdOf(key), keyName: localKeys[localKeyIndexOf(key)]?.name ?? null, model: peekModelFromBody(initialChunks), ip: clientIp(req) } });
+        return await proxy.forward({ req, res, account, pathname: url.pathname, search: url.search, initialChunks, bodyEnded, sessionId, logContext: { keyId: keyIdOf(key), keyName: localKey?.name ?? null, model: peekModelFromBody(initialChunks), ip: clientIp(req) } });
+      } finally {
+        releaseKeySlot();
+      }
     }
 
     // 只读面板数据：默认公开（PUBLIC_DASHBOARD=1）；PUBLIC_DASHBOARD=0 时要求后台登录

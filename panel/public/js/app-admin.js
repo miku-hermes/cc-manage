@@ -209,20 +209,114 @@ async function copyPlainKey() {
   }
 }
 
-// ── 客户端 key 表：删除按钮走 #keys 容器级委托 ────────────────────────
+// ── 客户端 key 表：启停 / 编辑 / 删除都走 #keys 容器级委托 ──────────────
 $('keys').addEventListener('click', (e) => {
-  const btn = e.target.closest('button[data-act="delkey"]');
+  const btn = e.target.closest('button[data-act]');
   if (!btn || btn.disabled) return;
+  const act = btn.getAttribute('data-act');
   const id = btn.getAttribute('data-id');
   // 同上：只比前 8 字符会误删/误判另一个 keyId 相同的客户端 key。
   const k = state.keys.find((x) => String(x.keyId) === String(id));
   if (!k) return;
-  if (!confirm('确定要删除客户端 key「' + k.name + '」吗？\n删除后该客户端会立刻 401。')) return;
-  return guard(async () => {
-    await apiJSON('/api/admin/keys/' + encodeURIComponent(id), { method: 'DELETE' });
-    toast('客户端 key 已删除');
-    await loadKeys();
-  });
+
+  // 启停开关：乐观改 UI，失败回滚 + 提示。
+  if (act === 'toggle') {
+    const next = k.enabled === false;   // 当前停用 → 本次启用
+    return guard(async () => {
+      const prev = k.enabled;
+      k.enabled = next;
+      renderKeys();
+      try {
+        await apiJSON('/api/admin/keys/' + encodeURIComponent(id), { method: 'PATCH', body: { enabled: next } });
+      } catch (err) {
+        k.enabled = prev;               // 失败：回滚 UI 状态
+        renderKeys();
+        toast('启停失败：' + err.message, true);
+        return;
+      }
+      toast(next ? '客户端 key 已启用' : '客户端 key 已停用');
+      await loadKeys();
+    });
+  }
+
+  if (act === 'edit') { openKeyEditModal(k); return; }
+
+  if (act === 'delkey') {
+    if (!confirm('确定要删除客户端 key「' + k.name + '」吗？\n删除后该客户端会立刻 401。')) return;
+    return guard(async () => {
+      await apiJSON('/api/admin/keys/' + encodeURIComponent(id), { method: 'DELETE' });
+      toast('客户端 key 已删除');
+      await loadKeys();
+    });
+  }
+});
+
+// ── 编辑客户端 key 治理字段（§4）────────────────────────────────────
+let keyEditTarget = null;
+
+function msToLocalInput(ms) {
+  if (!Number.isFinite(ms)) return '';
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return '';
+  const p = (n) => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
+function openKeyEditModal(k) {
+  keyEditTarget = k;
+  $('ke-err').textContent = '';
+  $('ke-sub').textContent = '客户端「' + (k.name || '未命名') + '」：留空表示不限制 / 不过期。';
+  $('ke-note').value = k.note || '';
+  $('ke-expires').value = msToLocalInput(k.expiresAt);
+  const q = k.quota || {};
+  $('ke-quota-5h').value = Number.isFinite(q.fiveHour) ? String(q.fiveHour) : '';
+  $('ke-quota-day').value = Number.isFinite(q.daily) ? String(q.daily) : '';
+  $('ke-quota-week').value = Number.isFinite(q.weekly) ? String(q.weekly) : '';
+  $('ke-maxconc').value = Number.isFinite(k.maxConcurrent) ? String(k.maxConcurrent) : '';
+  $('ke-ratemin').value = Number.isFinite(k.ratePerMin) ? String(k.ratePerMin) : '';
+  $('ke-submit').disabled = !state.writable;
+  openModal('m-keyedit');
+  $('ke-note').focus();
+}
+
+/** 表单值 → 数字或 null（空 = 不限制）；非空但非法返回 NaN 交给调用方拒绝。 */
+function keyNumOrNull(raw) {
+  const str = String(raw ?? '').trim();
+  if (!str) return null;
+  return Number(str);
+}
+
+$('ke-submit').onclick = () => guard(async () => {
+  if (!keyEditTarget) return;
+  $('ke-err').textContent = '';
+  const quota = {
+    fiveHour: keyNumOrNull($('ke-quota-5h').value),
+    daily: keyNumOrNull($('ke-quota-day').value),
+    weekly: keyNumOrNull($('ke-quota-week').value),
+  };
+  const maxConcurrent = keyNumOrNull($('ke-maxconc').value);
+  const ratePerMin = keyNumOrNull($('ke-ratemin').value);
+  const vals = [quota.fiveHour, quota.daily, quota.weekly, maxConcurrent, ratePerMin];
+  if (vals.some((v) => v !== null && (!Number.isFinite(v) || v < 0))) {
+    $('ke-err').textContent = '数值字段必须是非负数字，留空表示不限制';
+    return;
+  }
+  const expiresRaw = $('ke-expires').value;
+  const expiresAt = expiresRaw ? new Date(expiresRaw).getTime() : null;
+  const allQuotaNull = quota.fiveHour === null && quota.daily === null && quota.weekly === null;
+  const body = {
+    note: $('ke-note').value,
+    expiresAt: Number.isFinite(expiresAt) ? expiresAt : null,
+    quota: allQuotaNull ? null : quota,
+    maxConcurrent,
+    ratePerMin,
+  };
+  try {
+    await apiJSON('/api/admin/keys/' + encodeURIComponent(keyEditTarget.keyId), { method: 'PATCH', body });
+  } catch (e) { $('ke-err').textContent = e.message; return; }
+  closeModal('m-keyedit');
+  toast('客户端 key 已更新');
+  await loadKeys();
 });
 
 // ── 管理员操作 ──────────────────────────────────────────────────────
@@ -289,6 +383,7 @@ const MODAL_FORMS = [
   ['m-user', 'u-submit'],
   ['m-pass', 'p-submit'],
   ['m-newkey', 'k-submit'],
+  ['m-keyedit', 'ke-submit'],
 ];
 for (const [modalFormId, submitId] of MODAL_FORMS) {
   const modal = $(modalFormId);

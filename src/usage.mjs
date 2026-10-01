@@ -111,6 +111,35 @@ export function createUsageRecorder(opts = {}) {
       matched.sort((a, b) => number(b.t) - number(a.t));
       return { items: matched.slice(start, start + size), hasMore: matched.length > start + size };
     },
+    /**
+     * 按 key 聚合多个**滚动窗口**内的 token 总数（5h / 日 / 周额度判定用）。
+     * 只从既有的请求日志（文件 + 内存 tail）读一次，不新造计数器存储。
+     * @param {{now?: number, windows?: number[]}} opts windows = 各窗口时长（毫秒），
+     *   返回 Map<keyId, number[]>（与 windows 顺序一一对应）。
+     */
+    async keyTokenWindows({ now = Date.now(), windows = [] } = {}) {
+      await queue;
+      const durations = windows.map((w) => number(w)).filter((w) => w > 0);
+      const map = new Map();
+      if (durations.length === 0) return map;
+      const sinceMs = now - Math.max(...durations);
+      const seen = new Set();
+      const add = (e) => {
+        const id = identity(e);
+        if (seen.has(id)) return;
+        seen.add(id);
+        const t = number(e.t);
+        if (t < sinceMs) return;
+        const key = e.keyId ?? '';
+        let row = map.get(key);
+        if (!row) { row = new Array(durations.length).fill(0); map.set(key, row); }
+        const tokens = number(e.tokensIn) + number(e.tokensOut);
+        for (let i = 0; i < durations.length; i += 1) if (t >= now - durations[i]) row[i] += tokens;
+      };
+      for await (const e of readEntries(sinceMs)) add(e);
+      for (const e of tail) add(e);
+      return map;
+    },
     async summary({ sinceMs = 0, bucketMs = 3600000 } = {}) {
       await queue;
       const totals = { requests: 0, errors: 0, tokensIn: 0, tokensOut: 0, durAvg: 0 };

@@ -182,6 +182,103 @@ export function normalizeAccounts(list) {
   return out;
 }
 
+// ── 客户端 key 治理字段（§1）────────────────────────────────────────
+// 全部可选，缺省 = 不限制；加载时只**在内存里**补默认值，绝不回写文件
+// （既有约束：全在册时 keys.json 逐字节不变）。
+export const KEY_NOTE_MAX = 64;
+const KEY_CONTROL_CHAR_RE = /[\u0000-\u001f\u007f]/;
+const QUOTA_WINDOW_NAMES = ['fiveHour', 'daily', 'weekly'];
+const KEY_POLICY_FIELDS = ['note', 'enabled', 'expiresAt', 'quota', 'maxConcurrent', 'ratePerMin'];
+
+function isPlainObject(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function parsePositiveInt(value, label) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
+    throw new Error(`${label} 必须是正整数或 null`);
+  }
+  return value;
+}
+
+/**
+ * 校验并规范化单个 key 的治理字段（严格：类型不对 / 负数 / note 超长 / 未知 quota 窗口
+ * 一律抛错）。加载与后台写入共用同一口径，避免「能存进去、读不出来」。
+ * @returns {{note: string, enabled: boolean, expiresAt: number|null, quota: object|null, maxConcurrent: number|null, ratePerMin: number|null}}
+ */
+export function parseKeyPolicy(item, label = '本地 key') {
+  let note = '';
+  if (item.note !== undefined && item.note !== null) {
+    if (typeof item.note !== 'string') throw new Error(`${label} 的 note 必须是字符串`);
+    if ([...item.note].length > KEY_NOTE_MAX) throw new Error(`${label} 的 note 不能超过 ${KEY_NOTE_MAX} 字符`);
+    if (KEY_CONTROL_CHAR_RE.test(item.note)) throw new Error(`${label} 的 note 不能包含控制字符`);
+    note = item.note;
+  }
+  let enabled = true;
+  if (item.enabled !== undefined && item.enabled !== null) {
+    if (typeof item.enabled !== 'boolean') throw new Error(`${label} 的 enabled 必须是布尔值`);
+    enabled = item.enabled;
+  }
+  let expiresAt = null;
+  if (item.expiresAt !== undefined && item.expiresAt !== null) {
+    if (typeof item.expiresAt !== 'number' || !Number.isFinite(item.expiresAt)) {
+      throw new Error(`${label} 的 expiresAt 必须是毫秒时间戳或 null`);
+    }
+    expiresAt = item.expiresAt;
+  }
+  let quota = null;
+  if (item.quota !== undefined && item.quota !== null) {
+    if (!isPlainObject(item.quota)) throw new Error(`${label} 的 quota 必须是对象或 null`);
+    for (const window of Object.keys(item.quota)) {
+      if (!QUOTA_WINDOW_NAMES.includes(window)) throw new Error(`${label} 的 quota 含未知字段：${window}`);
+    }
+    const parsed = {};
+    let any = false;
+    for (const window of QUOTA_WINDOW_NAMES) {
+      const value = item.quota[window];
+      if (value === undefined || value === null) { parsed[window] = null; continue; }
+      if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+        throw new Error(`${label} 的 quota.${window} 必须是非负数字或 null`);
+      }
+      parsed[window] = Math.floor(value);
+      any = true;
+    }
+    quota = any ? parsed : { fiveHour: null, daily: null, weekly: null };
+  }
+  return {
+    note,
+    enabled,
+    expiresAt,
+    quota,
+    maxConcurrent: parsePositiveInt(item.maxConcurrent, `${label} 的 maxConcurrent`),
+    ratePerMin: parsePositiveInt(item.ratePerMin, `${label} 的 ratePerMin`),
+  };
+}
+
+export { KEY_POLICY_FIELDS };
+
+/**
+ * 把治理字段写成「落盘形态」：只写非默认值，缺省（enabled=true / note='' / null 上限）
+ * 一律省略。这样老格式 {name,key} 的 key 在需要重写文件时也不会被塞进一堆默认值。
+ */
+export function keyPolicyForDisk(k) {
+  const out = {};
+  if (k.note) out.note = k.note;
+  if (k.enabled === false) out.enabled = false;
+  if (Number.isFinite(k.expiresAt)) out.expiresAt = k.expiresAt;
+  if (isPlainObject(k.quota)) {
+    const q = {};
+    for (const window of QUOTA_WINDOW_NAMES) {
+      if (Number.isFinite(k.quota[window])) q[window] = k.quota[window];
+    }
+    if (Object.keys(q).length > 0) out.quota = q;
+  }
+  if (Number.isFinite(k.maxConcurrent)) out.maxConcurrent = k.maxConcurrent;
+  if (Number.isFinite(k.ratePerMin)) out.ratePerMin = k.ratePerMin;
+  return out;
+}
+
 export function normalizeKeys(list) {
   if (!Array.isArray(list)) throw new Error('keys 必须是数组');
   const out = [];
@@ -194,12 +291,14 @@ export function normalizeKeys(list) {
     }
     if (seen.has(key)) throw new Error(`本地 key 重复: ${maskSecret(key)}`);
     seen.add(key);
+    const name = String(item.name ?? '').trim() || `客户端-${out.length + 1}`;
     out.push({
-      name: String(item.name ?? '').trim() || `客户端-${out.length + 1}`,
+      name,
       key,
       keyId: keyIdOf(key),
       keyPrefix: keyPrefixOf(key),
       createdAt: Number.isFinite(item.createdAt) ? item.createdAt : null,
+      ...parseKeyPolicy(item, `本地 key「${name}」`),
     });
   }
   return out;
@@ -315,9 +414,12 @@ export function createStore({ rootDir = process.cwd(), env = process.env, log = 
   function saveKeys(list) {
     const normalized = normalizeKeys(list);
     const payload = {
-      keys: normalized.map((k) => (k.createdAt === null
-        ? { name: k.name, key: k.key }
-        : { name: k.name, key: k.key, createdAt: k.createdAt })),
+      keys: normalized.map((k) => {
+        const item = { name: k.name, key: k.key };
+        if (k.createdAt !== null && k.createdAt !== undefined) item.createdAt = k.createdAt;
+        // 治理字段只写非默认值（缺省 = 不限制），避免给老 key 塞一堆默认字段。
+        return { ...item, ...keyPolicyForDisk(k) };
+      }),
     };
     atomicWrite(currentPaths().keysFile, `${JSON.stringify(payload, null, 2)}\n`, { log, mode: CREDENTIAL_MODE });
     return normalized;

@@ -8,6 +8,8 @@ const SENSITIVE_VALUE_IDS = [
   'u-name', 'u-pass',          // 新管理员用户名 / 密码
   'p-pass', 'p-current',       // 新密码 / 当前管理员密码
   'r-name', 'k-name',          // 改备注输入 / 客户端名称
+  'ke-note', 'ke-expires', 'ke-quota-5h', 'ke-quota-day', 'ke-quota-week',
+  'ke-maxconc', 'ke-ratemin',  // 客户端 key 治理编辑弹窗（备注 / 过期 / 额度 / 并发 / 速率）
 ];
 /* 登出 / session 失效时必须清空的**文本**类字段：
    备注名 + keyId 片段（#r-sub）、管理员名（#p-sub）、一次性明文 key、报错原文。 */
@@ -16,6 +18,7 @@ const SENSITIVE_TEXT_IDS = [
   'm-detail-title', 'm-detail-display', 'm-detail-error', 'm-detail-error-at',
   'm-detail-test-result', 'm-detail-events',
   'a-err', 'r-err', 'u-err', 'p-err', 'k-err', 'k-warn', 'k-plain',
+  'ke-err', 'ke-sub',          // 治理编辑弹窗的报错 / 客户端名标题
 ];
 
 function clearSensitiveData() {
