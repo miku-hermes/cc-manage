@@ -578,3 +578,52 @@
    注意必须留在所有 @layer 之外：daisyUI 的 .drawer 落在 utilities 层，跨层特异性不生效。 */
 body.gate #admin-shell,
 #admin-shell.shell-hidden { display: none; }
+
+/* ═══ 后台移动端适配（本批）══════════════════════════════════════════════════
+   仅修后台 /admin：≤1023px 是抽屉态（lg 断点以下侧边栏收起），≤639px 是手机。
+   全部放在所有 @layer 之外 —— daisyUI 的 .navbar-start/.navbar-end/.btn 都在
+   components/utilities 层，分层样式压不住它们（详见本文件前面同类注释）。桌面 ≥1024px
+   不受任何一条规则影响，1440px 复验 header 仍 56px、侧边栏仍 224px 常驻。 */
+
+@media (max-width: 1023px) {
+  /* P1：顶栏折行 + 元素重叠。
+     根因：daisyUI .navbar-start/.navbar-end 各占 width:50%，右侧 4 个控件 + 「已登录 admin」
+     塞不进 50% → #who 被压到 41px、文字折成两行，把 header 从 56px 撑到 77px，且 #who
+     x=127 越出 navbar-end 左缘、压住 navbar-start 的「控制台」。
+     改法：end 按内容宽且不收缩，start 吃剩余宽度；#who 不换行、超长用户名用省略号。 */
+  #admin-head .navbar-start { flex: 1 1 auto; width: auto; min-width: 0; }
+  #admin-head .navbar-end { flex: 0 0 auto; width: auto; min-width: 0; flex-wrap: nowrap; }
+  #admin-head #who { white-space: nowrap; min-width: 0; max-width: 10rem; overflow: hidden; text-overflow: ellipsis; }
+
+  /* P4：触控目标 ≥40×40。.btn 固定 height:var(--size)、.btn-circle 固定 width/height，
+     min-width/min-height 不生效，必须在窄屏显式改 height/width。桌面 ≥1024px 仍 32px。 */
+  #admin-head .btn-sm, #gate-head .btn-sm { height: 2.5rem; min-height: 2.5rem; }
+  #admin-head .btn-circle.btn-sm, #gate-head .btn-circle.btn-sm { width: 2.5rem; height: 2.5rem; }
+
+  /* P2：表格窄列折行。窄屏 8 列塞进 358px，时间戳被折成 4 行、表头折成 38px 高。
+     表头/单元格不换行，放不下靠外层 .overflow-x-auto 横滚，行高恢复单行。 */
+  #admin-main .table th, #admin-main .table td { white-space: nowrap; }
+}
+
+@media (max-width: 639px) {
+  /* P1：手机宽度进一步收敛 —— 隐藏「已登录 admin」（抽屉侧栏 #side-who 仍显示管理员名），
+     返回前台只留返回箭头（文本 span.nav-label 隐藏，保留 href/aria-label）。
+     两项去掉后右侧 = 返回 40 + 主题 40 + 退出（图标+文字） ≈ 157px，header 稳定单行 56px。 */
+  #admin-head #who { display: none; }
+  #admin-head .nav-label { display: none; }
+
+  /* P3：概览账号卡溢出。4 个账号行 scrollWidth 345~353 > clientWidth 332（溢出 13~21px），
+     名称 .cell-name 被固定宽进度条/百分比/余额挤成 0 宽。窄屏收窄条与百分比、余额列，
+     名称（.truncate）拿到宽度后用省略号优雅降级，不再硬裁出容器。 */
+  #overview-accounts .overview-account { gap: .4rem; }
+  #overview-accounts .oa-meter { gap: .25rem; }
+  #overview-accounts .oa-bar { width: 2.5rem; }
+  #overview-accounts .oa-pct { width: 2.25rem; }
+  #overview-accounts .oa-remain { width: 2.5rem; }
+
+  /* P4（补充）：系统设置页的可点控件同样低于 40px —— 开关 40×24、数字框/保存钮 36px 高。
+     只在手机档抬到 40px；桌面 ≥640px 原样。 */
+  #page-settings .toggle { width: 2.5rem; height: 2.5rem; }
+  #page-settings .input { min-height: 2.5rem; }
+  #page-settings .btn { min-height: 2.5rem; }
+}
