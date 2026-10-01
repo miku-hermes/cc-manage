@@ -114,7 +114,24 @@ const MEASURE = () => {
       nameOverflow: cs ? cs.overflow : null, nameEllipsis: cs ? cs.textOverflow : null,
     };
   });
+  // P5：页面直接可见子块（卡片 / KPI 网格 / 图表块…）之间的纵向间距。排除
+  // position:absolute 的 sr-only 标题（Tailwind sr-only 不占流，本就不该参与 gap）。
+  const blockKids = activePage ? [...activePage.children].filter((el) => {
+    const cs = getComputedStyle(el);
+    if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+    if (cs.position === 'absolute' || cs.position === 'fixed') return false;
+    const b = el.getBoundingClientRect();
+    return b.width > 0 && b.height > 0;
+  }) : [];
+  const blockLabel = (el) => el.id || (typeof el.className === 'string' && el.className.split(' ')
+    .filter((c) => c && c !== 'card' && c !== 'banner' && !c.startsWith('alert')).slice(0, 2).join('.')) || el.tagName;
+  const blockGaps = blockKids.slice(1).map((el, i) => ({
+    from: blockLabel(blockKids[i]),
+    to: blockLabel(el),
+    gap: Math.round(el.getBoundingClientRect().y - blockKids[i].getBoundingClientRect().bottom),
+  }));
   return {
+    blockGaps,
     headerVisible: !!header && visible(header),
     header: header ? box(header) : null,
     start: start ? box(start) : null,
@@ -222,6 +239,16 @@ async function runMobileAdminAdaptAssertions(t) {
       const worst = Math.min(...m.settingsTaps);
       assert.ok(worst >= 40, `设置页触控目标偏小（最小边 ${worst}px < 40）`);
     }
+
+    // P5：相邻卡片/区块的纵向间距必须 > 0（阈值 ≥8px）。
+    // 线上 /admin#/overview 曾实测「KPI 网格 → 账号池概览 → 最近请求」纵向 0px，上下卡片 1px 边框
+    // 贴成双线；只有横向 KPI 的 gap-3=12px 正常。这里对 6 个路由逐对量渲染后的真实间距。
+    for (const g of m.blockGaps) {
+      assert.ok(g.gap >= 8, `${route}：相邻区块「${g.from}」→「${g.to}」纵向间距 ${g.gap}px < 8（卡片紧贴）`);
+    }
+    if (m.activePageId === 'page-overview' || m.activePageId === 'page-usage') {
+      assert.ok(m.blockGaps.length > 0, `${route}：多区块页面必须量到相邻区块间距（别量成空集而静默变绿）`);
+    }
   }
   assert.deepEqual([...seen].sort(), ['page-accounts', 'page-keys', 'page-logs', 'page-overview', 'page-settings', 'page-usage'],
     `6 个路由都应真正切到对应页面（实得 ${[...seen].sort().join(',')}）`);
@@ -289,6 +316,19 @@ async function runMobileAdminAdaptAssertions(t) {
   assert.ok(Math.abs(dm.sidebar.w - 224) <= 1, `桌面侧边栏必须仍 224px 常驻（实测 ${dm.sidebar.w}px）`);
   assert.ok(dm.who.w >= 60, `桌面 #who 仍完整显示（实测宽 ${dm.who.w}px）`);
   assert.ok(dm.docSW <= dm.iw, `桌面横向溢出 ${dm.docSW} > ${dm.iw}`);
+
+  // ── ⑤ 桌面 1440×900：6 个路由的相邻卡片纵向间距同样 ≥8px（P5 桌面档）──
+  for (const route of ROUTES) {
+    await dp.goto(ctx.baseUrl + '/admin' + route, { waitUntil: 'networkidle' });
+    await waitActive(dp);
+    const gm = await dp.evaluate(MEASURE);
+    for (const g of gm.blockGaps) {
+      assert.ok(g.gap >= 8, `桌面 1440 ${route}：相邻区块「${g.from}」→「${g.to}」纵向间距 ${g.gap}px < 8（卡片紧贴）`);
+    }
+    if (gm.activePageId === 'page-overview' || gm.activePageId === 'page-usage') {
+      assert.ok(gm.blockGaps.length > 0, `桌面 1440 ${route}：多区块页面必须量到相邻区块间距（别量成空集而静默变绿）`);
+    }
+  }
 }
 
 // ── 文件级门控 ─────────────────────────────────────────────────────────────

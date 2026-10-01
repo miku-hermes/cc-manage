@@ -579,6 +579,15 @@
 body.gate #admin-shell,
 #admin-shell.shell-hidden { display: none; }
 
+/* ── 后台页面容器的纵向节奏 ────────────────────────────────────────────────
+   线上实测 /admin#/overview：KPI 卡片横向 gap-3=12px 正常，但「KPI 网格 → 账号池
+   概览 → 最近请求」纵向间距 = 0px，两张卡的 1px 边框直接贴成双线。#admin-main 虽然
+   是 flex flex-col gap-4，但它下面每个 .admin-page 自身没有布局类、也不是 flex
+   容器，直接子块 margin=0 所以全部紧贴。这里给 .admin-page 补上与 #admin-main 一致的
+   1rem 纵向 gap；横向 KPI 网格的 gap-3 不受影响。放 @layer 之外以压过 daisyUI 分层
+   样式；不改 admin.astro 的 class 属性（admin-console.test 按 class="admin-page" 精确断言）。 */
+.admin-page { display: flex; flex-direction: column; gap: 1rem; }
+
 /* ═══ 后台移动端适配（本批）══════════════════════════════════════════════════
    仅修后台 /admin：≤1023px 是抽屉态（lg 断点以下侧边栏收起），≤639px 是手机。
    全部放在所有 @layer 之外 —— daisyUI 的 .navbar-start/.navbar-end/.btn 都在
