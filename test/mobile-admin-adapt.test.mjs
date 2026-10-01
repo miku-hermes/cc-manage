@@ -138,9 +138,7 @@ async function waitActive(page) {
   await page.waitForTimeout(250);
 }
 
-test('移动端后台适配：header 单行不重叠 + 无横向溢出 + 表头 nowrap + 触控 ≥40 + 账号卡不溢出', async (t) => {
-  const pwPath = findPlaywright();
-  if (!pwPath) { t.skip('本机无 Playwright，跳过真实浏览器断言'); return; }
+async function runMobileAdminAdaptAssertions(t) {
   if (process.env.CC_TEST_HANG_GUARD_MS === '900000') return; // 嵌套全量扫描时避让 CPU
 
   const ctx = await startTestGateway({ accounts: ACCOUNTS, config: { requestLogEnabled: true, requestLogRetentionDays: 7 } });
@@ -164,7 +162,7 @@ test('移动端后台适配：header 单行不重叠 + 无横向溢出 + 表头 
     assert.equal(r.status, 200, `造日志 #${i + 1} 必须成功`);
   }
 
-  const mod = await import(pwPath);
+  const mod = await import(PLAYWRIGHT_PATH);
   const playwright = mod.default ?? mod;
   const browser = await playwright.chromium.launch();
   t.after(() => browser.close());
@@ -291,4 +289,17 @@ test('移动端后台适配：header 单行不重叠 + 无横向溢出 + 表头 
   assert.ok(Math.abs(dm.sidebar.w - 224) <= 1, `桌面侧边栏必须仍 224px 常驻（实测 ${dm.sidebar.w}px）`);
   assert.ok(dm.who.w >= 60, `桌面 #who 仍完整显示（实测宽 ${dm.who.w}px）`);
   assert.ok(dm.docSW <= dm.iw, `桌面横向溢出 ${dm.docSW} > ${dm.iw}`);
-});
+}
+
+// ── 文件级门控 ─────────────────────────────────────────────────────────────
+// 本文件的每一条断言都需要真实 Chromium（量的是渲染后的几何）。没有 Playwright 的环境
+// 必须只登记一条 skip —— 若把断言逐条注册再各自 t.skip，同一原因类目会刷出多条 skip，
+// 撑爆 hygiene-b20 的「本机无 Playwright」白名单上限（那是防静默变绿的门禁，不得放宽）。
+const PLAYWRIGHT_PATH = findPlaywright();
+if (PLAYWRIGHT_PATH) {
+  test('移动端后台适配：header 单行不重叠 + 无横向溢出 + 表头 nowrap + 触控 ≥40 + 账号卡不溢出', runMobileAdminAdaptAssertions);
+} else {
+  test('移动端后台适配：无 Playwright 环境仅登记跳过（真实断言不注册）', (t) => {
+    t.skip('本机无 Playwright（后台移动端适配）');
+  });
+}

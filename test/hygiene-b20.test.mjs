@@ -153,6 +153,17 @@ const ALLOWED_SKIPS = [
       + '不依赖浏览器的 detailWindow 固定输入/输出与无数据断言仍在任何环境运行。',
   },
   {
+    reason: '本机无 Playwright（后台移动端适配）',
+    max: 1,
+    why: 'mobile-admin-adapt.test.mjs：验证后台 /admin 在 390×844 手机视口（dSF3 / isMobile / hasTouch）下的'
+      + '顶栏单行不折行、navbar-start/end 与 #who 不重叠、页面无横向溢出、表头 white-space:nowrap、'
+      + '顶栏可点控件 ≥40×40 触控尺寸、概览账号卡 scrollWidth<=clientWidth 等真机渲染断言，'
+      + '以及 768×1024 / 1440×900 两种视口的对照，全部需要 Playwright + Chromium，CI runner 未安装。'
+      + '这不构成静默降级：无浏览器的环境只登记这一条 skip，断言不注册。'
+      + '本机有 Playwright 时真跑：node --test test/mobile-admin-adapt.test.mjs 实测 1 tests / 1 pass / 0 skipped，'
+      + '真实 Chromium 在 390×844 手机视口下全部几何断言通过。',
+  },
+  {
     reason: '本机无 Playwright',
     max: 3,
     why: 'b25-narrow-overflow.test.mjs 的三条真机断言（B25-C 卡片网格几何、B25-D Hero 顶区问候语与时钟同行、'
