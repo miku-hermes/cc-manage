@@ -452,7 +452,8 @@ function setUsageRange(range) {
 function adminAuthed() { return !!(state.auth && state.auth.authenticated); }
 onAdminPageChange((route) => {
   if (!adminAuthed()) return;
-  if (route === 'logs') loadLogs().catch(() => {});
+  if (route === 'overview') loadOverview().catch(() => {});
+  else if (route === 'logs') loadLogs().catch(() => {});
   else if (route === 'usage') reloadUsage().catch(() => {});
 });
 
@@ -503,7 +504,8 @@ function start() {
   // 一个定时器同时负责运行日志与请求日志：只在对应页面可见时才拉数据，不新增第二个节奏。
   setInterval(() => {
     if (document.hidden || document.body.className === 'gate') return;
-    if (adminPageVisible('logs')) loadLogs().catch(() => {});
+    if (adminPageVisible('overview')) loadOverview().catch(() => {});
+    else if (adminPageVisible('logs')) loadLogs().catch(() => {});
     else if (adminPageVisible('events')) loadEvents().catch(() => {});
   }, 10000);
 }

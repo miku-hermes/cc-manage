@@ -36,6 +36,7 @@ function clearSensitiveData() {
   const dropped = $('logs-dropped');
   if (dropped) dropped.className = 'banner alert alert-error hidden';
   if (typeof renderLogsKeyOptions === 'function') renderLogsKeyOptions();   // 重建「全部客户端」占位
+  if (typeof clearOverview === 'function') clearOverview();                 // 概览里的账号名 / 客户端名 / 模型
   const sideWho = $('side-who');
   if (sideWho) sideWho.textContent = '';
   // 弹窗里的一次性明文 key / 粘贴过的 CC key / 管理员密码框都不能留在 DOM 里：

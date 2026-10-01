@@ -1,12 +1,12 @@
 /* 后台控制台外壳：hash 路由 + 侧边栏（当前页高亮 / 内网上游状态）。
-   路由： #/accounts（默认） #/keys #/users #/events #/logs #/usage
-   - 未知 hash 回落默认页；刷新后按 hash 恢复当前页（纯客户端，服务端只发同一张 HTML）。
+   路由： #/overview（默认） #/accounts #/keys #/users #/events #/logs #/usage
+   - 未知 / 空 hash 回落默认页（概览）；刷新后按 hash 恢复当前页（纯客户端，服务端只发同一张 HTML）。
    - <1024px 侧边栏收成抽屉：#admin-drawer 复选框由 #admin-head 的汉堡 label 打开，
      点某个菜单项后自动收起（js-route 在下面处理）。
    - 切页只改 .admin-page 的显示，不销毁任何区块，弹窗/表单状态原样保留。 */
 
-const ADMIN_ROUTES = ['accounts', 'keys', 'users', 'events', 'logs', 'usage'];
-const ADMIN_DEFAULT_ROUTE = 'accounts';
+const ADMIN_ROUTES = ['overview', 'accounts', 'keys', 'users', 'events', 'logs', 'usage'];
+const ADMIN_DEFAULT_ROUTE = 'overview';
 
 /** '#/logs' → 'logs'；未知或空 hash → 默认页。 */
 function adminRouteOf(hash) {

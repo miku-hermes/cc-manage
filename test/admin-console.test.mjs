@@ -127,16 +127,16 @@ test('控制台#5：引入切页脚本，且 hashchange 监听真的注册了', 
   assert.ok((listeners.hashchange ?? []).length >= 1, 'admin-console.js 必须注册 hashchange 监听');
 });
 
-test('控制台#6：默认页是 #/accounts，其余页面隐藏', async () => {
+test('控制台#6：默认页是 #/overview，其余页面隐藏', async () => {
   const { shim, page } = await consolePage();
-  assert.equal(page.adminRouteOf(''), 'accounts', '空 hash 回落默认页');
-  assert.equal(page.adminRouteOf('#/nope'), 'accounts', '未知 hash 回落默认页');
-  assert.equal(shim.el('page-accounts').style.display, '', '默认页可见');
-  for (const id of ['page-keys', 'page-users', 'page-events', 'page-logs']) {
+  assert.equal(page.adminRouteOf(''), 'overview', '空 hash 回落默认页 overview');
+  assert.equal(page.adminRouteOf('#/nope'), 'overview', '未知 hash 回落默认页 overview');
+  assert.equal(shim.el('page-overview').style.display, '', '默认页可见');
+  for (const id of ['page-accounts', 'page-keys', 'page-users', 'page-events', 'page-logs', 'page-usage']) {
     assert.equal(shim.el(id).style.display, 'none', `${id} 非当前页必须隐藏`);
     assert.equal(shim.el(id).getAttribute('aria-hidden'), 'true', `${id} aria-hidden=true`);
   }
-  assert.equal(shim.el('page-accounts').getAttribute('aria-hidden'), 'false', '当前页 aria-hidden=false');
+  assert.equal(shim.el('page-overview').getAttribute('aria-hidden'), 'false', '当前页 aria-hidden=false');
 });
 
 test('控制台#7：hashchange 切到 #/logs 时日志页可见（真行为，不只是字符串）', async () => {
@@ -152,10 +152,10 @@ test('控制台#7：hashchange 切到 #/logs 时日志页可见（真行为，�
   const active = nav.filter((a) => a.getAttribute('aria-current') === 'page').map((a) => a.getAttribute('data-nav'));
   assert.deepEqual(active, ['logs'], '只有 #/logs 菜单项标为当前页');
 
-  // 未知 hash 再切回去 → 回落默认页。
+  // 未知 hash 再切回去 → 回落默认页（本次起默认页是概览）。
   shim.window.location.hash = '#/does-not-exist';
   page.applyAdminHash();
-  assert.equal(shim.el('page-accounts').style.display, '', '未知 hash 回落 #/accounts');
+  assert.equal(shim.el('page-overview').style.display, '', '未知 hash 回落 #/overview');
   assert.equal(shim.el('page-logs').style.display, 'none', '日志页重新隐藏');
 });
 

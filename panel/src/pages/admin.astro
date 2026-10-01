@@ -92,6 +92,53 @@ import {
       </div>
       <p class="readonly text-sm text-base-content/60" id="readonly"></p>
 
+      <section class="admin-page admin-page-overview" id="page-overview" aria-hidden="true">
+        <h2 class="sr-only">概览</h2>
+        <div class="banner alert hidden" id="overview-alert" role="status"></div>
+
+        <div id="overview-kpis" class="grid grid-cols-2 gap-3 lg:grid-cols-4" aria-label="概览 KPI">
+          <div class="card border border-base-300 bg-base-100"><div class="card-body gap-1 p-3">
+            <span class="text-xs text-base-content/60">今日请求</span>
+            <span id="overview-requests" class="text-xl font-semibold tabular-nums">—</span>
+            <span id="overview-requests-sub" class="text-xs text-base-content/60"></span>
+          </div></div>
+          <div class="card border border-base-300 bg-base-100"><div class="card-body gap-1 p-3">
+            <span class="text-xs text-base-content/60">错误率</span>
+            <span id="overview-error-rate" class="text-xl font-semibold tabular-nums">—</span>
+            <span id="overview-error-rate-sub" class="text-xs text-base-content/60"></span>
+          </div></div>
+          <div class="card border border-base-300 bg-base-100"><div class="card-body gap-1 p-3">
+            <span class="text-xs text-base-content/60">今日 token</span>
+            <span id="overview-tokens" class="text-xl font-semibold tabular-nums">—</span>
+            <span id="overview-tokens-sub" class="text-xs text-base-content/60"></span>
+          </div></div>
+          <div class="card border border-base-300 bg-base-100"><div class="card-body gap-1 p-3">
+            <span class="text-xs text-base-content/60">可用账号</span>
+            <span id="overview-accounts-available" class="text-xl font-semibold tabular-nums">—</span>
+            <span id="overview-accounts-sub" class="text-xs text-base-content/60"></span>
+          </div></div>
+        </div>
+
+        <section class="card border border-base-300 bg-base-100" id="sec-overview-accounts">
+          <div class="card-body gap-2 p-3">
+            <h3 class="card-title text-base">账号池概览</h3>
+            <div class="divide-y divide-base-200" id="overview-accounts" aria-label="账号池概览（只读，点击整行进入账号池）"></div>
+          </div>
+        </section>
+
+        <section class="card border border-base-300 bg-base-100" id="sec-overview-logs">
+          <div class="card-body gap-2 p-3">
+            <h3 class="card-title text-base">最近请求</h3>
+            <div class="overflow-x-auto">
+              <table class="table table-sm">
+                <thead><tr><th>时间</th><th>客户端</th><th>模型</th><th>状态</th><th>耗时</th></tr></thead>
+                <tbody id="overview-logs"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </section>
+
       <section class="admin-page" id="page-accounts" aria-hidden="true">
         <h2 class="sr-only">账号池</h2>
         <section class="card border border-base-300 bg-base-100" id="sec-accounts">
@@ -404,6 +451,8 @@ import {
 <template id="tpl-log-row"><tr><td data-label="时间" class="cell-sub text-xs tabular-nums" data-f="time"></td><td data-label="客户端"><span class="cell-name" data-f="client"></span></td><td data-label="账号"><span class="cell-name" data-f="account"></span></td><td data-label="模型" class="cell-sub text-xs" data-f="model"></td><td data-label="状态"><span class="inline-flex items-center gap-1"><span class="status-dot inline-block size-2 shrink-0 rounded-full" data-f="dot" aria-hidden="true"></span><span class="tabular-nums" data-f="status"></span></span></td><td data-label="耗时" class="tabular-nums" data-f="dur"></td><td data-label="入 token" class="tabular-nums" data-f="tok-in"></td><td data-label="出 token" class="tabular-nums" data-f="tok-out"></td></tr></template>
 <template id="tpl-log-empty"><tr><td colspan="8" class="empty text-base-content/60" data-f="empty"></td></tr></template>
 <template id="tpl-event"><div class="event flex flex-wrap items-center gap-2"><span class="event-time shrink-0 font-mono text-xs text-base-content/60" data-f="time"></span><span class="event-level shrink-0" data-f="level"><span class="tag badge badge-sm" data-f="badge"></span></span><span class="event-msg min-w-0 flex-1 max-[820px]:basis-full" data-f="msg"></span></div></template>
+<template id="tpl-overview-account"><a class="overview-account flex items-center gap-2 px-1 py-2 hover:bg-base-200" href="#/accounts"><span class="status-dot inline-block size-2 shrink-0 rounded-full" data-f="dot" aria-hidden="true"></span><span class="cell-name min-w-0 flex-1 truncate" data-f="name"></span><span class="flex items-center gap-1"><span class="text-xs text-base-content/60">5h</span><progress class="progress progress-primary h-1.5 w-16" max="100" value="0" data-f="bar-5h"></progress><span class="w-12 text-right text-xs tabular-nums" data-f="pct-5h"></span></span><span class="flex items-center gap-1"><span class="text-xs text-base-content/60">周</span><progress class="progress progress-primary h-1.5 w-16" max="100" value="0" data-f="bar-week"></progress><span class="w-12 text-right text-xs tabular-nums" data-f="pct-week"></span></span><span class="w-16 text-right text-xs tabular-nums" data-f="remaining"></span></a></template>
+<template id="tpl-overview-log"><tr class="overview-log"><td data-label="时间" class="cell-sub text-xs tabular-nums" data-f="time"></td><td data-label="客户端"><span class="cell-name" data-f="client"></span></td><td data-label="模型" class="cell-sub text-xs" data-f="model"></td><td data-label="状态"><span class="inline-flex items-center gap-1"><span class="status-dot inline-block size-2 shrink-0 rounded-full" data-f="dot" aria-hidden="true"></span><span class="tabular-nums" data-f="status"></span></span></td><td data-label="耗时" class="tabular-nums" data-f="dur"></td></tr></template>
 <template id="tpl-empty-row"><tr><td colspan="5" class="empty text-base-content/60" data-f="empty"></td></tr></template>
 <template id="tpl-empty-line"><div class="empty text-base-content/60" data-f="empty"></div></template>
 
@@ -422,6 +471,7 @@ import {
 <script src="js/logs.js" is:raw></script>
 <script src="js/admin-logs.js" is:raw></script>
 <script src="js/admin-usage.js" is:raw></script>
+<script src="js/admin-overview.js" is:raw></script>
 <script src="js/modal.js" is:raw></script>
 <script src="js/detail.js" is:raw></script>
 <script src="js/app-admin.js" is:raw></script>
