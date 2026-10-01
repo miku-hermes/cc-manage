@@ -567,3 +567,14 @@
      看着像被少女"踩住"）。下移 14px 让标签顶边越过图底，形成干净的"小人正下方"。 */
   .hero-sub { margin-top: 26px; }
 }
+
+/* ── 未登录时后台外壳整块隐藏（§1 缺陷修复）───────────────────────────────
+   线上实测：未登录打开 /admin 时登录门可见，但侧边栏仍在门下方渲染（盒子 y=956，
+   要滚动才看到菜单）。原因是 render-gate.js 只切了 #admin-head / #admin-main 的
+   display，`.drawer`（侧边栏 + 页面容器）没被切。
+   修法与 showGate/showAdmin 同一套：登录态给 #admin-shell 去掉 `shell-hidden`，
+   未登录态加上；body.gate 作为兜底（body 类由 showGate 维护，JS 未跑完也挡得住）。
+   用 display:none 而不是 inert —— 视觉与 Tab 顺序一起干净，且不会误冻弹窗。
+   注意必须留在所有 @layer 之外：daisyUI 的 .drawer 落在 utilities 层，跨层特异性不生效。 */
+body.gate #admin-shell,
+#admin-shell.shell-hidden { display: none; }

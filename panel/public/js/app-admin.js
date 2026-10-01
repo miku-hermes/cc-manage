@@ -447,7 +447,7 @@ function setUsageRange(range) {
   }
 }
 
-// ── 侧边栏切页钩子：进「请求日志 / 用量统计」页时才取数（首屏不打这两个接口）──
+// ── 侧边栏切页钩子：进「请求日志 / 用量统计 / 系统设置」页时才取数（首屏不打这些接口）──
 // 未登录时一律不拉后台数据（避免把 401 当成「会话失效」踢回登录页）。
 function adminAuthed() { return !!(state.auth && state.auth.authenticated); }
 onAdminPageChange((route) => {
@@ -455,6 +455,7 @@ onAdminPageChange((route) => {
   if (route === 'overview') loadOverview().catch(() => {});
   else if (route === 'logs') loadLogs().catch(() => {});
   else if (route === 'usage') reloadUsage().catch(() => {});
+  else if (route === 'settings') loadSettings().catch(() => {});
 });
 
 // ── 事件过滤（#level）：change 走 document 级委托 ─────────────────────

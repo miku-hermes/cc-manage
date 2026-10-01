@@ -42,9 +42,9 @@ function dayName(time) {
 
 export function createUsageRecorder(opts = {}) {
   const dir = path.resolve(opts.dir ?? 'data/reqlog');
-  const enabled = opts.enabled !== false;
-  const retentionDays = number(opts.retentionDays ?? 7);
-  const maxFileBytes = number(opts.maxFileBytes ?? 32 * 1024 * 1024);
+  let enabled = opts.enabled !== false;
+  let retentionDays = number(opts.retentionDays ?? 7);
+  let maxFileBytes = number(opts.maxFileBytes ?? 32 * 1024 * 1024);
   const memoryTail = Math.max(0, number(opts.memoryTail ?? 500));
   let queue = Promise.resolve();
   let written = 0, dropped = 0, bytes = 0, scannedFiles = 0, degraded = false, warned = false, dirReady = false;
@@ -63,8 +63,22 @@ export function createUsageRecorder(opts = {}) {
     }
   };
   if (enabled) cleanup();
-  const timer = enabled && opts.noTimers !== true ? setInterval(cleanup, 86400000) : null;
+  let timer = enabled && opts.noTimers !== true ? setInterval(cleanup, 86400000) : null;
   timer?.unref?.();
+
+  /**
+   * 运行期更新录制选项（后台「系统设置」页保存后立即生效）：开关 / 保留天数 /
+   * 单文件上限都可改。record() 里的判定读的是这几个闭包变量，所以改完立刻生效；
+   * 打开时补一个每日清理定时器，关闭时清掉，避免泄漏。
+   */
+  function setOptions({ enabled: nextEnabled, retentionDays: nextRetentionDays, maxFileBytes: nextMaxFileBytes } = {}) {
+    if (typeof nextEnabled === 'boolean') enabled = nextEnabled;
+    if (nextRetentionDays !== undefined) retentionDays = number(nextRetentionDays ?? 7);
+    if (nextMaxFileBytes !== undefined) maxFileBytes = number(nextMaxFileBytes ?? 32 * 1024 * 1024);
+    if (enabled && !timer && opts.noTimers !== true) { timer = setInterval(cleanup, 86400000); timer?.unref?.(); }
+    if (!enabled && timer) { clearInterval(timer); timer = null; }
+    if (enabled) cleanup();
+  }
   function record(entry) {
     if (!enabled) return Promise.resolve();
     const safe = { t: number(entry?.t ?? Date.now()), dur: number(entry?.dur), keyId: entry?.keyId ?? null, keyName: entry?.keyName ?? null, accountKeyId: entry?.accountKeyId ?? null, accountName: entry?.accountName ?? null, model: entry?.model ?? null, path: entry?.path ?? null, status: number(entry?.status), stream: !!entry?.stream, tokensIn: number(entry?.tokensIn), tokensOut: number(entry?.tokensOut), ip: entry?.ip ?? null, error: entry?.error ?? null };
@@ -101,6 +115,7 @@ export function createUsageRecorder(opts = {}) {
   const identity = (e) => `${e.t}\0${e.path}\0${e.status}`;
   return {
     record,
+    setOptions,
     async recent({ limit = 100, offset = 0, keyId, status, model, q } = {}) {
       await queue;
       const start = Math.max(0, number(offset)), size = Math.min(500, number(limit)), needed = start + size;
@@ -162,6 +177,6 @@ export function createUsageRecorder(opts = {}) {
       return { totals, byKey: sort(groups.byKey), byModel: sort(groups.byModel), byAccount: sort(groups.byAccount), series: [...groups.series.values()].sort((a, b) => a.t - b.t) };
     },
     stats() { return { written, dropped, bytes, scannedFiles, files: (() => { try { return fs.readdirSync(dir).filter((f) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(f)).length; } catch { return 0; } })(), degraded }; },
-    async close() { if (timer) clearInterval(timer); await queue; },
+    async close() { if (timer) { clearInterval(timer); timer = null; } await queue; },
   };
 }

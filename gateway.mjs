@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadConfig, configWarnings } from './src/config.mjs';
+import { loadConfig, configWarnings, settingsView, validateSettingsPatch, writeConfigSettings } from './src/config.mjs';
 import { createStore, CC_KEY_PREFIX, LOCAL_KEY_PREFIX, parseKeyPolicy, keyPolicyForDisk, KEY_POLICY_FIELDS } from './src/store.mjs';
 import { createHistory, HISTORY_BUCKET_MS, HISTORY_TICK_MS } from './src/history.mjs';
 import { createLogger, keyIdOf, keyPrefixOf, redact, sanitizeForLog } from './src/log.mjs';
@@ -122,7 +122,8 @@ function peekSessionFromBody(chunks) {
 export async function startGateway(overrides = {}) {
   // M1：loadConfig 会拒绝 config.json 里类型不合法的安全开关（直接抛错阻止启动）；
   // 未知键 / 无法解析的值收集成 warnings，这里在 logger 就绪后打出来，别静默吞掉。
-  const loadedConfig = loadConfig(overrides.configPath ?? path.join(ROOT, 'config.json'), overrides.env ?? process.env);
+  const configPath = overrides.configPath ?? path.join(ROOT, 'config.json');
+  const loadedConfig = loadConfig(configPath, overrides.env ?? process.env);
   const config = { ...loadedConfig, ...(overrides.config ?? {}) };
   // B22：面板静态产物目录（HTML 走 readPanel/readAdmin，css/js 走 serveStatic）。
   // 仓库根 public/ 是构建产物（scripts/panel-build.sh 从 panel/dist 同步），不进 git；
@@ -1267,6 +1268,41 @@ export async function startGateway(overrides = {}) {
         dashboardPublic: dashboardPublic(),
         user: username ? { username } : null,
       });
+    }
+
+    // §2 系统设置：白名单 6 项，只读当前生效值 / 严格校验的局部更新。
+    if (method === 'GET' && p === '/api/admin/settings') {
+      return sendJSON(res, 200, { ok: true, settings: settingsView(config) });
+    }
+
+    if (method === 'PATCH' && p === '/api/admin/settings') {
+      requireWritable();
+      const body = await readJSONBody(req);
+      let patch;
+      try {
+        patch = validateSettingsPatch(body);
+      } catch (e) {
+        throw new HttpError(400, e.message);
+      }
+      // 顺序很重要：**先落盘成功再改内存**。任何一步失败都直接抛 —— 绝不能出现
+      // 「内存改了、盘没写」的假成功。落盘是文本级最小改动，其余键逐字节不变。
+      try {
+        writeConfigSettings(configPath, patch);
+      } catch (e) {
+        log.error(`系统设置写入失败: ${e.message}`);
+        throw new HttpError(500, '配置写入失败，内存值保持不变');
+      }
+      Object.assign(config, patch);
+      usage.setOptions({
+        enabled: config.requestLogEnabled,
+        retentionDays: config.requestLogRetentionDays,
+        maxFileBytes: Number(config.requestLogMaxMb) * 1024 * 1024,
+      });
+      poller.setIntervals({
+        idleIntervalMs: config.quotaPollIntervalMs,
+        activeIntervalMs: config.quotaActivePollIntervalMs,
+      });
+      return sendJSON(res, 200, { ok: true, settings: settingsView(config) });
     }
 
     if (method === 'GET' && p === '/api/admin/logs') {

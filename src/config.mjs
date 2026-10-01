@@ -264,3 +264,98 @@ export function loadConfig(configPath = path.resolve('config.json'), env = proce
   CONFIG_WARNINGS.set(cfg, warnings);
   return cfg;
 }
+
+/* ── 后台「系统设置」页（§2）─────────────────────────────────────────────
+   只允许改下面 6 项（键名与 DEFAULTS / config.json 完全一致；config.json 是**扁平**结构，
+   任务书里的 requestLog.enabled / quotaPoll.activeIntervalMs 在代码里就是
+   requestLogEnabled / quotaActivePollIntervalMs）。其余键仍走 config.json + 重启面，
+   后台接口不成为任意配置写入面。 */
+export const SETTINGS_FIELDS = Object.freeze({
+  requestLogEnabled: { type: 'boolean' },
+  requestLogRetentionDays: { type: 'integer', min: 1, max: 365 },
+  requestLogMaxMb: { type: 'integer', min: 1, max: 1024 },
+  publicDashboard: { type: 'boolean' },
+  quotaPollIntervalMs: { type: 'integer', min: 5000, max: 3600000 },
+  quotaActivePollIntervalMs: { type: 'integer', min: 5000, max: 3600000 },
+});
+
+/** 从当前生效配置里摘出白名单字段（GET /api/admin/settings）。 */
+export function settingsView(cfg) {
+  const out = {};
+  for (const key of Object.keys(SETTINGS_FIELDS)) out[key] = cfg?.[key];
+  return out;
+}
+
+/**
+ * 严格校验一个局部更新，返回归一后的 {key: value}。
+ * 类型错 / 越界 / 未知字段一律抛错（调用方转 400）—— 静默忽略会让「保存成功但没生效」
+ * 变成不可诊断的行为。
+ */
+export function validateSettingsPatch(patch) {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+    throw new Error('请求体必须是 JSON 对象');
+  }
+  const out = {};
+  for (const key of Object.keys(patch)) {
+    const spec = SETTINGS_FIELDS[key];
+    if (!spec) throw new Error(`未知设置项「${key}」`);
+    const value = patch[key];
+    if (spec.type === 'boolean') {
+      if (typeof value !== 'boolean') throw new Error(`「${key}」必须是布尔值（true/false）`);
+      out[key] = value;
+      continue;
+    }
+    if (typeof value !== 'number' || !Number.isInteger(value)) {
+      throw new Error(`「${key}」必须是整数`);
+    }
+    if (value < spec.min || value > spec.max) {
+      throw new Error(`「${key}」超出范围（${spec.min}–${spec.max}，收到 ${value}）`);
+    }
+    out[key] = value;
+  }
+  return out;
+}
+
+function escapeRegExp(text) {
+  return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** 白名单键不存在时按原缩进追加到对象末尾（保持文件其余部分一个字节都不动）。 */
+function appendSettingsToObject(text, lines) {
+  const trimmed = text.replace(/\s+$/, '');
+  if (!trimmed.endsWith('}')) throw new Error('config.json 结构异常（找不到对象结尾），已拒绝写入');
+  const indent = (text.match(/^([ \t]+)"/m) ?? [null, '  '])[1];
+  const headTrim = trimmed.slice(0, -1).replace(/\s+$/, '');
+  const sep = headTrim === '' || headTrim.endsWith('{') || headTrim.endsWith(',') ? '' : ',';
+  const body = headTrim + sep + lines.map((line) => `\n${indent}${line},`).join('');
+  return `${body.replace(/,\s*$/, '')}\n}\n`;
+}
+
+/**
+ * 把白名单字段写回 config.json：**文本级最小改动** —— 只替换这些键的值 token，
+ * 其余键（含顺序 / 缩进 / 注释外的格式）逐字节保持不变；键不存在时按原缩进追加。
+ * 写前先留一份 `<file>.bak`。任何一步失败都直接抛（调用方必须保持内存值不变）。
+ */
+export function writeConfigSettings(configPath, patch) {
+  const entries = Object.entries(patch || {});
+  if (entries.length === 0) return;
+  let raw;
+  try {
+    raw = fs.readFileSync(configPath, 'utf8');
+  } catch (e) {
+    if (e?.code !== 'ENOENT') throw e;
+    raw = '{}\n';
+  }
+  let text = raw;
+  const missing = [];
+  for (const [key, value] of entries) {
+    const token = JSON.stringify(value);
+    const re = new RegExp(`("${escapeRegExp(key)}"\\s*:\\s*)(-?\\d+(?:\\.\\d+)?(?:[eE][-+]?\\d+)?|true|false|null|"(?:[^"\\\\]|\\\\.)*")`);
+    const m = re.exec(text);
+    if (m) text = text.slice(0, m.index) + m[1] + token + text.slice(m.index + m[0].length);
+    else missing.push(`${JSON.stringify(key)}: ${token}`);
+  }
+  if (missing.length) text = appendSettingsToObject(text, missing);
+  fs.writeFileSync(`${configPath}.bak`, raw);
+  fs.writeFileSync(configPath, text);
+}

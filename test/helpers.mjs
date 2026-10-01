@@ -142,6 +142,9 @@ export async function closeServer(server, timeoutMs = 3000) {
 /** 起一个真实网关，上游指向 mock。返回 ctx，测试结束务必 await ctx.close()。 */
 export async function startTestGateway({
   accounts, keys, config = {}, plans, behavior, rootDir, noTimers = true, now,
+  // §2：系统设置落盘路径注入点（默认仍是 gateway.mjs 里的 ROOT/config.json）。
+  // 设置写入用例必须把 config.json 指到临时目录，绝不能碰仓库根的真实配置。
+  configPath,
   // B22：面板产物目录注入点（默认仓库根 public/）。测试传一个没有 index.html 的目录即可
   // 复现「面板未构建」→ GET / 必须 503，而不是裸 500。
   publicDir,
@@ -186,6 +189,7 @@ export async function startTestGateway({
         noInitialRefresh,
         now,
         publicDir,
+        configPath,
         env: { ...process.env, CC_ACCOUNTS: '', ASSET_NO: '1' },
         config: {
           gatewayPort: picked,

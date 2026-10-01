@@ -51,10 +51,22 @@ function clearSensitiveData() {
   $('who').innerHTML = '';
 }
 
+/* 后台外壳（侧边栏 + 顶栏 + 页面容器）的整块显隐：登录门可见时外壳必须完全不出现。
+   这里只切一个类（CSS #admin-shell.shell-hidden{display:none}），DOM 一个都不删 ——
+   .admin-sidebar / #admin-nav / #page-* 仍在产出 HTML 里。display:none 同时把它们
+   移出 Tab 顺序，不需要 inert（inert 会把弹窗一起冻住，项目踩过这个坑）。 */
+function showAdminShell(on) {
+  const shell = $('admin-shell');
+  if (!shell) return;
+  if (on) shell.classList.remove('shell-hidden');
+  else shell.classList.add('shell-hidden');
+}
+
 function showGate(mode, me) {
   clearSensitiveData();
   state.mode = mode;
   document.body.className = 'gate';
+  showAdminShell(false);
   $('boot-loading').style.display = 'none';
   $('gate-head').style.display = '';
   $('gate-main').style.display = '';
@@ -76,6 +88,7 @@ function showGate(mode, me) {
 
 function showAdmin() {
   document.body.className = '';
+  showAdminShell(true);
   $('boot-loading').style.display = 'none';
   $('gate-head').style.display = 'none';
   $('gate-main').style.display = 'none';
@@ -105,7 +118,7 @@ function clearLoadError() {
 function applyWritable(writable, reason) {
   state.writable = writable !== false;
   const locked = !state.writable;
-  for (const id of ['add-account', 'add-key', 'k-submit', 'a-submit', 'r-submit', 'add-user', 'u-submit', 'p-submit']) {
+  for (const id of ['add-account', 'add-key', 'k-submit', 'a-submit', 'r-submit', 'add-user', 'u-submit', 'p-submit', 'settings-save']) {
     const el = $(id);
     if (el) { el.disabled = locked; el.title = locked ? (reason || '当前为只读模式') : ''; }
   }

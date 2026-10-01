@@ -63,7 +63,7 @@ import {
   </section>
 </main>
 
-<div class="drawer lg:drawer-open">
+<div class="drawer lg:drawer-open" id="admin-shell">
   <input id="admin-drawer" type="checkbox" class="drawer-toggle">
 
   <div class="drawer-content flex min-h-screen flex-col">
@@ -262,6 +262,85 @@ import {
         <div id="usage-kpis" class="grid grid-cols-2 gap-3 lg:grid-cols-4" aria-label="用量 KPI"></div>
         <div class="overflow-x-auto"><div id="usage-chart" style="height:280px"></div></div>
         <div id="usage-tables" class="flex flex-wrap gap-3"></div>
+      </section>
+
+      <section class="admin-page admin-page-settings" id="page-settings" aria-hidden="true">
+        <h2 class="sr-only">系统设置</h2>
+        <div class="banner alert alert-error hidden" id="settings-err" role="alert"></div>
+        <section class="card border border-base-300 bg-base-100" id="sec-settings">
+          <div class="card-body gap-3">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <h3 class="card-title text-base">系统设置</h3>
+              <span class="text-xs text-base-content/60">保存后立即写入 config.json（写前自动留一份 .bak）</span>
+            </div>
+            <div class="divide-y divide-base-200" id="settings-list">
+              <div class="setting-row flex items-center justify-between gap-3 py-3">
+                <div class="min-w-0">
+                  <span class="block text-sm font-medium" id="set-label-requestLogEnabled">请求日志</span>
+                  <span class="block text-xs text-base-content/60">记录每次 /v1 请求的明细（时间 / 客户端 / 账号 / 模型 / 状态 / 耗时 / token）。</span>
+                </div>
+                <div class="setting-ctl flex shrink-0 items-center gap-2">
+                  <span class="setting-current text-xs tabular-nums text-base-content/60" data-current="requestLogEnabled">—</span>
+                  <input id="set-requestLogEnabled" data-setting="requestLogEnabled" class="toggle toggle-primary" type="checkbox" aria-labelledby="set-label-requestLogEnabled">
+                </div>
+              </div>
+              <div class="setting-row flex items-center justify-between gap-3 py-3">
+                <div class="min-w-0">
+                  <span class="block text-sm font-medium" id="set-label-requestLogRetentionDays">日志保留天数</span>
+                  <span class="block text-xs text-base-content/60">超过天数的请求日志文件会被清理（1–365 天）。</span>
+                </div>
+                <div class="setting-ctl flex shrink-0 items-center gap-2">
+                  <span class="setting-current text-xs tabular-nums text-base-content/60" data-current="requestLogRetentionDays">—</span>
+                  <input id="set-requestLogRetentionDays" data-setting="requestLogRetentionDays" class="input input-bordered input-sm w-28 tabular-nums max-[820px]:min-h-9" type="number" min="1" max="365" step="1" inputmode="numeric" aria-labelledby="set-label-requestLogRetentionDays">
+                </div>
+              </div>
+              <div class="setting-row flex items-center justify-between gap-3 py-3">
+                <div class="min-w-0">
+                  <span class="block text-sm font-medium" id="set-label-requestLogMaxMb">单个日志文件上限</span>
+                  <span class="block text-xs text-base-content/60">单日日志文件超过上限后丢弃后续条目，单位 MB（1–1024）。</span>
+                </div>
+                <div class="setting-ctl flex shrink-0 items-center gap-2">
+                  <span class="setting-current text-xs tabular-nums text-base-content/60" data-current="requestLogMaxMb">—</span>
+                  <input id="set-requestLogMaxMb" data-setting="requestLogMaxMb" class="input input-bordered input-sm w-28 tabular-nums max-[820px]:min-h-9" type="number" min="1" max="1024" step="1" inputmode="numeric" aria-labelledby="set-label-requestLogMaxMb">
+                </div>
+              </div>
+              <div class="setting-row flex items-center justify-between gap-3 py-3">
+                <div class="min-w-0">
+                  <span class="block text-sm font-medium" id="set-label-publicDashboard">前台面板公开只读</span>
+                  <span class="block text-xs text-base-content/60">关闭后 /、/trend 与前台的 /api/status 都需要登录后台才能查看。</span>
+                </div>
+                <div class="setting-ctl flex shrink-0 items-center gap-2">
+                  <span class="setting-current text-xs tabular-nums text-base-content/60" data-current="publicDashboard">—</span>
+                  <input id="set-publicDashboard" data-setting="publicDashboard" class="toggle toggle-primary" type="checkbox" aria-labelledby="set-label-publicDashboard">
+                </div>
+              </div>
+              <div class="setting-row flex items-center justify-between gap-3 py-3">
+                <div class="min-w-0">
+                  <span class="block text-sm font-medium" id="set-label-quotaPollIntervalMs">空闲期额度轮询间隔</span>
+                  <span class="block text-xs text-base-content/60">最近没有代理请求时，多久查一轮上游额度，单位毫秒（5000–3600000）。</span>
+                </div>
+                <div class="setting-ctl flex shrink-0 items-center gap-2">
+                  <span class="setting-current text-xs tabular-nums text-base-content/60" data-current="quotaPollIntervalMs">—</span>
+                  <input id="set-quotaPollIntervalMs" data-setting="quotaPollIntervalMs" class="input input-bordered input-sm w-32 tabular-nums max-[820px]:min-h-9" type="number" min="5000" max="3600000" step="1000" inputmode="numeric" aria-labelledby="set-label-quotaPollIntervalMs">
+                </div>
+              </div>
+              <div class="setting-row flex items-center justify-between gap-3 py-3">
+                <div class="min-w-0">
+                  <span class="block text-sm font-medium" id="set-label-quotaActivePollIntervalMs">活跃期额度轮询间隔</span>
+                  <span class="block text-xs text-base-content/60">最近有代理请求时改用这个间隔查上游额度，单位毫秒（5000–3600000）。</span>
+                </div>
+                <div class="setting-ctl flex shrink-0 items-center gap-2">
+                  <span class="setting-current text-xs tabular-nums text-base-content/60" data-current="quotaActivePollIntervalMs">—</span>
+                  <input id="set-quotaActivePollIntervalMs" data-setting="quotaActivePollIntervalMs" class="input input-bordered input-sm w-32 tabular-nums max-[820px]:min-h-9" type="number" min="5000" max="3600000" step="1000" inputmode="numeric" aria-labelledby="set-label-quotaActivePollIntervalMs">
+                </div>
+              </div>
+            </div>
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <span id="settings-status" class="text-xs text-base-content/60" role="status"></span>
+              <button id="settings-save" class="btn btn-primary btn-sm max-[820px]:min-h-9" type="button">保存</button>
+            </div>
+          </div>
+        </section>
       </section>
     </main>
   </div>
@@ -471,6 +550,7 @@ import {
 <script src="js/logs.js" is:raw></script>
 <script src="js/admin-logs.js" is:raw></script>
 <script src="js/admin-usage.js" is:raw></script>
+<script src="js/admin-settings.js" is:raw></script>
 <script src="js/admin-overview.js" is:raw></script>
 <script src="js/modal.js" is:raw></script>
 <script src="js/detail.js" is:raw></script>

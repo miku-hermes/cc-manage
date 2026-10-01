@@ -33,8 +33,8 @@ export function createAdaptivePoller({
   isBusy = null,
   log = null,
 } = {}) {
-  const idle = Number(idleIntervalMs) > 0 ? Number(idleIntervalMs) : 0;
-  const active = Number(activeIntervalMs) > 0 ? Number(activeIntervalMs) : 0;
+  let idle = Number(idleIntervalMs) > 0 ? Number(idleIntervalMs) : 0;
+  let active = Number(activeIntervalMs) > 0 ? Number(activeIntervalMs) : 0;
   const windowMs = Math.max(0, Number(activeWindowMs) || 0);
 
   let timer = null;
@@ -114,6 +114,19 @@ export function createAdaptivePoller({
   }
 
   /**
+   * 运行期更新间隔（后台「系统设置」页保存后立即生效）：空闲/活跃间隔都可改。
+   * 更新后按新值重排下一拍；正在跑的那一轮不受影响（不打断在途刷新）。
+   * 传入非数字 / 未定义则保持原值，避免半截更新把间隔打回默认。
+   */
+  function setIntervals({ idleIntervalMs: nextIdle, activeIntervalMs: nextActive } = {}) {
+    if (nextIdle !== undefined && Number.isFinite(Number(nextIdle))) idle = Number(nextIdle) > 0 ? Number(nextIdle) : 0;
+    if (nextActive !== undefined && Number.isFinite(Number(nextActive))) active = Number(nextActive) > 0 ? Number(nextActive) : 0;
+    if (stopped) return;
+    if (!enabled()) { clear(); return; }
+    arm(true);
+  }
+
+  /**
    * 记录一次代理活动（有请求说明正在被使用）。
    * 若当前排的是更晚的空闲间隔，提前改排到活跃间隔；已经是活跃间隔则不动，
    * 避免持续有流量时把定时器无限往后推。
@@ -149,6 +162,7 @@ export function createAdaptivePoller({
     start,
     stop,
     touch,
+    setIntervals,
     isActive,
     nextDelayMs,
     restoreActivity,
