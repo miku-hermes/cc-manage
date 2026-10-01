@@ -31,7 +31,14 @@ CONTAINERS=("$GATEWAY_NAME" "$CORE_NAME" "$MOCK_NAME")
 cleanup() {
   for c in "${CONTAINERS[@]}"; do docker rm -f "$c" >/dev/null 2>&1 || true; done
   docker network rm "$NET" >/dev/null 2>&1 || true
-  rm -rf "$WORK"
+  # 容器以镜像内的 uid 1000 写文件（账号目录旁的 data/reqlog/*.jsonl 等），
+  # 宿主在 CI 上常是另一个 uid（runner=1001）→ 直接 rm 会 Permission denied，
+  # 在 `set -e` 下把「冒烟全绿」判成整条失败（实测：断言全过、清理阶段 exit 1）。
+  # $WORK 自身有 a+rwX，但容器新建的子目录没有 → 先用容器以 root 清空，再删宿主目录。
+  if [ -d "$WORK" ]; then
+    docker run --rm -u 0 -v "$WORK:/w" "$GATEWAY_IMAGE" sh -c 'rm -rf /w/* /w/.[!.]*' >/dev/null 2>&1 || true
+  fi
+  rm -rf "$WORK" 2>/dev/null || true
 }
 
 dump_logs() {
