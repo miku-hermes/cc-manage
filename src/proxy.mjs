@@ -155,11 +155,48 @@ function pipeResponse(upstreamRes, res, { onChunk, log, secrets }) {
   });
 }
 
+// 请求体里的 "model" 可能出现在任意位置（长 system prompt / 长 messages 排在前面时，
+// gateway 只 peek 头部 8KB，看不到它 → 请求日志里 model=null，统计页出现误导性的「(未知)」）。
+// 不能为记日志把整份 body 留在内存：这里在**既有的** body tee 流上做有界增量扫描 ——
+// 只保留最后 CARRY 字节处理跨 chunk 边界的 JSON 键，找到即停；未找到则在 maxBytes 处停止
+// 扫描（上限 = proxy 的 maxBodyBytes，默认 8MB）。每字节只解码一次，不额外缓存 body。
+const MODEL_FIELD_RE = /"model"\s*:\s*"([^"]{1,120})"/;
+const MODEL_SCAN_CARRY_BYTES = 4096;
+export function createModelBodyScanner({ maxBytes = 8 * 1024 * 1024 } = {}) {
+  const cap = Number(maxBytes) > 0 ? Number(maxBytes) : 8 * 1024 * 1024;
+  let carry = Buffer.alloc(0);
+  let scanned = 0;
+  let found = null;
+  let done = false;
+  return {
+    push(chunk) {
+      if (done || found !== null || !chunk || !chunk.length) return;
+      scanned += chunk.length;
+      const buf = carry.length ? Buffer.concat([carry, chunk]) : chunk;
+      const match = buf.toString('utf8').match(MODEL_FIELD_RE);
+      if (match) {
+        found = match[1];
+        done = true;
+        carry = Buffer.alloc(0);
+        return;
+      }
+      carry = buf.length > MODEL_SCAN_CARRY_BYTES ? buf.subarray(buf.length - MODEL_SCAN_CARRY_BYTES) : buf;
+      if (scanned >= cap) {
+        done = true;
+        carry = Buffer.alloc(0);
+      }
+    },
+    get model() { return found; },
+    get scanned() { return scanned; },
+    get done() { return done; },
+  };
+}
+
 /**
  * 把下游请求体边流式转发给 upstreamReq、边 tee 进内存（受 maxBodyBytes 限制）。
  * 返回 { buffer, complete }：complete=false 表示中途因响应到达/出错而中止。
  */
-function pipingBody(req, upstreamReq, maxBodyBytes, initialChunks = [], alreadyEnded = false, bodyReadTimeoutMs = 0) {
+function pipingBody(req, upstreamReq, maxBodyBytes, initialChunks = [], alreadyEnded = false, bodyReadTimeoutMs = 0, modelScanner = null) {
   const state = { chunks: [], size: 0, complete: false, tooLarge: false, error: null, timedOut: false };
   let deadlineTimer = null;
   const clearDeadline = () => {
@@ -206,6 +243,7 @@ function pipingBody(req, upstreamReq, maxBodyBytes, initialChunks = [], alreadyE
       return;
     }
     state.chunks.push(chunk);
+    modelScanner?.push(chunk);
     if (!upstreamReq.write(chunk)) {
       req.pause();
       upstreamReq.once('drain', () => req.resume());
@@ -232,6 +270,7 @@ function pipingBody(req, upstreamReq, maxBodyBytes, initialChunks = [], alreadyE
       return state;
     }
     state.chunks.push(c);
+    modelScanner?.push(c);
     upstreamReq.write(c);
   }
   // 请求体已经读完（或被客户端中途掐断）→ 立刻结束上游请求，绝不能让上游干等
@@ -352,7 +391,7 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
     const emitRequestLog = () => {
       if (requestLogged) return;
       requestLogged = true;
-      try { const usage = collector?.finish() ?? { tokensIn: 0, tokensOut: 0 }; onRequestLog?.({ t: requestStartedAt, dur: Math.max(0, Date.now() - requestStartedAt), model: logContext.model ?? null, path: pathname, status: res.headersSent ? res.statusCode : 0, stream: responseStream === null ? String(req.headers.accept ?? '').includes('text/event-stream') : responseStream, tokensIn: usage.tokensIn, tokensOut: usage.tokensOut, error: requestError ? redactForLog(requestError, secrets) : null, keyId: logContext.keyId ?? null, keyName: logContext.keyName ?? null, ip: logContext.ip ?? null, accountKeyId: account.keyId ?? null, accountName: account.name ?? null }); } catch (error) { log?.debug?.(`请求日志回调失败: ${redactForLog(error?.message ?? String(error), secrets)}`); }
+      try { const usage = collector?.finish() ?? { tokensIn: 0, tokensOut: 0 }; onRequestLog?.({ t: requestStartedAt, dur: Math.max(0, Date.now() - requestStartedAt), model: modelScanner?.model ?? logContext.model ?? null, path: pathname, status: res.headersSent ? res.statusCode : 0, stream: responseStream === null ? String(req.headers.accept ?? '').includes('text/event-stream') : responseStream, tokensIn: usage.tokensIn, tokensOut: usage.tokensOut, error: requestError ? redactForLog(requestError, secrets) : null, keyId: logContext.keyId ?? null, keyName: logContext.keyName ?? null, ip: logContext.ip ?? null, accountKeyId: account.keyId ?? null, accountName: account.name ?? null }); } catch (error) { log?.debug?.(`请求日志回调失败: ${redactForLog(error?.message ?? String(error), secrets)}`); }
     };
 
     const acquire = () => {
@@ -429,6 +468,9 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
     req.once('aborted', onClientGone);
     res.once('close', onClientGone);
 
+    // B40：在既有 tee 流上增量扫描 model（有界，找到即停），
+    // 不再只依赖 gateway 头部 8KB 的 peek —— 超长 body 里靠后的 "model" 也能记上。
+    const modelScanner = hasBody ? createModelBodyScanner({ maxBytes: maxBodyBytes }) : null;
     let attempt = 0;
     let bodyState = hasBody
       ? null
@@ -498,7 +540,7 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
         // 请求体：首次流式 tee；重试时用 buffer 重放
         if (hasBody) {
           if (attempt === 0) {
-            bodyState = pipingBody(req, upstreamReq, maxBodyBytes, initialChunks, bodyEnded, bodyReadTimeoutMs);
+            bodyState = pipingBody(req, upstreamReq, maxBodyBytes, initialChunks, bodyEnded, bodyReadTimeoutMs, modelScanner);
           } else if (bodyState?.complete && !bodyState?.tooLarge && !bodyState?.error) {
             upstreamReq.end(bodyState.bytes());
           } else {

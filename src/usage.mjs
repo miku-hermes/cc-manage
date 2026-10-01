@@ -166,7 +166,10 @@ export function createUsageRecorder(opts = {}) {
         totals.tokensIn += number(e.tokensIn); totals.tokensOut += number(e.tokensOut); totals.durAvg += number(e.dur);
         const add = (map, key, base, withTokens = true) => { const g = map.get(key) ?? { ...base, requests: 0, errors: 0, tokensIn: 0, tokensOut: 0 }; g.requests++; if (error) g.errors++; if (withTokens) { g.tokensIn += number(e.tokensIn); g.tokensOut += number(e.tokensOut); } map.set(key, g); };
         add(groups.byKey, e.keyId ?? '', { keyId: e.keyId ?? null, keyName: e.keyName ?? null });
-        add(groups.byModel, e.model ?? '(未知)', { model: e.model ?? '(未知)' });
+        // 无 model 的请求（典型：GET /v1/models 按协议本就没有模型字段）不进按模型分组，
+        // 否则统计页会出现误导性的「(未知)」分组。只有真拿到模型名的请求才聚合。
+        const modelName = typeof e.model === 'string' && e.model.trim() ? e.model : null;
+        if (modelName) add(groups.byModel, modelName, { model: modelName });
         add(groups.byAccount, e.accountKeyId ?? '', { accountKeyId: e.accountKeyId ?? null, accountName: e.accountName ?? null }, false);
         const bucket = Math.floor(number(e.t) / bucketMs) * bucketMs; add(groups.series, bucket, { t: bucket });
       };
