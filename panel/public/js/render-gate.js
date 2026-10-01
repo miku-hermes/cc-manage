@@ -23,9 +23,18 @@ function clearSensitiveData() {
   state.keys = [];
   state.users = [];
   state.events = [];
+  // 请求日志页同样含客户端名 / 账号名 / 模型等业务数据，登出后不能留在 DOM 里。
+  state.logs = [];
+  state.logsHasMore = false;
+  state.logsStats = { written: 0, dropped: 0, degraded: false };
   testResults.clear();
-  for (const id of ['accounts', 'keys', 'users', 'events']) $(id).innerHTML = '';
-  for (const id of ['acc-count', 'key-count', 'user-count', 'event-count']) $(id).textContent = '—';
+  for (const id of ['accounts', 'keys', 'users', 'events', 'logs']) $(id).innerHTML = '';
+  for (const id of ['acc-count', 'key-count', 'user-count', 'event-count', 'logs-count']) $(id).textContent = '—';
+  const dropped = $('logs-dropped');
+  if (dropped) dropped.className = 'banner alert alert-error hidden';
+  if (typeof renderLogsKeyOptions === 'function') renderLogsKeyOptions();   // 重建「全部客户端」占位
+  const sideWho = $('side-who');
+  if (sideWho) sideWho.textContent = '';
   // 弹窗里的一次性明文 key / 粘贴过的 CC key / 管理员密码框都不能留在 DOM 里：
   // 共享终端下「生成 key 后退出」或「弹窗开着时 session 401」会把这些内容暴露出去。
   // 同时复位 .modal.open（z-index 50 的遮罩会盖在登录页上，肉眼可见）并还原背景 inert。
@@ -70,6 +79,8 @@ function showAdmin() {
   $('admin-main').style.display = '';
   const u = state.auth && state.auth.user;
   $('who').innerHTML = u ? '已登录 <b>' + esc(u.username) + '</b>' : '';
+  const sideWho = $('side-who');           // 侧边栏底部「当前管理员」
+  if (sideWho) sideWho.textContent = u ? u.username : '';
 }
 
 function gateError(message) {

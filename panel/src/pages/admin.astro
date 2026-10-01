@@ -4,9 +4,10 @@
    登录门控行为不变：仍是 showGate/showAdmin 切 display，apiJSON 见 401 回登录页。 */
 import Layout from '../layouts/Layout.astro';
 import AccountDetailModal from '../components/AccountDetailModal.astro';
+import AdminSidebar from '../components/AdminSidebar.astro';
 import {
-  Activity, Moon, Sun, LogOut, ChevronLeft, Menu, Server, KeyRound, Users, ScrollText,
-  Plus, RefreshCw, ShieldCheck, PlugZap, Pencil, Trash2, Copy, Lock, CircleAlert, Eye, X,
+  Activity, Moon, Sun, LogOut, ChevronLeft, Menu,
+  Plus, RefreshCw, Copy, Lock, Eye,
 } from '@lucide/astro';
 ---
 <Layout title="cc-manage · 后台" description="cc-manage 后台：管理 Command Code 账号、API 客户端 key 与管理员账号。">
@@ -69,9 +70,7 @@ import {
     <header class="header navbar sticky top-0 z-40 min-h-14 border-b border-base-300 bg-base-100/85 backdrop-blur-md" id="admin-head" style="display:none">
       <div class="navbar-start gap-1 px-2">
         <label for="admin-drawer" class="btn btn-ghost btn-circle btn-sm lg:hidden" aria-label="打开菜单"><Menu size={18} /></label>
-        <span class="logo text-primary" aria-hidden="true"><Activity size={22} /></span>
-        <span class="brand-name text-lg font-bold tracking-tight">cc-manage</span>
-        <span class="brand-sub text-sm text-base-content/60">后台</span>
+        <span class="brand-sub text-lg font-bold tracking-tight">控制台</span>
       </div>
       <div class="navbar-end gap-1 px-2">
         <span id="who" class="who text-sm text-base-content/70"></span>
@@ -83,7 +82,7 @@ import {
       </div>
     </header>
 
-    <main class="admin-main mx-auto flex w-full max-w-6xl flex-col gap-4 p-4 2xl:max-w-[1600px]" id="admin-main" style="display:none">
+      <main class="admin-main mx-auto flex w-full max-w-6xl flex-col gap-4 p-4 2xl:max-w-[1600px]" id="admin-main" style="display:none">
       <h1 class="sr-only">后台管理</h1>
       <div class="banner warn alert alert-warning hidden" id="public-note" role="status"></div>
       <div class="banner alert alert-error hidden" id="autherr" role="alert"></div>
@@ -93,88 +92,133 @@ import {
       </div>
       <p class="readonly text-sm text-base-content/60" id="readonly"></p>
 
-      <section class="card border border-base-300 bg-base-100" id="sec-accounts">
-        <div class="card-body gap-3">
-          <div class="flex flex-wrap items-center justify-between gap-2">
-            <h2 class="card-title text-base">CC 账号 <span class="badge badge-ghost" id="acc-count">0 个</span></h2>
-            <button class="btn btn-primary btn-sm gap-1" type="button" id="add-account"><Plus size={15} />新增 CC key</button>
-          </div>
-          <div class="overflow-x-auto">
-            <table class="table table-sm">
-              <thead><tr><th>备注名</th><th>keyId / keyPrefix</th><th>额度</th><th>状态</th><th>操作</th></tr></thead>
-              <tbody id="accounts"></tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      <section class="card border border-base-300 bg-base-100" id="sec-keys">
-        <div class="card-body gap-3">
-          <div class="flex flex-wrap items-center justify-between gap-2">
-            <h2 class="card-title text-base">客户端 key <span class="badge badge-ghost" id="key-count">0 个</span></h2>
-            <button class="btn btn-primary btn-sm gap-1" type="button" id="add-key"><Plus size={15} />生成新 key</button>
-          </div>
-          <div class="overflow-x-auto">
-            <table class="table table-sm">
-              <thead><tr><th>名称</th><th>keyId</th><th>keyPrefix</th><th>创建时间</th><th>操作</th></tr></thead>
-              <tbody id="keys"></tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      <section class="card border border-base-300 bg-base-100" id="sec-users">
-        <div class="card-body gap-3">
-          <div class="flex flex-wrap items-center justify-between gap-2">
-            <h2 class="card-title text-base">管理员 <span class="badge badge-ghost" id="user-count">0 个</span></h2>
-            <button class="btn btn-primary btn-sm gap-1" type="button" id="add-user"><Plus size={15} />新增管理员</button>
-          </div>
-          <div class="overflow-x-auto">
-            <table class="table table-sm">
-              <thead><tr><th>用户名</th><th>创建时间</th><th>操作</th></tr></thead>
-              <tbody id="users"></tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      <section class="card border border-base-300 bg-base-100" id="sec-events">
-        <div class="card-body gap-3">
-          <div class="flex flex-wrap items-center justify-between gap-2">
-            <h2 class="card-title text-base">运行日志 <span class="badge badge-ghost" id="event-count">0 条</span></h2>
-            <div class="join">
-              <select id="level" class="select select-bordered select-sm join-item max-[820px]:min-h-9" aria-label="按级别过滤">
-                <option value="">全部级别</option>
-                <option value="info">info</option>
-                <option value="warn">warn</option>
-                <option value="error">error</option>
-                <option value="debug">debug</option>
-              </select>
-              <button class="btn btn-sm join-item gap-1" type="button" id="reload-events"><RefreshCw size={14} />刷新</button>
+      <section class="admin-page" id="page-accounts" aria-hidden="true">
+        <h2 class="sr-only">账号池</h2>
+        <section class="card border border-base-300 bg-base-100" id="sec-accounts">
+          <div class="card-body gap-3">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <h2 class="card-title text-base">CC 账号 <span class="badge badge-ghost" id="acc-count">0 个</span></h2>
+              <button class="btn btn-primary btn-sm gap-1" type="button" id="add-account"><Plus size={15} />新增 CC key</button>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="table table-sm">
+                <thead><tr><th>备注名</th><th>keyId / keyPrefix</th><th>额度</th><th>状态</th><th>操作</th></tr></thead>
+                <tbody id="accounts"></tbody>
+              </table>
             </div>
           </div>
-          <div class="events divide-y divide-base-200" id="events" aria-live="polite"></div>
+        </section>
+      </section>
+
+      <section class="admin-page" id="page-keys" aria-hidden="true">
+        <h2 class="sr-only">客户端密钥</h2>
+        <section class="card border border-base-300 bg-base-100" id="sec-keys">
+          <div class="card-body gap-3">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <h2 class="card-title text-base">客户端 key <span class="badge badge-ghost" id="key-count">0 个</span></h2>
+              <button class="btn btn-primary btn-sm gap-1" type="button" id="add-key"><Plus size={15} />生成新 key</button>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="table table-sm">
+                <thead><tr><th>名称</th><th>keyId</th><th>keyPrefix</th><th>创建时间</th><th>操作</th></tr></thead>
+                <tbody id="keys"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <section class="admin-page" id="page-users" aria-hidden="true">
+        <h2 class="sr-only">管理员</h2>
+        <section class="card border border-base-300 bg-base-100" id="sec-users">
+          <div class="card-body gap-3">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <h2 class="card-title text-base">管理员 <span class="badge badge-ghost" id="user-count">0 个</span></h2>
+              <button class="btn btn-primary btn-sm gap-1" type="button" id="add-user"><Plus size={15} />新增管理员</button>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="table table-sm">
+                <thead><tr><th>用户名</th><th>创建时间</th><th>操作</th></tr></thead>
+                <tbody id="users"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <section class="admin-page" id="page-events" aria-hidden="true">
+        <h2 class="sr-only">运行日志</h2>
+        <section class="card border border-base-300 bg-base-100" id="sec-events">
+          <div class="card-body gap-3">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <h2 class="card-title text-base">运行日志 <span class="badge badge-ghost" id="event-count">0 条</span></h2>
+              <div class="join">
+                <select id="level" class="select select-bordered select-sm join-item max-[820px]:min-h-9" aria-label="按级别过滤">
+                  <option value="">全部级别</option>
+                  <option value="info">info</option>
+                  <option value="warn">warn</option>
+                  <option value="error">error</option>
+                  <option value="debug">debug</option>
+                </select>
+                <button class="btn btn-sm join-item gap-1" type="button" id="reload-events"><RefreshCw size={14} />刷新</button>
+              </div>
+            </div>
+            <div class="events divide-y divide-base-200" id="events" aria-live="polite"></div>
+          </div>
+        </section>
+      </section>
+
+      <section class="admin-page" id="page-logs" aria-hidden="true">
+        <h2 class="sr-only">请求日志</h2>
+        <div class="banner alert alert-error hidden" id="logs-dropped" role="alert"></div>
+        <section class="card border border-base-300 bg-base-100" id="sec-logs">
+          <div class="card-body gap-3">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <h3 class="card-title text-base">请求日志 <span class="badge badge-ghost" id="logs-count">0 条</span></h3>
+              <div class="flex flex-wrap items-center gap-1">
+                <select id="logs-key" class="select select-bordered select-sm max-[820px]:min-h-9" aria-label="按客户端过滤">
+                  <option value="">全部客户端</option>
+                </select>
+                <select id="logs-status" class="select select-bordered select-sm max-[820px]:min-h-9" aria-label="按状态过滤">
+                  <option value="">全部状态</option>
+                  <option value="ok">成功</option>
+                  <option value="error">失败</option>
+                </select>
+                <input id="logs-model" class="input input-bordered input-sm w-32 max-[820px]:min-h-9" type="text" placeholder="模型" aria-label="按模型过滤" autocomplete="off" spellcheck="false">
+                <input id="logs-q" class="input input-bordered input-sm w-32 max-[820px]:min-h-9" type="text" placeholder="关键字" aria-label="按关键字过滤" autocomplete="off" spellcheck="false">
+                <button id="logs-refresh" class="btn btn-sm gap-1 max-[820px]:min-h-9" type="button"><RefreshCw size={14} aria-hidden="true" />刷新</button>
+              </div>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="table table-sm">
+                <thead><tr><th>时间</th><th>客户端</th><th>账号</th><th>模型</th><th>状态</th><th>耗时</th><th>入 token</th><th>出 token</th></tr></thead>
+                <tbody id="logs"></tbody>
+              </table>
+            </div>
+            <div class="flex justify-center">
+              <button id="logs-more" class="btn btn-outline btn-sm hidden" type="button">加载更多</button>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <section class="admin-page" id="page-usage" aria-hidden="true">
+        <h2 class="sr-only">用量统计</h2>
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h3 class="card-title text-base">用量统计</h3>
+          <div class="tabs tabs-box tabs-sm border border-base-300 bg-base-200/60" role="tablist" aria-label="统计范围" id="usage-range">
+            <button class="tab tab-active text-primary" type="button" role="tab" aria-selected="true" data-range="24h">24 小时</button>
+            <button class="tab text-base-content/70 hover:text-primary" type="button" role="tab" aria-selected="false" data-range="7d">7 天</button>
+            <button class="tab text-base-content/70 hover:text-primary" type="button" role="tab" aria-selected="false" data-range="30d">30 天</button>
+          </div>
         </div>
+        <div id="usage-kpis" class="grid grid-cols-2 gap-3 lg:grid-cols-4" aria-label="用量 KPI"></div>
+        <div class="overflow-x-auto"><div id="usage-chart" style="height:280px"></div></div>
+        <div id="usage-tables" class="flex flex-wrap gap-3"></div>
       </section>
     </main>
   </div>
-
-  <div class="drawer-side z-30">
-    <label for="admin-drawer" class="drawer-overlay" aria-label="关闭菜单"></label>
-    <aside class="menu min-h-full w-56 bg-base-100 p-3 text-base-content">
-      <p class="menu-title flex items-center gap-2"><ShieldCheck size={15} />后台</p>
-      <ul>
-        <li><a href="#sec-accounts"><Server size={15} />CC 账号</a></li>
-        <li><a href="#sec-keys"><KeyRound size={15} />客户端 key</a></li>
-        <li><a href="#sec-users"><Users size={15} />管理员</a></li>
-        <li><a href="#sec-events"><ScrollText size={15} />运行日志</a></li>
-      </ul>
-      <div class="divider"></div>
-      <ul>
-        <li><a href="/"><ChevronLeft size={15} />返回前台</a></li>
-      </ul>
-    </aside>
-  </div>
+  <AdminSidebar />
 </div>
 
 <!-- 新增账号 -->
@@ -309,12 +353,15 @@ import {
 <template id="tpl-account-row"><tr><td data-label="备注名"><div class="cell-name font-medium" data-f="name"></div><div class="test-note text-xs" data-f="test-note"></div></td><td data-label="keyId / keyPrefix" class="mono cell-sub text-xs text-base-content/60"><span class="block" data-f="key-id"></span><span class="block" data-f="key-prefix"></span></td><td data-label="额度" class="cell-quota space-y-1"><div class="qbar flex items-center gap-2" data-f="bar-5h"><span class="qbar-label shrink-0 text-xs text-base-content/60">5h</span><progress class="progress qbar-track h-1.5" data-f="bar-5h-track" max="100" value="0"></progress><span class="qbar-pct shrink-0 font-mono text-xs tabular-nums" data-f="bar-5h-pct"></span><span class="qbar-reset text-xs text-base-content/60 tabular-nums" data-f="bar-5h-reset"></span></div><div class="qbar flex items-center gap-2" data-f="bar-week"><span class="qbar-label shrink-0 text-xs text-base-content/60">周</span><progress class="progress qbar-track h-1.5" data-f="bar-week-track" max="100" value="0"></progress><span class="qbar-pct shrink-0 font-mono text-xs tabular-nums" data-f="bar-week-pct"></span><span class="qbar-reset text-xs text-base-content/60 tabular-nums" data-f="bar-week-reset"></span></div><div class="qbar flex items-center gap-2" data-f="bar-month"><span class="qbar-label shrink-0 text-xs text-base-content/60" data-f="bar-month-label">月</span><progress class="progress qbar-track h-1.5" data-f="bar-month-track" max="100" value="0"></progress><span class="qbar-pct shrink-0 font-mono text-xs tabular-nums" data-f="bar-month-pct"></span><span class="qbar-reset text-xs text-base-content/60 tabular-nums" data-f="bar-month-reset"></span></div><div class="cell-sub aux-text text-xs text-base-content/60" data-f="quota-meta">剩余 <span class="usable-balance tabular-nums" data-f="usable-balance"></span><span data-f="quota-plan"></span></div><div class="cell-sub aux-text text-xs tabular-nums" data-f="credits"></div><div class="cell-error text-error" data-f="error"></div></td><td data-label="状态" data-f="status-cell"><span class="tag badge badge-sm" data-f="status"></span><span class="cell-sub text-xs text-base-content/60 tabular-nums" data-f="status-reset"></span></td><td data-label="操作" class="actions flex flex-wrap gap-1"><button class="btn btn-ghost btn-sm" type="button" data-act="detail" data-f="btn-detail" aria-haspopup="dialog"><Eye size={15} aria-hidden="true" />详情</button><button class="btn btn-outline btn-xs" type="button" data-act="test" data-f="btn-test">测试连通性</button><button class="btn btn-xs" type="button" data-act="toggle" data-f="btn-toggle"></button><button class="btn btn-outline btn-xs" type="button" data-act="rename" data-f="btn-rename">改备注</button><button class="btn btn-error btn-xs" type="button" data-act="del" data-f="btn-del">删除</button></td></tr></template>
 <template id="tpl-key-row"><tr><td data-label="名称"><div class="cell-name font-medium" data-f="name"></div></td><td data-label="keyId" class="mono cell-sub text-xs text-base-content/60" data-f="key-id"></td><td data-label="keyPrefix" class="mono cell-sub text-xs text-base-content/60" data-f="key-prefix"></td><td data-label="创建时间" class="cell-sub text-xs text-base-content/60" data-f="created"></td><td data-label="操作" class="actions flex flex-wrap gap-1"><button class="btn btn-error btn-xs" type="button" data-act="delkey" data-f="btn-del">删除</button></td></tr></template>
 <template id="tpl-user-row"><tr><td data-label="用户名"><div class="cell-name font-medium"><span data-f="name"></span><span class="tag info" data-f="self"></span></div></td><td data-label="创建时间" class="cell-sub text-xs text-base-content/60" data-f="created"></td><td data-label="操作" class="actions flex flex-wrap gap-1"><button class="btn btn-ghost btn-sm" type="button" data-act="detail" data-f="btn-detail" aria-haspopup="dialog"><Eye size={15} aria-hidden="true" />详情</button><button class="btn btn-outline btn-xs" type="button" data-act="pass" data-f="btn-pass">改密码</button><button class="btn btn-error btn-xs" type="button" data-act="deluser" data-f="btn-del">删除</button></td></tr></template>
+<template id="tpl-log-row"><tr><td data-label="时间" class="cell-sub text-xs tabular-nums" data-f="time"></td><td data-label="客户端"><span class="cell-name" data-f="client"></span></td><td data-label="账号"><span class="cell-name" data-f="account"></span></td><td data-label="模型" class="cell-sub text-xs" data-f="model"></td><td data-label="状态"><span class="inline-flex items-center gap-1"><span class="status-dot inline-block size-2 shrink-0 rounded-full" data-f="dot" aria-hidden="true"></span><span class="tabular-nums" data-f="status"></span></span></td><td data-label="耗时" class="tabular-nums" data-f="dur"></td><td data-label="入 token" class="tabular-nums" data-f="tok-in"></td><td data-label="出 token" class="tabular-nums" data-f="tok-out"></td></tr></template>
+<template id="tpl-log-empty"><tr><td colspan="8" class="empty text-base-content/60" data-f="empty"></td></tr></template>
 <template id="tpl-event"><div class="event flex flex-wrap items-center gap-2"><span class="event-time shrink-0 font-mono text-xs text-base-content/60" data-f="time"></span><span class="event-level shrink-0" data-f="level"><span class="tag badge badge-sm" data-f="badge"></span></span><span class="event-msg min-w-0 flex-1 max-[820px]:basis-full" data-f="msg"></span></div></template>
 <template id="tpl-empty-row"><tr><td colspan="5" class="empty text-base-content/60" data-f="empty"></td></tr></template>
 <template id="tpl-empty-line"><div class="empty text-base-content/60" data-f="empty"></div></template>
 
 <div class="toast toast-end z-50" id="toast" role="status" aria-live="polite"></div>
 
+<script src="js/admin-console.js" is:raw></script>
 <script src="js/admin-utils.js" is:raw></script>
 <script src="js/admin-api.js" is:raw></script>
 <script src="js/admin-state.js" is:raw></script>
@@ -325,6 +372,8 @@ import {
 <script src="js/render-accounts-table.js" is:raw></script>
 <script src="js/render-keys-table.js" is:raw></script>
 <script src="js/logs.js" is:raw></script>
+<script src="js/admin-logs.js" is:raw></script>
+<script src="js/admin-usage.js" is:raw></script>
 <script src="js/modal.js" is:raw></script>
 <script src="js/detail.js" is:raw></script>
 <script src="js/app-admin.js" is:raw></script>

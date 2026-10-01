@@ -1,0 +1,45 @@
+---
+/* 后台侧边栏：≥1024px 固定显示（外层 .drawer.lg:drawer-open），<1024px 收成抽屉
+   （#admin-drawer 复选框 + #admin-head 里的汉堡 label 控制，与改造前同一套机制）。
+   菜单用 hash 路由（js/admin-console.js 负责切换 .admin-page 的显隐与 aria-current）。 */
+import { Activity, Server, KeyRound, Users, ScrollText, FileClock, Gauge, ChevronLeft, LogOut, Wifi } from '@lucide/astro';
+
+const items = [
+  { href: '#/accounts', id: 'accounts', label: '账号池', Icon: Server },
+  { href: '#/keys', id: 'keys', label: '客户端密钥', Icon: KeyRound },
+  { href: '#/users', id: 'users', label: '管理员', Icon: Users },
+  { href: '#/events', id: 'events', label: '运行日志', Icon: ScrollText },
+  { href: '#/logs', id: 'logs', label: '请求日志', Icon: FileClock },
+  { href: '#/usage', id: 'usage', label: '用量统计', Icon: Gauge },
+];
+---
+<div class="drawer-side z-30">
+  <label for="admin-drawer" class="drawer-overlay" aria-label="关闭菜单"></label>
+  <aside class="admin-sidebar flex min-h-full w-56 flex-col bg-base-100 p-3 text-base-content" aria-label="后台导航">
+    <div class="admin-brand flex items-center gap-2 px-1 pb-2">
+      <span class="logo text-primary" aria-hidden="true"><Activity size={22} /></span>
+      <span class="brand-sub text-sm font-bold tracking-tight">cc-manage · 控制台</span>
+    </div>
+    <div class="divider my-1"></div>
+    <ul class="menu admin-nav w-full flex-1 gap-1 p-0" id="admin-nav">
+      {items.map(({ href, id, label, Icon }) => (
+        <li>
+          <a href={href} data-nav={id}>
+            <Icon size={15} aria-hidden="true" />{label}
+          </a>
+        </li>
+      ))}
+    </ul>
+    <div class="divider my-1"></div>
+    <div class="admin-side-foot space-y-2">
+      <p id="upstream" class="upstream flex items-center gap-1 text-xs text-base-content/60" aria-live="polite">
+        <Wifi size={13} aria-hidden="true" /><span data-f="upstream">内网上游：检查中…</span>
+      </p>
+      <p class="who-line text-xs text-base-content/60">当前管理员：<span id="side-who" class="side-who"></span></p>
+      <ul class="menu w-full p-0">
+        <li><a href="/"><ChevronLeft size={15} aria-hidden="true" />返回前台</a></li>
+        <li><a href="#/accounts" data-nav="logout" id="side-logout"><LogOut size={15} aria-hidden="true" />退出登录</a></li>
+      </ul>
+    </div>
+  </aside>
+</div>

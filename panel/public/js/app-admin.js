@@ -16,6 +16,7 @@ async function loadKeys() {
   const data = await apiJSON('/api/admin/keys');
   state.keys = data.keys || [];
   renderKeys();
+  renderLogsKeyOptions();      // 请求日志页的客户端下拉复用同一份 keys，不再单独取数
 }
 
 async function loadUsers() {
@@ -307,6 +308,13 @@ for (const [modalFormId, submitId] of MODAL_FORMS) {
 
 // ── 工具条 / 弹窗入口 / 主题：document 级事件委托 ─────────────────────
 // 不再逐个 $('x').onclick 直绑；用 data 属性 / 目标 id 定位，行为不变。
+document.addEventListener('keydown', (e) => {
+  const t = e.target;
+  if (!t || e.key !== 'Enter' || (t.id !== 'logs-model' && t.id !== 'logs-q')) return;
+  if (e.preventDefault) e.preventDefault();
+  reloadLogs().catch((err) => toast(err.message, true));
+});
+
 document.addEventListener('click', (e) => {
   const t = e.target;
   const closest = (sel) => (t && t.closest ? t.closest(sel) : null);
@@ -316,15 +324,54 @@ document.addEventListener('click', (e) => {
   if (closest('#k-copy')) return copyPlainKey();
   if (closest('#reload-events')) return loadEvents().catch((err) => toast(err.message, true));
   if (closest('#load-retry')) { boot().catch(showLoadError); return; }
-  if (closest('#theme, #theme-gate')) setTheme(currentTheme() === 'dark' ? 'light' : 'dark');
+  if (closest('#theme, #theme-gate')) { setTheme(currentTheme() === 'dark' ? 'light' : 'dark'); return; }
+  // 请求日志页：刷新 / 加载更多（筛选下拉的 change 走下面的 change 委托）。
+  if (closest('#logs-refresh')) return reloadLogs().catch((err) => toast(err.message, true));
+  if (closest('#logs-more')) { logsOffset = state.logs.length; return loadLogs({ append: true }).catch((err) => toast(err.message, true)); }
+  // 用量统计页：切范围（tab 复选态 + 重拉数据）。
+  const usageTab = closest('#usage-range [data-range]');
+  if (usageTab) { setUsageRange(usageTab.getAttribute('data-range')); return reloadUsage().catch((err) => toast(err.message, true)); }
+  // 侧边栏：选完页面收起抽屉（同一份菜单在窄屏就是抽屉里的导航）。
+  if (closest('#admin-nav a, #side-logout')) {
+    const drawer = $('admin-drawer');
+    if (drawer) drawer.checked = false;
+    return;
+  }
+});
+
+// ── 用量统计页：range 切换（24h / 7d / 30d）──────────────────────────
+function setUsageRange(range) {
+  const next = ['24h', '7d', '30d'].includes(range) ? range : '24h';
+  usageRange = next;
+  for (const btn of document.querySelectorAll('#usage-range [data-range]')) {
+    const active = btn.getAttribute('data-range') === next;
+    btn.classList.toggle('tab-active', active);
+    btn.classList.toggle('text-primary', active);
+    btn.classList.toggle('text-base-content/70', !active);
+    btn.setAttribute('aria-selected', active ? 'true' : 'false');
+  }
+}
+
+// ── 侧边栏切页钩子：进「请求日志 / 用量统计」页时才取数（首屏不打这两个接口）──
+// 未登录时一律不拉后台数据（避免把 401 当成「会话失效」踢回登录页）。
+function adminAuthed() { return !!(state.auth && state.auth.authenticated); }
+onAdminPageChange((route) => {
+  if (!adminAuthed()) return;
+  if (route === 'logs') loadLogs().catch(() => {});
+  else if (route === 'usage') reloadUsage().catch(() => {});
 });
 
 // ── 事件过滤（#level）：change 走 document 级委托 ─────────────────────
 document.addEventListener('change', (e) => {
   const t = e.target;
-  if (!t || t.id !== 'level') return;
-  state.level = t.value;
-  loadEvents().catch((err) => toast(err.message, true));
+  if (!t) return;
+  // 请求日志页的客户端下拉：选项来源是 state.keys（loadKeys 已经拉过），每次进页面重建一次。
+  if (t.id === 'logs-key') return reloadLogs().catch((err) => toast(err.message, true));
+  if (t.id === 'level') {
+    state.level = t.value;
+    loadEvents().catch((err) => toast(err.message, true));
+    return;
+  }
 });
 
 // ── 启动：先问 /api/auth/me 决定「初始化 / 登录 / 后台」─────────────
@@ -346,7 +393,8 @@ async function boot() {
   } catch (e) {
     showLoadError(e);   // loadAll 正常会自吞；这里兜底保证 boot 也绝不漏 rejection
   }
-  if (!me.setupRequired && me.user && me.user.username) $('who').innerHTML = '已登录 <b>' + esc(me.user.username) + '</b>';
+  await loadUpstreamStatus().catch(() => {});
+  applyAdminHash();          // 已登录：按当前 hash 触发对应页首次取数
 }
 
 /** 启动：恢复主题 + 问 /api/auth/me + 运行日志轮询（原来的顶层启动语句）。 */
@@ -354,8 +402,13 @@ function start() {
   const savedTheme = storedTheme();
   if (savedTheme) document.documentElement.setAttribute('data-theme', savedTheme);
   watchSystemTheme();                        // 未手动选择时跟随系统主题变化
+  applyAdminHash();                          // 按当前 hash 显示对应页（刷新后保持）
+  ensureLogsBindings();
   boot().catch(showLoadError);
+  // 一个定时器同时负责运行日志与请求日志：只在对应页面可见时才拉数据，不新增第二个节奏。
   setInterval(() => {
-    if (!document.hidden && document.body.className !== 'gate') loadEvents().catch(() => {});
+    if (document.hidden || document.body.className === 'gate') return;
+    if (adminPageVisible('logs')) loadLogs().catch(() => {});
+    else if (adminPageVisible('events')) loadEvents().catch(() => {});
   }, 10000);
 }

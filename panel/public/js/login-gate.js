@@ -38,8 +38,11 @@ async function logout() {
   showGate('login');
   toast('已退出登录');
 }
-// 退出按钮走事件委托：监听挂在 document，用 closest('#logout') 定位目标。
+// 退出按钮走事件委托：监听挂在 document。
+// #logout 是顶栏退出；#side-logout 是侧边栏底部的退出项（外观是菜单链接，行为同样是登出）。
+// 注意不要对 #side-logout 调 preventDefault：它不是 <a href>，改 hash 的是 admin-console.js。
 document.addEventListener('click', (e) => {
   const t = e.target;
-  if (t && t.closest && t.closest('#logout')) logout().catch(() => {});
+  if (!t || !t.closest) return;
+  if (t.closest('#logout') || t.closest('#side-logout')) logout().catch(() => {});
 });
