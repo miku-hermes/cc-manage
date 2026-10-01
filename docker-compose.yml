@@ -58,14 +58,16 @@ services:
       GATEWAY_PORT: "3051"
       UPSTREAM_PROXY_URL: "http://core:3050"
       CC_API_BASE: "${CC_API_BASE:-https://api.commandcode.ai}"
-      PUBLIC_DASHBOARD: "${PUBLIC_DASHBOARD:-1}"       # 前台只读面板公开；设 0 则需登录后台
-      QUOTA_POLL_INTERVAL_MS: "${QUOTA_POLL_INTERVAL_MS:-600000}"
-      QUOTA_ACTIVE_POLL_INTERVAL_MS: "${QUOTA_ACTIVE_POLL_INTERVAL_MS:-60000}"
-      QUOTA_ACTIVE_WINDOW_MS: "${QUOTA_ACTIVE_WINDOW_MS:-300000}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
       NODE_OPTIONS: "--max-old-space-size=192"
+      # 下面四项已从这里移除：config.mjs 里 env **优先于** config.json，会把后台「系统设置」页
+      # 保存的值悄悄盖掉（界面显示已保存、实际不生效）。它们的 env 默认值和 config.json 现值
+      # 完全一致（true / 600000 / 60000 / 300000），所以移除是行为等价改动。
+      # 这四项现在由 config.json 提供，可在后台「系统设置」页直接改，无需重建容器：
+      #   PUBLIC_DASHBOARD / QUOTA_POLL_INTERVAL_MS / QUOTA_ACTIVE_POLL_INTERVAL_MS / QUOTA_ACTIVE_WINDOW_MS
     volumes:
       - ./config:/app/config                           # 凭据目录（可写）：后台账号/CC key/客户端 key
+      - ./config.json:/app/config.json                 # 运行配置（可写）：后台「系统设置」页的落盘目标
       - cc-manage-data:/app/data                       # 命名卷，避免宿主目录权限坑
     # L6：192MB 堆 + 8MB(maxBodyBytes)×8(maxInflight)=64MB 堆外 Buffer + SSE/连接开销，
     # 原来的 256m 在并发大上传时会 OOM，留够余量提到 384m（算式同步写在 .env.example）。
