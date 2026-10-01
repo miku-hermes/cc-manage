@@ -4,6 +4,10 @@ import path from 'node:path';
 import { DEFAULT_TRUSTED_PROXY_CIDRS } from './client-ip.mjs';
 
 export const DEFAULTS = {
+  requestLogDir: 'data/reqlog',
+  requestLogEnabled: true,
+  requestLogRetentionDays: 7,
+  requestLogMaxMb: 32,
   gatewayPort: 3051,
   gatewayHost: '127.0.0.1',
   upstreamProxyUrl: 'http://127.0.0.1:3050',
@@ -86,6 +90,10 @@ export const DEFAULTS = {
 };
 
 const ENV_MAP = {
+  REQUEST_LOG_DIR: ['requestLogDir', 'string'],
+  REQUEST_LOG_ENABLED: ['requestLogEnabled', 'boolean'],
+  REQUEST_LOG_RETENTION_DAYS: ['requestLogRetentionDays', 'number'],
+  REQUEST_LOG_MAX_MB: ['requestLogMaxMb', 'number'],
   GATEWAY_PORT: ['gatewayPort', 'number'],
   GATEWAY_HOST: ['gatewayHost', 'string'],
   UPSTREAM_PROXY_URL: ['upstreamProxyUrl', 'string'],

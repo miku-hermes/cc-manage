@@ -28,6 +28,7 @@ import {
 import { createScheduler, quotaWindows } from './src/scheduler.mjs';
 import { DEFAULT_TRUSTED_PROXY_CIDRS, isSecureRequest as isSecureRequestOf, resolveClientIp } from './src/client-ip.mjs';
 import { createProxy } from './src/proxy.mjs';
+import { createUsageCollector, createUsageRecorder } from './src/usage.mjs';
 import { createAdaptivePoller } from './src/poll.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -102,6 +103,12 @@ const BODY_PEEK_START_MS = 10000;
 const GRACEFUL_SHUTDOWN_MS = 5000;
 
 /** 从下游 key 里取 session 标识：优先 x-session-id，其次 body 里的 conversation_id / user。 */
+function peekModelFromBody(chunks) {
+  if (chunks.length === 0) return null;
+  const text = Buffer.concat(chunks).slice(0, BODY_PEEK_BYTES).toString('utf8');
+  return text.match(/"model"\s*:\s*"([^"]{1,120})"/)?.[1] ?? null;
+}
+
 function peekSessionFromBody(chunks) {
   if (chunks.length === 0) return null;
   const text = Buffer.concat(chunks).slice(0, BODY_PEEK_BYTES).toString('utf8');
@@ -572,7 +579,8 @@ export async function startGateway(overrides = {}) {
     poller.touch();
   }
 
-  const proxy = createProxy({ config, scheduler, log, stats, secrets, refreshAccount, touchActivity, persistState: () => store.saveState() });
+  const usage = createUsageRecorder({ dir: config.requestLogDir, enabled: config.requestLogEnabled, retentionDays: config.requestLogRetentionDays, maxFileBytes: Number(config.requestLogMaxMb) * 1024 * 1024, noTimers: overrides.noTimers, log });
+  const proxy = createProxy({ config, scheduler, log, stats, secrets, refreshAccount, touchActivity, persistState: () => store.saveState(), createUsageCollector, onRequestLog: (entry) => usage.record(entry) });
 
   // ── 后台定时器 ─────────────────────────────────────────
   let recheckTimer = null;
@@ -1118,6 +1126,24 @@ export async function startGateway(overrides = {}) {
       });
     }
 
+    if (method === 'GET' && p === '/api/admin/logs') {
+      if (!config.requestLogEnabled) return sendJSON(res, 200, { ok: true, enabled: false, items: [], hasMore: false, stats: { written: 0, dropped: 0, degraded: false } });
+      const limit = Math.min(500, Math.max(1, Number(url.searchParams.get('limit') ?? 100) || 100));
+      const result = await usage.recent({ limit, offset: Number(url.searchParams.get('offset') ?? 0) || 0, keyId: url.searchParams.get('keyId'), status: url.searchParams.get('status'), model: url.searchParams.get('model'), q: url.searchParams.get('q') });
+      const stats = usage.stats();
+      return sendJSON(res, 200, { ok: true, enabled: true, ...result, stats: { written: stats.written, dropped: stats.dropped, degraded: stats.degraded } });
+    }
+    if (method === 'GET' && p === '/api/admin/usage') {
+      const range = url.searchParams.get('range') ?? '24h';
+      const durations = { '24h': 86400000, '7d': 604800000, '30d': 2592000000 };
+      if (!durations[range]) return sendJSON(res, 400, { ok: false, error: 'Invalid range' });
+      const bucket = url.searchParams.get('bucket') ?? '1h';
+      const bucketMs = bucket === '1d' ? 86400000 : 3600000;
+      const since = Date.now() - durations[range], until = Date.now();
+      const summary = await usage.summary({ sinceMs: since, bucketMs });
+      return sendJSON(res, 200, { ok: true, since, until, bucket, bucketMs, ...summary });
+    }
+
     if (method === 'GET' && p === '/api/admin/events') {
       return sendJSON(res, 200, eventsView(url));
     }
@@ -1538,7 +1564,7 @@ export async function startGateway(overrides = {}) {
       // 透传模式：直接原样转发，不做池调度
       if (isPassthrough) {
         log.info(`透传模式请求 ${url.pathname}（不做池调度）`);
-        return proxy.forward({ req, res, account: { name: 'passthrough', key, keyId: keyIdOf(key), keyPrefix: keyPrefixOf(key), enabled: true, __passthrough: true }, pathname: url.pathname, search: url.search });
+        return proxy.forward({ req, res, account: { name: 'passthrough', key, keyId: keyIdOf(key), keyPrefix: keyPrefixOf(key), enabled: true, __passthrough: true }, pathname: url.pathname, search: url.search, logContext: { keyId: keyIdOf(key), keyName: null, model: null, ip: clientIp(req) } });
       }
 
       // 池调度：先 peek body 头部拿 session id
@@ -1585,7 +1611,7 @@ export async function startGateway(overrides = {}) {
       }
       log.info(`路由 ${url.pathname} → 账号「${account.name}」${sessionId ? `(session ${sanitizeForLog(sessionId)})` : ''}`);
 
-      return proxy.forward({ req, res, account, pathname: url.pathname, search: url.search, initialChunks, bodyEnded, sessionId });
+      return proxy.forward({ req, res, account, pathname: url.pathname, search: url.search, initialChunks, bodyEnded, sessionId, logContext: { keyId: keyIdOf(key), keyName: localKeys[localKeyIndexOf(key)]?.name ?? null, model: peekModelFromBody(initialChunks), ip: clientIp(req) } });
     }
 
     // 只读面板数据：默认公开（PUBLIC_DASHBOARD=1）；PUBLIC_DASHBOARD=0 时要求后台登录

@@ -290,7 +290,7 @@ function drainRemaining(req, bodyState, maxBodyBytes) {
   });
 }
 
-export function createProxy({ config, scheduler, log, stats, secrets = [], refreshAccount, touchActivity, persistState } = {}) {
+export function createProxy({ config, scheduler, log, stats, secrets = [], refreshAccount, touchActivity, persistState, createUsageCollector, onRequestLog } = {}) {
   const maxBodyBytes = config.maxBodyBytes ?? 20 * 1024 * 1024;
   // 客户端中止计数（F10）：不计入 errors，单独展示，保证错误率口径真实
   if (typeof stats.aborted !== 'number') stats.aborted = 0;
@@ -327,7 +327,7 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
    * 转发一次请求（含最多一次换号重试）。
    * @param {{req, res, account, pathname, search}} opts
    */
-  async function forward({ req, res, account, pathname, search = '', initialChunks = [], bodyEnded = false, sessionId = null }) {
+  async function forward({ req, res, account, pathname, search = '', initialChunks = [], bodyEnded = false, sessionId = null, logContext = {} }) {
     // 客户端在转发前就断了：不占用账号、不计数，直接放弃
     if (req.destroyed && !req.readableEnded) {
       log?.warn?.('客户端在转发前已断开，放弃本次请求');
@@ -344,6 +344,16 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
     const hasBody = req.method !== 'GET' && req.method !== 'HEAD';
     let acquired = false;
     let tokens = 0;
+    const collector = createUsageCollector?.() ?? null;
+    let requestError = null;
+    let responseStream = null;
+    const requestStartedAt = Date.now();
+    let requestLogged = false;
+    const emitRequestLog = () => {
+      if (requestLogged) return;
+      requestLogged = true;
+      try { const usage = collector?.finish() ?? { tokensIn: 0, tokensOut: 0 }; onRequestLog?.({ t: requestStartedAt, dur: Math.max(0, Date.now() - requestStartedAt), model: logContext.model ?? null, path: pathname, status: res.headersSent ? res.statusCode : 0, stream: responseStream === null ? String(req.headers.accept ?? '').includes('text/event-stream') : responseStream, tokensIn: usage.tokensIn, tokensOut: usage.tokensOut, error: requestError ? redactForLog(requestError, secrets) : null, keyId: logContext.keyId ?? null, keyName: logContext.keyName ?? null, ip: logContext.ip ?? null, accountKeyId: account.keyId ?? null, accountName: account.name ?? null }); } catch (error) { log?.debug?.(`请求日志回调失败: ${redactForLog(error?.message ?? String(error), secrets)}`); }
+    };
 
     const acquire = () => {
       if (!acquired) {
@@ -545,6 +555,8 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
         }
 
         const status = upstreamRes.statusCode ?? 502;
+        responseStream = String(upstreamRes.headers['content-type'] ?? '').includes('text/event-stream');
+        if (status >= 400) requestError = `上游 ${status}`;
 
         // 5xx：未向客户端写字节则可换号一次
         if (status >= 500 && attempt === 0 && !res.headersSent && !current.__passthrough) {
@@ -724,7 +736,7 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
         clientGone.signal.addEventListener('abort', abortUpstream);
         if (clientGone.signal.aborted) abortUpstream();
         const completed = await pipeResponse(upstreamRes, res, {
-          onChunk: (c) => { tokens = Math.max(tokens, extractTokens(c.toString('utf8'))); },
+          onChunk: (c) => { const text = c.toString('utf8'); tokens = Math.max(tokens, extractTokens(text)); try { collector?.feed(text); } catch (error) { log?.debug?.(`用量回调失败: ${redactForLog(error?.message ?? String(error), secrets)}`); } },
           log,
           secrets,
         }).catch(() => false);
@@ -763,11 +775,13 @@ export function createProxy({ config, scheduler, log, stats, secrets = [], refre
         return;
       }
     } catch (e) {
+      requestError = e?.code === 'CLIENT_ABORT' ? '客户端中断' : e?.code === 'ETIMEDOUT' || e?.code === 'ECONNRESET' ? '上游超时' : (e?.message ?? String(e));
       scheduler.recordError(account, e?.message ?? String(e));
       bump(true);
       log?.error?.(`转发异常: ${redactForLog(e?.message ?? String(e), secrets)}`);
       sendJSON(res, 502, { error: { message: 'Gateway error', type: 'upstream_error' } });
     } finally {
+      emitRequestLog();
       release();
       inflight = Math.max(0, inflight - 1);
       req.off('aborted', onClientGone);
