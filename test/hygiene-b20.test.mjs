@@ -164,6 +164,15 @@ const ALLOWED_SKIPS = [
       + '真实 Chromium 在 390×844 手机视口下全部几何断言通过。',
   },
   {
+    reason: '本机无 Playwright（后台注意栏配色实测）',
+    max: 1,
+    why: 'b41-banner-alert.test.mjs 的 B41-3：注意栏（.banner.alert-warning / .banner.alert-error）浅/深两主题的'
+      + '计算背景色、左侧强调条与文字对比度必须靠真实 Chromium 的 computed style 复核（daisyUI 的 @layer 层叠'
+      + '很容易把写在 layer 里的覆盖顶掉，静态解析看不出来）。无 Playwright 的环境只登记这一条 skip、不注册断言；'
+      + 'B41-1/B41-2 的静态规则解析与对比度计算在任何环境都真跑。'
+      + '本机有 Playwright 时真跑：node --test test/b41-banner-alert.test.mjs 实测 3 tests / 3 pass / 0 skipped。',
+  },
+  {
     reason: '本机无 Playwright',
     max: 3,
     why: 'b25-narrow-overflow.test.mjs 的三条真机断言（B25-C 卡片网格几何、B25-D Hero 顶区问候语与时钟同行、'

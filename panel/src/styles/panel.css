@@ -123,6 +123,8 @@
     --success-light: #e8f5e9;
     --warning: #f5a623;
     --warning-light: #fff8e1;
+    /* 注意栏 warning 的深色字：--warning 本身在浅底上对比度不足，单独给出可读的深琥珀。 */
+    --warning-ink: #8a5a00;
     --danger: #e74c5e;
     --danger-light: #fde8eb;
     --info: #5c9ced;
@@ -186,6 +188,7 @@
     --success-light: #1a2e22;
     --warning: #f5b84a;
     --warning-light: #2e2818;
+    --warning-ink: #f5b84a;
     --danger: #ff6b7a;
     --danger-light: #2e1a1e;
     --info: #7ab3f7;
@@ -635,4 +638,39 @@ body.gate #admin-shell,
   #page-settings .toggle { width: 2.5rem; height: 2.5rem; }
   #page-settings .input { min-height: 2.5rem; }
   #page-settings .btn { min-height: 2.5rem; }
+}
+
+/* ═══ 后台「注意栏」配色重做（本批）══════════════════════════════════════════
+   问题：panel.css 里原先没有任何 .banner 规则，带 banner 类的提示条（概览需关注、
+   日志丢弃、设置报错、公共页提示、鉴权/加载错误）全部落在 daisyUI 的
+   `alert alert-warning` / `alert alert-error` 上 —— 实心 warning 底 + 深色字横跨整页，
+   在樱花浅色主题上非常突兀。
+   改法：覆盖 daisyUI 的实心配色，改成「浅底 + 深色字 + 左侧 3px 强调条」的现代风格，
+   底色/强调条一律取主题语义令牌（--warning-light / --warning / --danger-light / --danger
+   / --accent-ink / --warning-ink），不引入散落的一次性颜色。
+   必须放在所有 @layer 之外：daisyUI 5 的 .alert / .alert-warning / .alert-error 落在
+   utilities 层（daisyui.l1.l2.l3），跨层压制与特异性无关 —— 写进 @layer components 会被
+   顶掉（与本文件 .view-switch / .hero-gauge 的既有先例同理）。非 layer 的普通 CSS 优先
+   于所有 layer，故这几条留在 layer 外。
+   ⚠️ 不要给 .banner.alert 设 display：既有的 `hidden`（Tailwind utilities 层的
+   display:none）就是靠层叠隐藏这些提示条的，layer 外一旦写 display 会把 hidden 顶掉。
+   另：JS 里 className 的 `banner` / `alert` / `hidden` 三个类名被既有断言依赖，不许动。 */
+.banner.alert {
+  border-radius: 10px;
+  padding: .625rem .875rem;
+  font-size: .875rem;
+  line-height: 1.5;
+  border: 1px solid transparent;
+}
+.banner.alert-warning {
+  background: var(--warning-light);
+  color: var(--warning-ink);
+  border-color: color-mix(in srgb, var(--warning) 30%, transparent);
+  border-left: 3px solid var(--warning);
+}
+.banner.alert-error {
+  background: var(--danger-light);
+  color: var(--accent-ink);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  border-left: 3px solid var(--danger);
 }
