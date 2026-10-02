@@ -29,6 +29,7 @@ import { createScheduler, quotaWindows } from './src/scheduler.mjs';
 import { DEFAULT_TRUSTED_PROXY_CIDRS, isSecureRequest as isSecureRequestOf, resolveClientIp } from './src/client-ip.mjs';
 import { createProxy } from './src/proxy.mjs';
 import { createUsageCollector, createUsageRecorder } from './src/usage.mjs';
+import { createAuditLog } from './src/audit.mjs';
 import { createAdaptivePoller } from './src/poll.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -581,6 +582,14 @@ export async function startGateway(overrides = {}) {
   }
 
   const usage = createUsageRecorder({ dir: config.requestLogDir, enabled: config.requestLogEnabled, retentionDays: config.requestLogRetentionDays, maxFileBytes: Number(config.requestLogMaxMb) * 1024 * 1024, noTimers: overrides.noTimers, log });
+  // 管理员写操作审计台账：与 usage 录制器同一处构造，目录与 data/reqlog 同级（默认 data/audit）。
+  // 审计写盘失败一律吞掉（.catch），绝不让管理操作因此 5xx。
+  const audit = createAuditLog({ dir: path.join(path.dirname(config.requestLogDir), 'audit'), log, noTimers: overrides.noTimers });
+  /** 审计 target 归一：复用已有 cleanName；历史脏数据过不了校验时退回审计层清理，审计绝不阻断业务。 */
+  const auditTarget = (raw) => { try { return cleanName(raw); } catch { return String(raw ?? '').replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 200) || null; } };
+  const auditRecord = (req, action, target, detail) => audit.record({
+    actor: actorOf(req), ip: clientIp(req), action, target, detail,
+  }).catch(() => {});
   const proxy = createProxy({ config, scheduler, log, stats, secrets, refreshAccount, touchActivity, persistState: () => store.saveState(), createUsageCollector, onRequestLog: (entry) => usage.record(entry) });
 
   // ── 客户端 key 治理（§2）────────────────────────────────────────────
@@ -1302,6 +1311,7 @@ export async function startGateway(overrides = {}) {
         idleIntervalMs: config.quotaPollIntervalMs,
         activeIntervalMs: config.quotaActivePollIntervalMs,
       });
+      auditRecord(req, 'settings.update', null, { keys: Object.keys(patch) });
       return sendJSON(res, 200, { ok: true, settings: settingsView(config) });
     }
 
@@ -1325,6 +1335,18 @@ export async function startGateway(overrides = {}) {
 
     if (method === 'GET' && p === '/api/admin/events') {
       return sendJSON(res, 200, eventsView(url));
+    }
+
+    if (method === 'GET' && p === '/api/admin/audit') {
+      const limit = Math.min(500, Math.max(1, Number(url.searchParams.get('limit') ?? 100) || 100));
+      const result = audit.list({
+        limit,
+        offset: Number(url.searchParams.get('offset') ?? 0) || 0,
+        action: url.searchParams.get('action') || undefined,
+        actor: url.searchParams.get('actor') || undefined,
+        q: url.searchParams.get('q') || undefined,
+      });
+      return sendJSON(res, 200, { ok: true, actions: audit.actions(), ...result, stats: audit.stats() });
     }
 
     if (method === 'GET' && p === '/api/admin/keys') {
@@ -1371,6 +1393,7 @@ export async function startGateway(overrides = {}) {
       if (findUser(username)) throw new HttpError(400, `管理员「${username}」已存在`);
       users = store.saveUsers([...users, { username, passwordHash: await hashPassword(password), createdAt: Date.now() }]);
       note('info', `新增管理员「${username}」（${actorOf(req)}）`);
+      auditRecord(req, 'admin.create', auditTarget(username), null);
       return sendJSON(res, 201, { ok: true, users: usersView() });
     }
 
@@ -1401,6 +1424,7 @@ export async function startGateway(overrides = {}) {
       // 改密码 = 踢掉该管理员的所有旧会话（含自己之外的其它浏览器）
       const killed = sessions.revokeUser(username);
       note('info', `修改管理员「${username}」的密码（${actorOf(req)}）${killed ? `，已吊销 ${killed} 个会话` : ''}`);
+      auditRecord(req, 'admin.password', auditTarget(username), { sessionsRevoked: killed });
       return sendJSON(res, 200, { ok: true, users: usersView() });
     }
 
@@ -1413,6 +1437,7 @@ export async function startGateway(overrides = {}) {
       users = store.saveUsers(users.filter((u) => !safeEqualText(u.username, username)));
       sessions.revokeUser(username);
       note('info', `删除管理员「${username}」（${actorOf(req)}）`);
+      auditRecord(req, 'admin.delete', auditTarget(username), null);
       return sendJSON(res, 200, { ok: true, users: usersView() });
     }
 
@@ -1431,6 +1456,7 @@ export async function startGateway(overrides = {}) {
       reloadNow();
       const created = accounts.find((a) => a.key === key);
       note('info', `新增账号「${name}」keyId=${created.keyId}（${actorOf(req)}）`);
+      auditRecord(req, 'account.create', auditTarget(name), { keyId: created.keyId });
       return sendJSON(res, 201, { ok: true, account: pubAccount(created) });
     }
 
@@ -1464,6 +1490,7 @@ export async function startGateway(overrides = {}) {
       note(result.ok
         ? `连通性测试通过：keyId=${view.keyId} 登录名=${result.displayName ?? result.userName ?? '-'}（${actorOf(req)}）`
         : `连通性测试失败：keyId=${view.keyId} ${redact(result.error ?? '', secrets)}（${actorOf(req)}）`);
+      auditRecord(req, 'account.test', auditTarget(view.keyId), { ok: !!result.ok });
       return sendJSON(res, 200, { ok: true, result: view });
     }
 
@@ -1493,6 +1520,9 @@ export async function startGateway(overrides = {}) {
       }
       const changed = [body.name !== undefined ? `名称→「${name}」` : null, body.enabled !== undefined ? `状态→${enabled ? '启用' : '停用'}` : null].filter(Boolean);
       note('info', `修改账号 keyId=${id}：${changed.join('、')}（${actorOf(req)}）`);
+      auditRecord(req, 'account.update', auditTarget(name), {
+        keys: [body.name !== undefined ? 'name' : null, body.enabled !== undefined ? 'enabled' : null].filter(Boolean),
+      });
       return sendJSON(res, 200, { ok: true, account: pubAccount(accounts.find((a) => a.keyId === id)) });
     }
 
@@ -1506,6 +1536,7 @@ export async function startGateway(overrides = {}) {
       store.saveAccounts(remaining);
       const { removed } = reloadNow();
       note('info', `删除账号「${target.name}」keyId=${id}（${actorOf(req)}）`);
+      auditRecord(req, 'account.delete', auditTarget(target.name), { keyId: id });
       return sendJSON(res, 200, { ok: true, keyId: id, pruned: removed.accounts.length + removed.stats.length, accounts: accounts.map(pubAccount) });
     }
 
@@ -1525,6 +1556,7 @@ export async function startGateway(overrides = {}) {
       const created = localKeys.find((k) => k.key === key);
       // 日志/事件里只用 keyId/keyPrefix，明文绝不入库
       note('info', `生成客户端 key「${name}」keyId=${created.keyId} prefix=${created.keyPrefix}（${actorOf(req)}）`);
+      auditRecord(req, 'key.create', auditTarget(created.name), { keyId: created.keyId, keyPrefix: created.keyPrefix });
       return sendJSON(res, 201, {
         ok: true,
         key: pubKey(created),
@@ -1559,6 +1591,7 @@ export async function startGateway(overrides = {}) {
       const updated = localKeys.find((k) => k.keyId === id);
       const row = keyUsageRow(await keyUsageMap(), id);
       note('info', `修改客户端 key「${target.name}」keyId=${id}：${Object.keys(body).join('、')}（${actorOf(req)}）`);
+      auditRecord(req, 'key.update', auditTarget(target.name), { keys: Object.keys(body) });
       return sendJSON(res, 200, {
         ok: true,
         key: { ...pubKey(updated), used: { fiveHour: row[0], daily: row[1], weekly: row[2] }, state: keyStateOf(updated, row) },
@@ -1573,6 +1606,7 @@ export async function startGateway(overrides = {}) {
       store.saveKeys(credentialKeys().filter((k) => k.key !== target.key));
       reloadNow();
       note('info', `删除客户端 key「${target.name}」keyId=${id}（${actorOf(req)}）`);
+      auditRecord(req, 'key.delete', auditTarget(target.name), { keyId: id });
       return sendJSON(res, 200, { ok: true, keyId: id, keys: localKeys.map(pubKey) });
     }
 
@@ -2055,6 +2089,7 @@ export async function startGateway(overrides = {}) {
     poller.stop();
     if (recheckTimer) clearInterval(recheckTimer);
     if (historyTimer) clearInterval(historyTimer);
+    audit.close().catch(() => {});
     store.saveState();
     const closed = new Promise((r) => server.close(() => r()));
     const allClosed = new Promise((r) => server.once('close', () => r()));
@@ -2065,7 +2100,7 @@ export async function startGateway(overrides = {}) {
 
   return {
     server, config, log, accounts, localKeys, store, scheduler, stats, history, refreshAll, statusView, stop, proxy,
-    events, note, reloadNow, syncPool, handleAdmin, handleAuth, sessions, loginLimiter, currentUser,
+    events, note, reloadNow, syncPool, handleAdmin, handleAuth, sessions, loginLimiter, currentUser, audit,
     poller, touchActivity, runPausedRecheck,
     probeState,
     sessionTokenOf,
