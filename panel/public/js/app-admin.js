@@ -27,18 +27,17 @@ async function loadUsers() {
   renderPublicNote();
 }
 
-/* 公开面板可见性提示：dashboardPublic=true 时任何访客都能看到账号数与额度快照，
-   对「安全开关有没有关严」是个有价值的提醒；false（隐私模式）则隐藏提示。 */
+/* 公开面板可见性不再用常驻横幅展示：老文案教用户改 config.json 后重启，早已过时
+   （现在在「系统设置 → 前台面板公开只读」里改，保存即时生效、无需重启）。
+   #public-note 是后台外壳的固定钩子（不能删/改名），所以这里保留与 dashboardPublic
+   一致的状态文本，但**始终加 hidden**，绝不把它显示到页面上。 */
 function renderPublicNote() {
   const el = $('public-note');
   if (!el) return;
-  if (state.dashboardPublic) {
-    el.textContent = '当前公开面板对外可见（PUBLIC_DASHBOARD=1）：任何访客都能看到账号数量与额度快照。如需隐藏，请设 PUBLIC_DASHBOARD=0 后重启。';
-    el.className = 'banner warn alert alert-warning';
-  } else {
-    el.textContent = '';
-    el.className = 'banner warn alert alert-warning hidden';
-  }
+  el.textContent = state.dashboardPublic
+    ? '当前公开面板对外可见（PUBLIC_DASHBOARD=1）：任何访客都能看到账号数量与额度快照。如需隐藏，可在「系统设置 → 前台面板公开只读」关闭（PUBLIC_DASHBOARD=0）。'
+    : '';
+  el.className = 'banner warn alert alert-warning hidden';
 }
 async function loadAll() {
   try {
