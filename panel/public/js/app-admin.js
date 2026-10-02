@@ -404,8 +404,9 @@ for (const [modalFormId, submitId] of MODAL_FORMS) {
 // 不再逐个 $('x').onclick 直绑；用 data 属性 / 目标 id 定位，行为不变。
 document.addEventListener('keydown', (e) => {
   const t = e.target;
-  if (!t || e.key !== 'Enter' || (t.id !== 'logs-model' && t.id !== 'logs-q')) return;
+  if (!t || e.key !== 'Enter' || (t.id !== 'logs-model' && t.id !== 'logs-q' && t.id !== 'audit-q')) return;
   if (e.preventDefault) e.preventDefault();
+  if (t.id === 'audit-q') { reloadAudit().catch((err) => toast(err.message, true)); return; }
   reloadLogs().catch((err) => toast(err.message, true));
 });
 
@@ -421,6 +422,7 @@ document.addEventListener('click', (e) => {
   if (closest('#theme, #theme-gate')) { setTheme(currentTheme() === 'dark' ? 'light' : 'dark'); return; }
   // 请求日志页：刷新 / 加载更多（筛选下拉的 change 走下面的 change 委托）。
   if (closest('#logs-refresh')) return reloadLogs().catch((err) => toast(err.message, true));
+  if (closest('#reload-audit')) return reloadAudit().catch((err) => toast(err.message, true));
   if (closest('#logs-more')) { logsOffset = state.logs.length; return loadLogs({ append: true }).catch((err) => toast(err.message, true)); }
   // 用量统计页：切范围（tab 复选态 + 重拉数据）。
   const usageTab = closest('#usage-range [data-range]');
@@ -455,6 +457,7 @@ onAdminPageChange((route) => {
   else if (route === 'logs') loadLogs().catch(() => {});
   else if (route === 'usage') reloadUsage().catch(() => {});
   else if (route === 'settings') loadSettings().catch(() => {});
+  else if (route === 'audit') loadAudit().catch(() => {});
 });
 
 // ── 事件过滤（#level）：change 走 document 级委托 ─────────────────────
@@ -463,6 +466,7 @@ document.addEventListener('change', (e) => {
   if (!t) return;
   // 请求日志页的客户端下拉：选项来源是 state.keys（loadKeys 已经拉过），每次进页面重建一次。
   if (t.id === 'logs-key') return reloadLogs().catch((err) => toast(err.message, true));
+  if (t.id === 'audit-action') return reloadAudit().catch((err) => toast(err.message, true));
   if (t.id === 'level') {
     state.level = t.value;
     loadEvents().catch((err) => toast(err.message, true));

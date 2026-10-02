@@ -2,7 +2,7 @@
 //
 // 全部断言只在真实 Chromium 里量渲染后的几何：不读源码猜，避免「规则在、效果不在」。
 // 覆盖：
-//   ① 390×844（dSF3 / isMobile / hasTouch）：6 个 hash 路由 + 未登录态
+//   ① 390×844（dSF3 / isMobile / hasTouch）：7 个 hash 路由 + 未登录态
 //      - header 单行（高度阈值）、navbar-start/end 不重叠、#who 不再压住左区
 //      - 页面无横向溢出（documentElement.scrollWidth <= innerWidth）
 //      - 表头 white-space:nowrap 且文本只有一行（P2）
@@ -44,7 +44,7 @@ function findChromium() {
   return null;
 }
 
-const ROUTES = ['#/overview', '#/logs', '#/usage', '#/keys', '#/accounts', '#/settings'];
+const ROUTES = ['#/overview', '#/audit', '#/logs', '#/usage', '#/keys', '#/accounts', '#/settings'];
 const ACCOUNTS = [
   { name: '主号', key: 'user_test_alpha', enabled: true },
   { name: '副号1', key: 'user_test_beta', enabled: true },
@@ -184,7 +184,7 @@ async function runMobileAdminAdaptAssertions(t) {
   const browser = await playwright.chromium.launch();
   t.after(() => browser.close());
 
-  // ── ① 手机 390×844，6 个路由 ───────────────────────────────────────
+  // ── ① 手机 390×844，7 个路由 ───────────────────────────────────────
   const mobile = await browser.newContext(MOBILE_390);
   await mobile.addCookies([{ name: 'cc_session', value: sessionValue, domain: '127.0.0.1', path: '/' }]);
   const page = await mobile.newPage();
@@ -250,8 +250,8 @@ async function runMobileAdminAdaptAssertions(t) {
       assert.ok(m.blockGaps.length > 0, `${route}：多区块页面必须量到相邻区块间距（别量成空集而静默变绿）`);
     }
   }
-  assert.deepEqual([...seen].sort(), ['page-accounts', 'page-keys', 'page-logs', 'page-overview', 'page-settings', 'page-usage'],
-    `6 个路由都应真正切到对应页面（实得 ${[...seen].sort().join(',')}）`);
+  assert.deepEqual([...seen].sort(), ['page-accounts', 'page-audit', 'page-keys', 'page-logs', 'page-overview', 'page-settings', 'page-usage'],
+    `7 个路由都应真正切到对应页面（实得 ${[...seen].sort().join(',')}）`);
 
   // ── ② 768×1024（lg 以下、who 可见档）：P1 根因仍被堵住 ──────────────
   const tablet = await browser.newContext({ viewport: { width: 768, height: 1024 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
@@ -317,7 +317,7 @@ async function runMobileAdminAdaptAssertions(t) {
   assert.ok(dm.who.w >= 60, `桌面 #who 仍完整显示（实测宽 ${dm.who.w}px）`);
   assert.ok(dm.docSW <= dm.iw, `桌面横向溢出 ${dm.docSW} > ${dm.iw}`);
 
-  // ── ⑤ 桌面 1440×900：6 个路由的相邻卡片纵向间距同样 ≥8px（P5 桌面档）──
+  // ── ⑤ 桌面 1440×900：7 个路由的相邻卡片纵向间距同样 ≥8px（P5 桌面档）──
   for (const route of ROUTES) {
     await dp.goto(ctx.baseUrl + '/admin' + route, { waitUntil: 'networkidle' });
     await waitActive(dp);

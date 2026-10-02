@@ -193,6 +193,31 @@ import {
         </section>
       </section>
 
+      <section class="admin-page admin-page-audit" id="page-audit" aria-hidden="true">
+        <h2 class="sr-only">审计日志</h2>
+        <div class="banner alert alert-warning hidden" id="audit-degraded" role="status">台账写入失败，已在内存中保留</div>
+        <section class="card border border-base-300 bg-base-100" id="sec-audit">
+          <div class="card-body gap-3">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <h3 class="card-title text-base">审计日志 <span class="badge badge-ghost" id="audit-count">0 条</span></h3>
+              <div class="join">
+                <select id="audit-action" class="select select-bordered select-sm join-item max-[820px]:min-h-9" aria-label="按操作过滤">
+                  <option value="">全部操作</option>
+                </select>
+                <input id="audit-q" class="input input-bordered input-sm join-item max-[820px]:min-h-9" type="text" placeholder="搜索操作者 / 对象 / 内容" aria-label="搜索操作者 / 对象 / 内容" autocomplete="off" spellcheck="false">
+                <button id="reload-audit" class="btn btn-sm join-item" type="button"><RefreshCw size={14} aria-hidden="true" />刷新</button>
+              </div>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="table table-sm">
+                <thead><tr><th>时间</th><th>操作者</th><th>操作</th><th>对象</th><th>详情</th><th>IP</th></tr></thead>
+                <tbody id="audit-body"><tr><td colspan="6" class="empty text-base-content/60">暂无审计记录</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </section>
+
       <section class="admin-page" id="page-events" aria-hidden="true">
         <h2 class="sr-only">运行日志</h2>
         <section class="card border border-base-300 bg-base-100" id="sec-events">
@@ -529,6 +554,7 @@ import {
 <template id="tpl-user-row"><tr><td data-label="用户名"><div class="cell-name font-medium"><span data-f="name"></span><span class="tag info" data-f="self"></span></div></td><td data-label="创建时间" class="cell-sub text-xs text-base-content/60" data-f="created"></td><td data-label="操作" class="actions flex flex-wrap gap-1"><button class="btn btn-ghost btn-sm" type="button" data-act="detail" data-f="btn-detail" aria-haspopup="dialog"><Eye size={15} aria-hidden="true" />详情</button><button class="btn btn-outline btn-xs" type="button" data-act="pass" data-f="btn-pass">改密码</button><button class="btn btn-error btn-xs" type="button" data-act="deluser" data-f="btn-del">删除</button></td></tr></template>
 <template id="tpl-log-row"><tr><td data-label="时间" class="cell-sub text-xs tabular-nums" data-f="time"></td><td data-label="客户端"><span class="cell-name" data-f="client"></span></td><td data-label="账号"><span class="cell-name" data-f="account"></span></td><td data-label="模型" class="cell-sub text-xs" data-f="model"></td><td data-label="状态"><span class="inline-flex items-center gap-1"><span class="status-dot inline-block size-2 shrink-0 rounded-full" data-f="dot" aria-hidden="true"></span><span class="tabular-nums" data-f="status"></span></span></td><td data-label="耗时" class="tabular-nums" data-f="dur"></td><td data-label="入 token" class="tabular-nums" data-f="tok-in"></td><td data-label="出 token" class="tabular-nums" data-f="tok-out"></td></tr></template>
 <template id="tpl-log-empty"><tr><td colspan="8" class="empty text-base-content/60" data-f="empty"></td></tr></template>
+<template id="tpl-audit-row"><tr><td data-label="时间" class="cell-sub text-xs tabular-nums" data-f="time"></td><td data-label="操作者"><span class="cell-name" data-f="actor"></span></td><td data-label="操作" class="cell-sub text-xs" data-f="action"></td><td data-label="对象"><span class="cell-name" data-f="target"></span></td><td data-label="详情" class="cell-sub text-xs" data-f="detail"></td><td data-label="IP" class="cell-sub text-xs tabular-nums" data-f="ip"></td></tr></template>
 <template id="tpl-event"><div class="event flex flex-wrap items-center gap-2"><span class="event-time shrink-0 font-mono text-xs text-base-content/60" data-f="time"></span><span class="event-level shrink-0" data-f="level"><span class="tag badge badge-sm" data-f="badge"></span></span><span class="event-msg min-w-0 flex-1 max-[820px]:basis-full" data-f="msg"></span></div></template>
 <template id="tpl-overview-account"><a class="overview-account flex items-center gap-2 px-1 py-2 hover:bg-base-200" href="#/accounts"><span class="status-dot inline-block size-2 shrink-0 rounded-full" data-f="dot" aria-hidden="true"></span><span class="cell-name min-w-0 flex-1 truncate" data-f="name"></span><span class="oa-meter flex items-center gap-1"><span class="text-xs text-base-content/60">5h</span><progress class="progress progress-primary h-1.5 w-16 oa-bar" max="100" value="0" data-f="bar-5h"></progress><span class="w-12 text-right text-xs tabular-nums oa-pct" data-f="pct-5h"></span></span><span class="oa-meter flex items-center gap-1"><span class="text-xs text-base-content/60">周</span><progress class="progress progress-primary h-1.5 w-16 oa-bar" max="100" value="0" data-f="bar-week"></progress><span class="w-12 text-right text-xs tabular-nums oa-pct" data-f="pct-week"></span></span><span class="w-16 text-right text-xs tabular-nums oa-remain" data-f="remaining"></span></a></template>
 <template id="tpl-overview-log"><tr class="overview-log"><td data-label="时间" class="cell-sub text-xs tabular-nums" data-f="time"></td><td data-label="客户端"><span class="cell-name" data-f="client"></span></td><td data-label="模型" class="cell-sub text-xs" data-f="model"></td><td data-label="状态"><span class="inline-flex items-center gap-1"><span class="status-dot inline-block size-2 shrink-0 rounded-full" data-f="dot" aria-hidden="true"></span><span class="tabular-nums" data-f="status"></span></span></td><td data-label="耗时" class="tabular-nums" data-f="dur"></td></tr></template>
@@ -549,6 +575,7 @@ import {
 <script src="js/render-keys-table.js" is:raw></script>
 <script src="js/logs.js" is:raw></script>
 <script src="js/admin-logs.js" is:raw></script>
+<script src="js/admin-audit.js" is:raw></script>
 <script src="js/admin-usage.js" is:raw></script>
 <script src="js/admin-settings.js" is:raw></script>
 <script src="js/admin-overview.js" is:raw></script>

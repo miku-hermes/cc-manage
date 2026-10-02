@@ -2,13 +2,14 @@
 /* 后台侧边栏：≥1024px 固定显示（外层 .drawer.lg:drawer-open），<1024px 收成抽屉
    （#admin-drawer 复选框 + #admin-head 里的汉堡 label 控制，与改造前同一套机制）。
    菜单用 hash 路由（js/admin-console.js 负责切换 .admin-page 的显隐与 aria-current）。 */
-import { Activity, LayoutDashboard, Server, KeyRound, Users, ScrollText, FileClock, Gauge, Settings, ChevronLeft, LogOut, Wifi } from '@lucide/astro';
+import { Activity, LayoutDashboard, Server, KeyRound, Users, ScrollText, FileClock, Gauge, Settings, ChevronLeft, LogOut, Wifi, ClipboardList } from '@lucide/astro';
 
 const items = [
   { href: '#/overview', id: 'overview', label: '概览', Icon: LayoutDashboard },
   { href: '#/accounts', id: 'accounts', label: '账号池', Icon: Server },
   { href: '#/keys', id: 'keys', label: '客户端密钥', Icon: KeyRound },
   { href: '#/users', id: 'users', label: '管理员', Icon: Users },
+  { href: '#/audit', id: 'audit', label: '审计日志', Icon: ClipboardList },
   { href: '#/events', id: 'events', label: '运行日志', Icon: ScrollText },
   { href: '#/logs', id: 'logs', label: '请求日志', Icon: FileClock },
   { href: '#/usage', id: 'usage', label: '用量统计', Icon: Gauge },
