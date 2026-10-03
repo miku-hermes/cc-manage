@@ -296,7 +296,7 @@ import {
           <div class="card-body gap-3">
             <div class="flex flex-wrap items-center justify-between gap-2">
               <h3 class="card-title text-base">系统设置</h3>
-              <span class="text-xs text-base-content/60">保存后立即写入 config.json（写前自动留一份 .bak）</span>
+              <span class="text-xs text-base-content/60">保存后立即写入 config.json（写前会留一份 .bak；目录不可写时自动跳过备份）</span>
             </div>
             <div class="divide-y divide-base-200" id="settings-list">
               <div class="setting-row flex items-center justify-between gap-3 py-3">

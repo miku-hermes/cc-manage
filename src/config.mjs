@@ -334,9 +334,10 @@ function appendSettingsToObject(text, lines) {
 /**
  * 把白名单字段写回 config.json：**文本级最小改动** —— 只替换这些键的值 token，
  * 其余键（含顺序 / 缩进 / 注释外的格式）逐字节保持不变；键不存在时按原缩进追加。
- * 写前先留一份 `<file>.bak`。任何一步失败都直接抛（调用方必须保持内存值不变）。
+ * 写前尝试留一份 `<file>.bak`（best-effort：失败只回调 opts.onBackupError，不中断）。
+ * 真正的 `configPath` 写入是致命的：抛错即让调用方保持内存值不变。
  */
-export function writeConfigSettings(configPath, patch) {
+export function writeConfigSettings(configPath, patch, opts = {}) {
   const entries = Object.entries(patch || {});
   if (entries.length === 0) return;
   let raw;
@@ -356,6 +357,11 @@ export function writeConfigSettings(configPath, patch) {
     else missing.push(`${JSON.stringify(key)}: ${token}`);
   }
   if (missing.length) text = appendSettingsToObject(text, missing);
-  fs.writeFileSync(`${configPath}.bak`, raw);
+  try {
+    fs.writeFileSync(`${configPath}.bak`, raw);
+  } catch (err) {
+    // 备份只是便利：只读根 / 目录不可写时跳过，绝不因此挡住真正的落盘。
+    opts.onBackupError?.(err);
+  }
   fs.writeFileSync(configPath, text);
 }

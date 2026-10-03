@@ -3,8 +3,12 @@
 // 覆盖：
 //  - GET 只回 6 个白名单字段的当前生效值；
 //  - PATCH 合法值真的落盘（读回 config.json 断言），其余键逐字节不变 + .bak 备份；
+//  - 备份（.bak）目录不可写 → 跳过备份、配置照常落盘（生产是只读根 + config.json 单文件 bind）；
+//  - 真落盘失败 → 500 且内存值保持不变（不出现「内存改了、盘没写」）；
+//    注意：这里用 EISDIR 注入，`writeConfigSettings` 的**读**那一步就会先炸；
+//    网关 catch 兜住的是「写盘调用整体失败（读或写任一步）」，不变量是「没落盘就绝不改内存」。
+//    「网关不许吞掉这个失败」这条由变异证明：把 catch 里的 throw 去掉 → 本条必须变红；
 //  - 400 分支：类型错 / 越界 / 未知字段 / 非对象 body；
-//  - 写盘失败 → 500 且内存值保持不变（不出现「内存改了、盘没写」）；
 //  - 未登录访问两端点 → 401；
 //  - 设置页 DOM 契约：6 个控件 + 保存按钮 + 失败回滚；
 //  - 未登录态外壳隐藏（调 showGate/showAdmin 真行为，不是字符串断言）。
@@ -16,6 +20,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import { startTestGateway, request, makeTmpDir, createDomShim, runInlineScript } from './helpers.mjs';
+import { writeConfigSettings } from '../src/config.mjs';
 
 const ADMIN_HTML = fs.readFileSync(new URL('../panel/dist/admin.html', import.meta.url), 'utf8');
 const USER = { name: 'admin', pass: 'hunter2-secret' };
@@ -172,8 +177,11 @@ test('设置#4：类型错 / 越界 / 未知字段 / 非对象 body → 400，�
   assert.equal(fs.readFileSync(configPath, 'utf8'), before, '任何 400 都不许写盘');
 });
 
-// ── 3：写盘失败 → 内存值不变 ──────────────────────────────────────────
-test('设置#5：写盘失败 → 500，内存值保持不变（不出现假成功）', async (t) => {
+// ── 3：备份目录不可写 → 跳过备份、配置照常落盘（语义在「只读根」修复时反转） ──
+// 旧语义把「.bak 写不进去」当成整个保存失败（500）。生产容器是只读根 + config.json 单文件 bind，
+// `.bak` 必然 EROFS → 旧语义下生产里根本改不了设置（线上实测就是这个 500）。
+// 新不变量：`.bak` 是便利、不是必需品 —— 它失败只回调 onBackupError，真正的 config.json 写入才是致命的。
+test('设置#13：.bak 目录不可写 → 跳过备份、配置照常落盘（200），其余键逐字节不变', async (t) => {
   const { ctx, cookie, configPath } = await settingsGateway();
   t.after(() => ctx.close());
   const before = fs.readFileSync(configPath, 'utf8');
@@ -182,21 +190,71 @@ test('设置#5：写盘失败 → 500，内存值保持不变（不出现假成�
   fs.mkdirSync(`${configPath}.bak`);
 
   const res = await patchSettings(ctx.baseUrl, cookie, { publicDashboard: false, requestLogRetentionDays: 99 });
-  assert.equal(res.status, 500, `写盘失败必须 500（实得 ${res.status}：${res.body}）`);
+  assert.equal(res.status, 200, `备份失败不得拖垮保存（实得 ${res.status}：${res.body}）`);
+
+  // 配置真的写进去了，而且只动被改的键。
+  const after = fs.readFileSync(configPath, 'utf8');
+  assert.notEqual(after, before, 'config.json 必须真的被改写');
+  const parsed = JSON.parse(after);
+  assert.equal(parsed.publicDashboard, false, '新值必须落盘');
+  assert.equal(parsed.requestLogRetentionDays, 99, '新值必须落盘');
+  const untouched = JSON.parse(before);
+  assert.deepEqual(Object.keys(parsed).sort(), Object.keys(untouched).sort(), '键集合不变');
+  for (const key of Object.keys(untouched)) {
+    if (key === 'publicDashboard' || key === 'requestLogRetentionDays') continue;
+    assert.deepEqual(parsed[key], untouched[key], `未涉及的键 ${key} 必须保持原值`);
+  }
+
+  // 备份那个目录还在（没人偷偷删它、也没人把它当文件覆盖）。
+  assert.ok(fs.statSync(`${configPath}.bak`).isDirectory(), '.bak 仍是目录（被跳过，未被破坏）');
+
+  // 内存值随之生效。
+  const view = JSON.parse((await getSettings(ctx.baseUrl, cookie)).body);
+  assert.equal(view.settings.publicDashboard, false, '内存值必须随落盘更新');
+  assert.equal(view.settings.requestLogRetentionDays, 99, '内存值必须随落盘更新');
+
+  // 清掉那个目录后，同一条路径照旧成功（两条写盘路径都通）。
+  fs.rmdirSync(`${configPath}.bak`);
+  const retry = await patchSettings(ctx.baseUrl, cookie, { publicDashboard: true, requestLogRetentionDays: 7 });
+  assert.equal(retry.status, 200);
+  assert.equal(JSON.parse(retry.body).settings.publicDashboard, true);
+});
+
+// ── 3b：真正落盘失败仍必须 500（不出现假成功）──────────────────────────
+test('设置#14：config.json 本身不可写（EISDIR）→ 500 + 内存值保持不变', async (t) => {
+  const { ctx, cookie, configPath } = await settingsGateway();
+  t.after(() => ctx.close());
+
+  // 真落盘失败的等价形态：把 config.json 换成目录（root 也绕不过 EISDIR）。
+  fs.rmSync(configPath);
+  fs.mkdirSync(configPath);
+
+  const res = await patchSettings(ctx.baseUrl, cookie, { publicDashboard: false, requestLogRetentionDays: 99 });
+  assert.equal(res.status, 500, `真落盘失败必须 500（实得 ${res.status}：${res.body}）`);
   const body = JSON.parse(res.body);
   assert.equal(body.error.type, 'admin_error');
+  assert.ok(String(body.error.message).includes('内存值保持不变'), '错误文案必须说明内存未变');
 
-  // 盘没写、内存也没改 —— GET 仍回旧值。
-  assert.equal(fs.readFileSync(configPath, 'utf8'), before, '写盘失败后 config.json 原样不变');
+  // 内存值不变 —— 绝不能出现「内存改了、盘没写」。
   const view = JSON.parse((await getSettings(ctx.baseUrl, cookie)).body);
   assert.equal(view.settings.publicDashboard, true, '内存值不变');
   assert.equal(view.settings.requestLogRetentionDays, 7, '内存值不变');
 
-  // 修好写入条件后，同样的 PATCH 应能成功（证明前面只是写盘失败，不是逻辑被写死）。
-  fs.rmdirSync(`${configPath}.bak`);
-  const retry = await patchSettings(ctx.baseUrl, cookie, { publicDashboard: false, requestLogRetentionDays: 99 });
-  assert.equal(retry.status, 200);
-  assert.equal(JSON.parse(retry.body).settings.publicDashboard, false);
+  fs.rmdirSync(configPath);
+});
+
+// ── 3c：备份失败被观测到，而不是被静默吞掉 ─────────────────────────────
+test('设置#15：.bak 写失败回调 onBackupError（带 message），且照常落盘', () => {
+  const dir = makeTmpDir();
+  const configPath = path.join(dir, 'config.json');
+  fs.writeFileSync(configPath, JSON.stringify(baseConfig(), null, 2) + '\n');
+  fs.mkdirSync(`${configPath}.bak`);
+  const errors = [];
+  writeConfigSettings(configPath, { publicDashboard: false }, { onBackupError: (e) => errors.push(e) });
+  assert.equal(errors.length, 1, '备份失败必须回调一次');
+  assert.ok(errors[0] instanceof Error, '回调参数必须是 Error');
+  assert.ok(String(errors[0].message).length > 0, '错误必须带可读 message');
+  assert.equal(JSON.parse(fs.readFileSync(configPath, 'utf8')).publicDashboard, false, '真落盘照常成功');
 });
 
 // ── 4：未登录 → 401 ───────────────────────────────────────────────────

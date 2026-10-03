@@ -1296,7 +1296,9 @@ export async function startGateway(overrides = {}) {
       // 顺序很重要：**先落盘成功再改内存**。任何一步失败都直接抛 —— 绝不能出现
       // 「内存改了、盘没写」的假成功。落盘是文本级最小改动，其余键逐字节不变。
       try {
-        writeConfigSettings(configPath, patch);
+        writeConfigSettings(configPath, patch, {
+          onBackupError: (err) => log.warn(`设置备份写入失败（已跳过备份，继续落盘）: ${err.message}`),
+        });
       } catch (e) {
         log.error(`系统设置写入失败: ${e.message}`);
         throw new HttpError(500, '配置写入失败，内存值保持不变');
